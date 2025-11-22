@@ -64,6 +64,9 @@ const agentFormSchema = z.object({
   enableRecording: z.boolean().default(true),
   enableTranscript: z.boolean().default(true),
   turnDetectionMode: z.enum(["server-vad", "pushToTalk"]).default("server-vad"),
+
+  // Tools & Integrations
+  enabledTools: z.array(z.string()).default([]),
 });
 
 type AgentFormValues = z.infer<typeof agentFormSchema>;
@@ -83,6 +86,7 @@ const defaultValues: Partial<AgentFormValues> = {
   enableRecording: true,
   enableTranscript: true,
   turnDetectionMode: "server-vad",
+  enabledTools: [],
 };
 
 export default function NewAgentPage() {
@@ -108,10 +112,11 @@ export default function NewAgentPage() {
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
           <Tabs defaultValue="basic" className="w-full">
-            <TabsList className="grid w-full grid-cols-4">
+            <TabsList className="grid w-full grid-cols-5">
               <TabsTrigger value="basic">Basic</TabsTrigger>
               <TabsTrigger value="voice">Voice & Speech</TabsTrigger>
               <TabsTrigger value="llm">AI Model</TabsTrigger>
+              <TabsTrigger value="tools">Tools</TabsTrigger>
               <TabsTrigger value="advanced">Advanced</TabsTrigger>
             </TabsList>
 
@@ -539,6 +544,98 @@ export default function NewAgentPage() {
                       )}
                     />
                   </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="tools" className="space-y-4 mt-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Tools & Integrations</CardTitle>
+                  <CardDescription>
+                    Enable integrations for your agent to access external services
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <FormField
+                    control={form.control}
+                    name="enabledTools"
+                    render={() => (
+                      <FormItem>
+                        <div className="mb-4">
+                          <FormLabel className="text-base">Available Tools</FormLabel>
+                          <FormDescription>
+                            Select which tools this agent can use during conversations.
+                            Connect integrations first on the{" "}
+                            <a
+                              href="/dashboard/integrations"
+                              className="text-primary underline"
+                              target="_blank"
+                            >
+                              Integrations page
+                            </a>
+                            .
+                          </FormDescription>
+                        </div>
+                        <div className="space-y-2">
+                          {/* Popular tools quick toggles */}
+                          {["google-calendar", "salesforce", "hubspot", "notion", "slack"].map((toolId) => (
+                            <FormField
+                              key={toolId}
+                              control={form.control}
+                              name="enabledTools"
+                              render={({ field }) => {
+                                const toolConfig = {
+                                  "google-calendar": { name: "Google Calendar", desc: "Schedule meetings" },
+                                  "salesforce": { name: "Salesforce", desc: "Access CRM data" },
+                                  "hubspot": { name: "HubSpot", desc: "Manage contacts" },
+                                  "notion": { name: "Notion", desc: "Query databases" },
+                                  "slack": { name: "Slack", desc: "Send messages" },
+                                }[toolId];
+
+                                return (
+                                  <FormItem className="flex flex-row items-start space-x-3 space-y-0 rounded-md border p-4">
+                                    <FormControl>
+                                      <input
+                                        type="checkbox"
+                                        className="h-4 w-4 mt-0.5"
+                                        checked={field.value?.includes(toolId)}
+                                        onChange={(e) => {
+                                          const checked = e.target.checked;
+                                          const current = field.value || [];
+                                          field.onChange(
+                                            checked
+                                              ? [...current, toolId]
+                                              : current.filter((v) => v !== toolId)
+                                          );
+                                        }}
+                                      />
+                                    </FormControl>
+                                    <div className="space-y-1 leading-none">
+                                      <FormLabel className="font-medium cursor-pointer">
+                                        {toolConfig?.name}
+                                      </FormLabel>
+                                      <FormDescription>
+                                        {toolConfig?.desc}
+                                      </FormDescription>
+                                    </div>
+                                  </FormItem>
+                                );
+                              }}
+                            />
+                          ))}
+                          <div className="pt-4">
+                            <Button type="button" variant="outline" size="sm" asChild>
+                              <Link href="/dashboard/integrations">
+                                View All Integrations ({15})
+                              </Link>
+                            </Button>
+                          </div>
+                        </div>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
                 </CardContent>
               </Card>
             </TabsContent>

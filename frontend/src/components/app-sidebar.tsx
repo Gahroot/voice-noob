@@ -8,6 +8,7 @@ import {
   Settings,
   LayoutDashboard,
   Mic,
+  Zap,
 } from "lucide-react";
 
 import {
@@ -45,6 +46,11 @@ const navItems = [
     title: "Voice Agents",
     url: "/dashboard/agents",
     icon: Bot,
+  },
+  {
+    title: "Integrations",
+    url: "/dashboard/integrations",
+    icon: Zap,
   },
   {
     title: "Phone Numbers",
