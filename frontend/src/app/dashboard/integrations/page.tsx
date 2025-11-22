@@ -6,10 +6,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Search, Check, Settings as SettingsIcon, Zap } from "lucide-react";
+import { Search, Check, Settings as SettingsIcon, Zap, Package } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { AVAILABLE_INTEGRATIONS, type Integration } from "@/lib/integrations";
-import Image from "next/image";
 
 export default function IntegrationsPage() {
   const [searchQuery, setSearchQuery] = useState("");
@@ -119,17 +118,8 @@ function IntegrationCard({
       <CardHeader>
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-lg bg-muted flex items-center justify-center overflow-hidden">
-              {integration.icon ? (
-                <Image
-                  src={integration.icon}
-                  alt={integration.name}
-                  width={24}
-                  height={24}
-                />
-              ) : (
-                <Zap className="h-5 w-5" />
-              )}
+            <div className="h-10 w-10 rounded-lg bg-muted flex items-center justify-center">
+              <Package className="h-5 w-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
