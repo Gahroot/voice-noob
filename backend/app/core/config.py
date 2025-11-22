@@ -1,0 +1,112 @@
+"""Application configuration using Pydantic settings."""
+
+from typing import Any
+
+from pydantic import PostgresDsn, RedisDsn, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    """Application settings loaded from environment variables."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=True,
+        extra="ignore",
+    )
+
+    # Application
+    APP_NAME: str = "Voice Agent API"
+    APP_VERSION: str = "0.1.0"
+    DEBUG: bool = False
+    API_V1_PREFIX: str = "/api/v1"
+
+    # Server
+    HOST: str = "0.0.0.0"
+    PORT: int = 8000
+    RELOAD: bool = False
+
+    # Database
+    POSTGRES_SERVER: str = "localhost"
+    POSTGRES_PORT: int = 5432
+    POSTGRES_USER: str = "postgres"
+    POSTGRES_PASSWORD: str = "postgres"
+    POSTGRES_DB: str = "voice_agent"
+    DATABASE_URL: PostgresDsn | None = None
+
+    @field_validator("DATABASE_URL", mode="before")
+    @classmethod
+    def assemble_db_connection(cls, v: str | None, info: Any) -> str:
+        """Build database URL from components if not provided."""
+        if isinstance(v, str):
+            return v
+
+        data = info.data
+        return str(
+            PostgresDsn.build(
+                scheme="postgresql+asyncpg",
+                username=data.get("POSTGRES_USER"),
+                password=data.get("POSTGRES_PASSWORD"),
+                host=data.get("POSTGRES_SERVER"),
+                port=data.get("POSTGRES_PORT"),
+                path=f"{data.get('POSTGRES_DB') or ''}",
+            ),
+        )
+
+    # Redis
+    REDIS_HOST: str = "localhost"
+    REDIS_PORT: int = 6379
+    REDIS_DB: int = 0
+    REDIS_PASSWORD: str | None = None
+    REDIS_URL: RedisDsn | None = None
+
+    @field_validator("REDIS_URL", mode="before")
+    @classmethod
+    def assemble_redis_connection(cls, v: str | None, info: Any) -> str:
+        """Build Redis URL from components if not provided."""
+        if isinstance(v, str):
+            return v
+
+        data = info.data
+        password_part = f":{data.get('REDIS_PASSWORD')}@" if data.get("REDIS_PASSWORD") else ""
+        return f"redis://{password_part}{data.get('REDIS_HOST')}:{data.get('REDIS_PORT')}/{data.get('REDIS_DB')}"
+
+    # Security
+    SECRET_KEY: str = "change-this-to-a-random-secret-key-in-production"
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+
+    # CORS
+    CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:8000"]
+    CORS_ALLOW_CREDENTIALS: bool = True
+    CORS_ALLOW_METHODS: list[str] = ["*"]
+    CORS_ALLOW_HEADERS: list[str] = ["*"]
+
+    # Rate Limiting
+    RATE_LIMIT_PER_MINUTE: int = 60
+
+    # Voice & AI Services
+    OPENAI_API_KEY: str | None = None
+    DEEPGRAM_API_KEY: str | None = None
+    ELEVENLABS_API_KEY: str | None = None
+
+    # Telephony
+    TELNYX_API_KEY: str | None = None
+    TELNYX_PUBLIC_KEY: str | None = None
+    TWILIO_ACCOUNT_SID: str | None = None
+    TWILIO_AUTH_TOKEN: str | None = None
+
+    # Monitoring
+    SENTRY_DSN: str | None = None
+    SENTRY_ENVIRONMENT: str = "development"
+    SENTRY_TRACES_SAMPLE_RATE: float = 1.0
+
+    # OpenTelemetry
+    OTEL_ENABLED: bool = False
+    OTEL_SERVICE_NAME: str = "voice-agent-api"
+    OTEL_EXPORTER_OTLP_ENDPOINT: str | None = None
+
+
+settings = Settings()
