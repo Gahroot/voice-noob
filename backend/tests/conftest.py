@@ -1,6 +1,10 @@
 """Pytest configuration and fixtures for backend tests."""
 
 import asyncio
+import os
+
+# Test database URL (using temp file SQLite for tests)
+import tempfile
 from collections.abc import AsyncGenerator, Generator
 from typing import Any
 
@@ -8,25 +12,25 @@ import pytest
 import pytest_asyncio
 from fakeredis import aioredis as fakeredis
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import event, text
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from app.core.config import settings
 from app.db.base import Base
 from app.db.redis import get_redis
 from app.db.session import get_db
 from app.main import app
+from app.models.appointment import Appointment
+from app.models.call_interaction import CallInteraction
+from app.models.contact import Contact
 
 # Import all models to ensure they're registered with Base.metadata
-from app.models.user import User  # noqa: F401
-from app.models.contact import Contact  # noqa: F401
-from app.models.appointment import Appointment  # noqa: F401
-from app.models.call_interaction import CallInteraction  # noqa: F401
+from app.models.user import User
 
-
-# Test database URL (using in-memory SQLite for tests)
-TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
+# Create a temp file for the test database
+_test_db_fd, _test_db_path = tempfile.mkstemp(suffix=".db")
+os.close(_test_db_fd)
+TEST_DATABASE_URL = f"sqlite+aiosqlite:///{_test_db_path}"
 
 
 @pytest.fixture(scope="session")
@@ -40,12 +44,6 @@ def event_loop() -> Generator[asyncio.AbstractEventLoop, None, None]:
 @pytest_asyncio.fixture(scope="function")
 async def test_engine() -> AsyncGenerator[Any, None]:
     """Create test database engine."""
-    # Import models to register them with Base.metadata before creating tables
-    from app.models.user import User as _  # noqa: F401
-    from app.models.contact import Contact as _  # noqa: F401
-    from app.models.appointment import Appointment as _  # noqa: F401
-    from app.models.call_interaction import CallInteraction as _  # noqa: F401
-
     engine = create_async_engine(
         TEST_DATABASE_URL,
         echo=False,
@@ -70,6 +68,13 @@ async def test_engine() -> AsyncGenerator[Any, None]:
         await conn.run_sync(Base.metadata.drop_all)
 
     await engine.dispose()
+
+    # Clean up temp database file
+    try:
+        if os.path.exists(_test_db_path):
+            os.unlink(_test_db_path)
+    except Exception:
+        pass  # Ignore cleanup errors
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -193,7 +198,6 @@ def sample_call_interaction_data() -> dict[str, Any]:
 @pytest_asyncio.fixture
 async def create_test_user(test_session: AsyncSession) -> Any:
     """Factory fixture to create test users."""
-    from app.models.user import User
 
     async def _create_user(**kwargs: Any) -> User:
         user_data = {
@@ -216,7 +220,6 @@ async def create_test_user(test_session: AsyncSession) -> Any:
 @pytest_asyncio.fixture
 async def create_test_contact(test_session: AsyncSession) -> Any:
     """Factory fixture to create test contacts."""
-    from app.models.contact import Contact
 
     async def _create_contact(**kwargs: Any) -> Contact:
         contact_data = {
@@ -243,8 +246,6 @@ async def create_test_appointment(test_session: AsyncSession) -> Any:
     """Factory fixture to create test appointments."""
     from datetime import UTC, datetime, timedelta
 
-    from app.models.appointment import Appointment
-
     async def _create_appointment(**kwargs: Any) -> Appointment:
         appointment_data = {
             "contact_id": 1,
@@ -266,8 +267,6 @@ async def create_test_appointment(test_session: AsyncSession) -> Any:
 async def create_test_call_interaction(test_session: AsyncSession) -> Any:
     """Factory fixture to create test call interactions."""
     from datetime import UTC, datetime
-
-    from app.models.call_interaction import CallInteraction
 
     async def _create_call(**kwargs: Any) -> CallInteraction:
         call_data = {

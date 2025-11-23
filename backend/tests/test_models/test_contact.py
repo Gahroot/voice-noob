@@ -233,9 +233,7 @@ class TestContactModel:
         await test_session.commit()
 
         # Query user1's contacts
-        result = await test_session.execute(
-            select(Contact).where(Contact.user_id == user1.id)
-        )
+        result = await test_session.execute(select(Contact).where(Contact.user_id == user1.id))
         user1_contacts = result.scalars().all()
 
         assert len(user1_contacts) == 3
@@ -262,9 +260,7 @@ class TestContactModel:
         await test_session.commit()
 
         # Query new contacts
-        result = await test_session.execute(
-            select(Contact).where(Contact.status == "new")
-        )
+        result = await test_session.execute(select(Contact).where(Contact.status == "new"))
         new_contacts = result.scalars().all()
 
         assert len(new_contacts) == 1

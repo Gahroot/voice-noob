@@ -30,7 +30,7 @@ export const handlers = [
 
   // Create contact
   http.post(`${API_URL}/crm/contacts`, async ({ request }) => {
-    const body = (await request.json()) as any;
+    const body = (await request.json());
 
     return HttpResponse.json(
       {

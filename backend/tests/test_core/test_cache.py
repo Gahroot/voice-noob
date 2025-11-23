@@ -256,8 +256,8 @@ class TestCachedDecorator:
         """Test that decorator creates different cache keys for different arguments."""
 
         @cached(prefix="test:func", ttl=60)
-        async def get_data(id: int, name: str) -> dict[str, Any]:
-            return {"id": id, "name": name}
+        async def get_data(item_id: int, name: str) -> dict[str, Any]:
+            return {"id": item_id, "name": name}
 
         result1 = await get_data(1, "Alice")
         result2 = await get_data(1, "Bob")
@@ -313,7 +313,6 @@ class TestCachedDecorator:
         async def returns_none() -> None:
             nonlocal call_count
             call_count += 1
-            return None
 
         # First call
         result1 = await returns_none()
@@ -336,7 +335,9 @@ class TestCacheStats:
         stats = await cache_stats()
 
         assert isinstance(stats, dict)
-        assert "total_connections_received" in stats or len(stats) == 0  # May be empty for fakeredis
+        assert (
+            "total_connections_received" in stats or len(stats) == 0
+        )  # May be empty for fakeredis
 
     @pytest.mark.asyncio
     async def test_cache_stats_error_handling(self) -> None:

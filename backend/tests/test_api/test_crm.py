@@ -135,12 +135,12 @@ class TestContactEndpoints:
         user = await create_test_user()
 
         # Create multiple contacts
-        contact1 = await create_test_contact(
+        await create_test_contact(
             user_id=user.id,
             first_name="Alice",
             phone_number="+1111111111",
         )
-        contact2 = await create_test_contact(
+        await create_test_contact(
             user_id=user.id,
             first_name="Bob",
             phone_number="+2222222222",
@@ -335,9 +335,7 @@ class TestContactDatabaseIntegration:
         # Query directly from database
         from sqlalchemy import select
 
-        result = await test_session.execute(
-            select(Contact).where(Contact.id == contact.id)
-        )
+        result = await test_session.execute(select(Contact).where(Contact.id == contact.id))
         db_contact = result.scalar_one()
 
         assert db_contact.id == contact.id

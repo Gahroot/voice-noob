@@ -168,8 +168,6 @@ class TestUserModel:
         await test_session.commit()
         await test_session.refresh(user)
 
-        original_updated_at = user.updated_at
-
         # Wait a bit to ensure timestamp difference
         await asyncio.sleep(0.1)
 
@@ -196,9 +194,7 @@ class TestUserModel:
         await test_session.commit()
 
         # Query by email
-        result = await test_session.execute(
-            select(User).where(User.email == "query@example.com")
-        )
+        result = await test_session.execute(select(User).where(User.email == "query@example.com"))
         found_user = result.scalar_one_or_none()
 
         assert found_user is not None

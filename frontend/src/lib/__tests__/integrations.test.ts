@@ -234,7 +234,9 @@ describe("API Key Integrations", () => {
     apiKeyIntegrations.forEach((integration) => {
       expect(integration.fields).toBeDefined();
       expect(Array.isArray(integration.fields)).toBe(true);
-      expect(integration.fields!.length).toBeGreaterThan(0);
+      if (integration.fields) {
+        expect(integration.fields.length).toBeGreaterThan(0);
+      }
     });
   });
 

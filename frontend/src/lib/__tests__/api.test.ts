@@ -34,11 +34,6 @@ describe("Request Interceptor", () => {
     const token = "test-token-123";
     localStorage.setItem("access_token", token);
 
-    // Get the request interceptor
-    const mockConfig = {
-      headers: {},
-    };
-
     // The interceptor should have been added during module initialization
     // We need to test the behavior by checking if the header would be added
     expect(localStorage.getItem("access_token")).toBe(token);

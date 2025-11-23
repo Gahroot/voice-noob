@@ -98,6 +98,20 @@ class Settings(BaseSettings):
     TWILIO_ACCOUNT_SID: str | None = None
     TWILIO_AUTH_TOKEN: str | None = None
 
+    # External Service Timeouts (seconds)
+    # These are critical for preventing hung connections during voice calls
+    OPENAI_TIMEOUT: float = 30.0  # LLM inference can be slow
+    DEEPGRAM_TIMEOUT: float = 15.0  # Real-time STT should be fast
+    ELEVENLABS_TIMEOUT: float = 20.0  # TTS synthesis timeout
+    TELNYX_TIMEOUT: float = 10.0  # Telephony API calls
+    TWILIO_TIMEOUT: float = 10.0  # Telephony API calls
+    GOOGLE_API_TIMEOUT: float = 15.0  # Calendar, Drive, etc.
+    DEFAULT_EXTERNAL_TIMEOUT: float = 30.0  # Fallback for other APIs
+
+    # Retry Configuration
+    MAX_RETRIES: int = 3  # Number of retry attempts for failed requests
+    RETRY_BACKOFF_FACTOR: float = 2.0  # Exponential backoff multiplier
+
     # Monitoring
     SENTRY_DSN: str | None = None
     SENTRY_ENVIRONMENT: str = "development"

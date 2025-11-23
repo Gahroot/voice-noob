@@ -211,7 +211,7 @@ describe("IntegrationsPage", () => {
     const { container } = render(<IntegrationsPage />);
 
     // Categories should be displayed in uppercase (check for text content containing uppercase)
-    const categoryText = container.textContent || "";
+    const categoryText = container.textContent ?? "";
     expect(categoryText).toContain("CRM");
   });
 

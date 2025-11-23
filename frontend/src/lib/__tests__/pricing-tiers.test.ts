@@ -77,9 +77,13 @@ describe("PRICING_TIERS", () => {
 });
 
 describe("calculateMonthlyCost", () => {
-  const budgetTier = PRICING_TIERS.find((t) => t.id === "budget")!;
-  const balancedTier = PRICING_TIERS.find((t) => t.id === "balanced")!;
-  const premiumTier = PRICING_TIERS.find((t) => t.id === "premium")!;
+  const budgetTier = PRICING_TIERS.find((t) => t.id === "budget");
+  const balancedTier = PRICING_TIERS.find((t) => t.id === "balanced");
+  const premiumTier = PRICING_TIERS.find((t) => t.id === "premium");
+
+  if (!budgetTier || !balancedTier || !premiumTier) {
+    throw new Error("Required pricing tiers not found");
+  }
 
   it("calculates total minutes correctly", () => {
     const result = calculateMonthlyCost(budgetTier, 1000, 5);

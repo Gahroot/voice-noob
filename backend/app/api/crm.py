@@ -2,7 +2,7 @@
 
 import logging
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +17,9 @@ from app.models.contact import Contact
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/crm", tags=["crm"])
+
+# Constants
+MAX_CONTACTS_LIMIT = 1000  # Maximum number of contacts that can be fetched in one request
 
 
 # Pydantic schemas
@@ -62,10 +65,48 @@ async def list_contacts(
     db: AsyncSession = Depends(get_db),
 ) -> list[Contact]:
     """List all contacts (simplified - normally would filter by user_id)."""
+    # Enforce max limit to prevent DoS
+    if limit > MAX_CONTACTS_LIMIT:
+        raise HTTPException(status_code=400, detail=f"Limit cannot exceed {MAX_CONTACTS_LIMIT}")
+
+    cache_key = f"crm:contacts:list:{skip}:{limit}"
+
+    # Try cache first
+    cached = await cache_get(cache_key)
+    if cached:
+        logger.debug("Cache hit for contacts list: skip=%d, limit=%d", skip, limit)
+        # Convert cached dicts back to Contact objects
+        return [Contact(**contact_data) for contact_data in cached]
+
+    # Fetch from database
+    logger.debug("Cache miss - fetching contacts from database: skip=%d, limit=%d", skip, limit)
     result = await db.execute(
         select(Contact).offset(skip).limit(limit).order_by(Contact.created_at.desc()),
     )
-    return list(result.scalars().all())
+    contacts = list(result.scalars().all())
+
+    # Cache for 5 minutes (300 seconds)
+    # Store as list of dicts for JSON serialization
+    contacts_data = [
+        {
+            "id": c.id,
+            "user_id": c.user_id,
+            "first_name": c.first_name,
+            "last_name": c.last_name,
+            "email": c.email,
+            "phone_number": c.phone_number,
+            "company_name": c.company_name,
+            "status": c.status,
+            "tags": c.tags,
+            "notes": c.notes,
+            "created_at": c.created_at,
+            "updated_at": c.updated_at,
+        }
+        for c in contacts
+    ]
+    await cache_set(cache_key, contacts_data, ttl=300)
+    logger.debug("Cached contacts list for 5 minutes")
+    return contacts
 
 
 @router.get("/contacts/{contact_id}", response_model=ContactResponse)
@@ -76,8 +117,16 @@ async def get_contact(
     db: AsyncSession = Depends(get_db),
 ) -> Contact:
     """Get a single contact by ID."""
-    from fastapi import HTTPException
+    cache_key = f"crm:contact:{contact_id}"
 
+    # Try cache first
+    cached = await cache_get(cache_key)
+    if cached:
+        logger.debug("Cache hit for contact: %d", contact_id)
+        return Contact(**cached)
+
+    # Fetch from database
+    logger.debug("Cache miss - fetching contact from database: %d", contact_id)
     try:
         result = await db.execute(select(Contact).where(Contact.id == contact_id))
         contact = result.scalar_one_or_none()
@@ -89,6 +138,22 @@ async def get_contact(
         logger.error("Contact not found: %d", contact_id)
         raise HTTPException(status_code=404, detail="Contact not found")
 
+    # Cache for 10 minutes (600 seconds)
+    contact_data = {
+        "id": contact.id,
+        "user_id": contact.user_id,
+        "first_name": contact.first_name,
+        "last_name": contact.last_name,
+        "email": contact.email,
+        "phone_number": contact.phone_number,
+        "company_name": contact.company_name,
+        "status": contact.status,
+        "tags": contact.tags,
+        "notes": contact.notes,
+        "created_at": contact.created_at,
+        "updated_at": contact.updated_at,
+    }
+    await cache_set(cache_key, contact_data, ttl=600)
     logger.info("Retrieved contact: %d", contact_id)
     return contact
 

@@ -200,9 +200,7 @@ class TestJWTTokenValidation:
 
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         exp_time = datetime.fromtimestamp(payload["exp"], tz=UTC)
-        expected_exp = datetime.now(UTC) + timedelta(
-            minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
-        )
+        expected_exp = datetime.now(UTC) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
 
         # Should be within 1 minute of expected expiration
         time_diff = abs((exp_time - expected_exp).total_seconds())
@@ -230,7 +228,6 @@ class TestSecurityIntegration:
     def test_create_and_decode_token_workflow(self) -> None:
         """Test complete workflow of creating and decoding token."""
         user_id = 42
-        email = "user@example.com"
 
         # Create token for user
         token = create_access_token(user_id)
@@ -252,6 +249,6 @@ class TestSecurityIntegration:
         assert len(tokens) == len(set(tokens))
 
         # Each token should decode to correct user
-        for user, token in zip(users, tokens):
+        for user, token in zip(users, tokens, strict=False):
             payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
             assert payload["sub"] == user

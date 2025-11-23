@@ -2,7 +2,6 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@/test/test-utils";
 import userEvent from "@testing-library/user-event";
 import { TierSelector, TierComparison } from "../tier-selector";
-import { PRICING_TIERS } from "@/lib/pricing-tiers";
 
 describe("TierSelector", () => {
   it("renders all pricing tiers", () => {

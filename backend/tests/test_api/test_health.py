@@ -135,8 +135,6 @@ class TestHealthCheckIntegration:
         """Test that health checks don't modify database."""
         from sqlalchemy import select, text
 
-        from app.models.contact import Contact
-
         # Get initial count
         initial_count = await test_session.scalar(select(text("COUNT(*) FROM contacts")))
 
