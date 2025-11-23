@@ -79,7 +79,7 @@ export default function NewAgentSimplifiedPage() {
       // eslint-disable-next-line no-console
       console.log("Creating agent:", data.name, "with tier:", data.pricingTier);
     }
-    // TODO: API call to create agent
+    // TODO: Implement API endpoint POST /api/v1/agents and connect here
   }
 
   return (

@@ -103,7 +103,7 @@ async def create_contact(
     """Create a new contact (simplified - normally would get user_id from auth)."""
     try:
         contact = Contact(
-            user_id=1,  # TODO: Get from authenticated user
+            user_id=1,  # TODO: Replace with authenticated user_id once auth is implemented
             **contact_data.model_dump(),
         )
         db.add(contact)

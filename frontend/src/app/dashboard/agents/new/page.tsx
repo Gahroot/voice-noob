@@ -94,7 +94,7 @@ export default function NewAgentPage() {
       // eslint-disable-next-line no-console
       console.log("Creating agent:", data.name);
     }
-    // TODO: API call to create agent
+    // TODO: Implement API endpoint POST /api/v1/agents and connect here
   }
 
   return (

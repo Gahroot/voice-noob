@@ -47,7 +47,7 @@ export default function SettingsPage() {
       // eslint-disable-next-line no-console
       console.log("Saving API keys settings (keys not logged for security)");
     }
-    // TODO: API call to save settings
+    // TODO: Implement API endpoint POST /api/v1/settings and connect here
   }
 
   return (

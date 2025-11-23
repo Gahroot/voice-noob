@@ -2,11 +2,13 @@
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, Phone, Mail, Building2, Tag } from "lucide-react";
-import { useState } from "react";
+import { Plus, Phone, Mail, Building2, Tag, Loader2, AlertCircle } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/lib/api";
 
 interface Contact {
   id: number;
+  user_id: number;
   first_name: string;
   last_name: string | null;
   email: string | null;
@@ -18,14 +20,17 @@ interface Contact {
 }
 
 export default function CRMPage() {
-  const [contacts] = useState<Contact[]>([]);
-
-  // TODO: Fetch contacts from API
-  // useEffect(() => {
-  //   fetch('/api/v1/crm/contacts')
-  //     .then(res => res.json())
-  //     .then(data => setContacts(data));
-  // }, []);
+  const {
+    data: contacts = [],
+    isLoading,
+    error,
+  } = useQuery<Contact[]>({
+    queryKey: ["contacts"],
+    queryFn: async () => {
+      const response = await api.get("/api/v1/crm/contacts");
+      return response.data;
+    },
+  });
 
   const getStatusColor = (status: string) => {
     const colors: Record<string, string> = {
@@ -37,6 +42,28 @@ export default function CRMPage() {
     };
     return colors[status] ?? "bg-gray-100 text-gray-800";
   };
+
+  if (error) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">CRM</h1>
+          <p className="text-muted-foreground">
+            Manage your contacts, appointments, and call interactions
+          </p>
+        </div>
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-12">
+            <AlertCircle className="mb-4 h-12 w-12 text-destructive" />
+            <h3 className="mb-2 text-lg font-semibold">Failed to load contacts</h3>
+            <p className="text-sm text-muted-foreground">
+              {error instanceof Error ? error.message : "An error occurred"}
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -94,13 +121,20 @@ export default function CRMPage() {
         <CardHeader>
           <CardTitle>Contacts</CardTitle>
           <CardDescription>
-            {contacts.length === 0
-              ? "No contacts yet. Add your first contact to get started."
-              : `Showing ${contacts.length} contact${contacts.length !== 1 ? "s" : ""}`}
+            {isLoading
+              ? "Loading contacts..."
+              : contacts.length === 0
+                ? "No contacts yet. Add your first contact to get started."
+                : `Showing ${contacts.length} contact${contacts.length !== 1 ? "s" : ""}`}
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {contacts.length === 0 ? (
+          {isLoading ? (
+            <div className="flex flex-col items-center justify-center py-12">
+              <Loader2 className="mb-4 h-8 w-8 animate-spin text-muted-foreground" />
+              <p className="text-sm text-muted-foreground">Loading contacts...</p>
+            </div>
+          ) : contacts.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-center">
               <div className="mb-4 rounded-full bg-muted p-3">
                 <Phone className="h-6 w-6 text-muted-foreground" />

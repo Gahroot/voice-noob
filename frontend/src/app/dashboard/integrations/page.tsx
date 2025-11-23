@@ -248,12 +248,12 @@ function IntegrationConfigForm({
   onClose: () => void;
 }) {
   const handleOAuthConnect = useCallback(() => {
-    // TODO: Implement OAuth flow
+    // TODO: Implement OAuth flow with backend /api/v1/integrations/oauth endpoint
     if (process.env.NODE_ENV === "development") {
       // eslint-disable-next-line no-console
       console.log("Starting OAuth for", integration.id);
     }
-    // window.location.href = `/api/integrations/${integration.id}/oauth`;
+    // window.location.href = `/api/v1/integrations/${integration.id}/oauth`;
   }, [integration.id]);
 
   const handleApiKeySubmit = useCallback(
@@ -265,7 +265,7 @@ function IntegrationConfigForm({
         // eslint-disable-next-line no-console
         console.log("Saving credentials for", integration.id);
       }
-      // TODO: API call to save credentials with formData
+      // TODO: Implement API endpoint POST /api/v1/integrations/credentials and connect here
       onClose();
     },
     [integration.id, onClose]
@@ -276,7 +276,7 @@ function IntegrationConfigForm({
       // eslint-disable-next-line no-console
       console.log("Disconnecting", integration.id);
     }
-    // TODO: API call to disconnect
+    // TODO: Implement API endpoint DELETE /api/v1/integrations/{id} and connect here
     onClose();
   }, [integration.id, onClose]);
 
