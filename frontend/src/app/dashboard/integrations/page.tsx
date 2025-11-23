@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback, useMemo } from "react";
+import { useDebounce } from "use-debounce";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -61,6 +62,7 @@ const getIntegrationIcon = (integrationId: string) => {
 
 export default function IntegrationsPage() {
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearchQuery] = useDebounce(searchQuery, 300);
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
 
   // Mock connected integrations - will be replaced with API
@@ -76,13 +78,17 @@ export default function IntegrationsPage() {
     { value: "other", label: "Other" },
   ];
 
-  const filteredIntegrations = AVAILABLE_INTEGRATIONS.filter((integration) => {
-    const matchesSearch =
-      integration.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      integration.description.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesCategory = selectedCategory === "all" || integration.category === selectedCategory;
-    return matchesSearch && matchesCategory;
-  });
+  // Memoize filtered integrations to prevent unnecessary recalculations
+  const filteredIntegrations = useMemo(() => {
+    return AVAILABLE_INTEGRATIONS.filter((integration) => {
+      const matchesSearch =
+        integration.name.toLowerCase().includes(debouncedSearchQuery.toLowerCase()) ||
+        integration.description.toLowerCase().includes(debouncedSearchQuery.toLowerCase());
+      const matchesCategory =
+        selectedCategory === "all" || integration.category === selectedCategory;
+      return matchesSearch && matchesCategory;
+    });
+  }, [debouncedSearchQuery, selectedCategory]);
 
   const connectedCount = Array.from(connectedIntegrations).length;
 
@@ -241,26 +247,29 @@ function IntegrationConfigForm({
   isConnected: boolean;
   onClose: () => void;
 }) {
-  const handleOAuthConnect = () => {
+  const handleOAuthConnect = useCallback(() => {
     // TODO: Implement OAuth flow
     console.error("Starting OAuth for", integration.id);
     // window.location.href = `/api/integrations/${integration.id}/oauth`;
-  };
+  }, [integration.id]);
 
-  const handleApiKeySubmit = (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const formData = new FormData(e.currentTarget);
-    const credentials = Object.fromEntries(formData.entries());
-    console.error("Saving credentials for", integration.id, credentials);
-    // TODO: API call to save credentials
-    onClose();
-  };
+  const handleApiKeySubmit = useCallback(
+    (e: React.FormEvent<HTMLFormElement>) => {
+      e.preventDefault();
+      const formData = new FormData(e.currentTarget);
+      const credentials = Object.fromEntries(formData.entries());
+      console.error("Saving credentials for", integration.id, credentials);
+      // TODO: API call to save credentials
+      onClose();
+    },
+    [integration.id, onClose]
+  );
 
-  const handleDisconnect = () => {
+  const handleDisconnect = useCallback(() => {
     console.error("Disconnecting", integration.id);
     // TODO: API call to disconnect
     onClose();
-  };
+  }, [integration.id, onClose]);
 
   if (integration.authType === "oauth") {
     return (

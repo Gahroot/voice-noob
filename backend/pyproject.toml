@@ -215,3 +215,9 @@ addopts = "-ra -q --strict-markers --cov=app --cov-report=term-missing"
 [tool.coverage.run]
 source = ["app"]
 omit = ["*/tests/*", "*/migrations/*"]
+
+[dependency-groups]
+dev = [
+    "types-passlib>=1.7.7.20250602",
+    "types-python-jose>=3.5.0.20250531",
+]

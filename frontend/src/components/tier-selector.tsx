@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Check, Zap, TrendingUp, Crown } from "lucide-react";
@@ -17,7 +18,10 @@ const tierIcons = {
   premium: Crown,
 };
 
-export function TierSelector({ selectedTier, onTierChange }: TierSelectorProps) {
+export const TierSelector = React.memo(function TierSelector({
+  selectedTier,
+  onTierChange,
+}: TierSelectorProps) {
   return (
     <div className="grid gap-4 md:grid-cols-3">
       {PRICING_TIERS.map((tier) => {
@@ -122,7 +126,7 @@ export function TierSelector({ selectedTier, onTierChange }: TierSelectorProps) 
       })}
     </div>
   );
-}
+});
 
 export function TierComparison({
   callsPerMonth = 1000,

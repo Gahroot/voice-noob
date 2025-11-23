@@ -41,17 +41,17 @@ class CallInteraction(Base, TimestampMixin):
     )  # answered, voicemail, no_answer, callback_requested, busy
 
     # AI-generated content
-    transcript: Mapped[str | None] = mapped_column(Text, nullable=True)
-    ai_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    transcript: Mapped[str | None] = mapped_column(Text, nullable=True, deferred=True)
+    ai_summary: Mapped[str | None] = mapped_column(Text, nullable=True, deferred=True)
 
     # Sentiment analysis (optional, -1.0 to 1.0)
     sentiment_score: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     # Action items extracted from call (JSON or comma-separated)
-    action_items: Mapped[str | None] = mapped_column(Text, nullable=True)
+    action_items: Mapped[str | None] = mapped_column(Text, nullable=True, deferred=True)
 
     # Additional notes
-    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True, deferred=True)
 
     # Relationships
     contact: Mapped["Contact"] = relationship("Contact", back_populates="call_interactions")

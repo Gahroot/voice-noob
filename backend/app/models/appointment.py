@@ -38,7 +38,7 @@ class Appointment(Base, TimestampMixin):
     service_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     # Notes and details
-    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True, deferred=True)
 
     # Which voice agent created this appointment (optional)
     created_by_agent: Mapped[str | None] = mapped_column(String(255), nullable=True)

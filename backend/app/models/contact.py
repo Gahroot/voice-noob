@@ -41,7 +41,7 @@ class Contact(Base, TimestampMixin):
     tags: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     # Notes
-    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True, deferred=True)
 
     # Relationships
     appointments: Mapped[list["Appointment"]] = relationship(

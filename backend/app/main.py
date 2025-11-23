@@ -1,31 +1,40 @@
 """Main FastAPI application entry point."""
 
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 
 from app.api import crm, health
 from app.core.config import settings
+from app.core.limiter import limiter
 from app.db.redis import close_redis, get_redis
+from app.db.session import engine
 
-# Configure structured logging
+# Configure structured logging with async processors
 structlog.configure(
     processors=[
+        structlog.contextvars.merge_contextvars,
+        structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
         structlog.processors.JSONRenderer(),
     ],
+    wrapper_class=structlog.make_filtering_bound_logger(
+        logging.WARNING if not settings.DEBUG else logging.DEBUG
+    ),
+    context_class=dict,
+    logger_factory=structlog.PrintLoggerFactory(),
+    cache_logger_on_first_use=True,
 )
 
 logger = structlog.get_logger()
-
-# Initialize rate limiter
-limiter = Limiter(key_func=get_remote_address)
 
 
 @asynccontextmanager
@@ -53,8 +62,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Shutdown
     logger.info("Shutting down application")
+
+    # Close Redis connection
     await close_redis()
     logger.info("Redis connection closed")
+
+    # Dispose database engine and close all connections
+    await engine.dispose()
+    logger.info("Database connections closed")
 
 
 # Create FastAPI app

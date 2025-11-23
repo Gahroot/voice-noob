@@ -1,5 +1,7 @@
 "use client";
 
+import { useState, useMemo } from "react";
+import { useDebounce } from "use-debounce";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { History, Download, Play } from "lucide-react";
@@ -34,8 +36,28 @@ type Call = {
 };
 
 export default function CallHistoryPage() {
+  const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearchQuery] = useDebounce(searchQuery, 300);
+  const [statusFilter, setStatusFilter] = useState("all");
+
   // Mock data - will be replaced with API call
-  const calls: Call[] = [];
+  // Memoize to prevent the dependency warning
+  const calls: Call[] = useMemo(() => [], []);
+
+  // Memoize filtered calls to prevent unnecessary recalculations
+  const filteredCalls = useMemo(() => {
+    return calls.filter((call) => {
+      const matchesSearch =
+        call.agentName.toLowerCase().includes(debouncedSearchQuery.toLowerCase()) ||
+        call.phoneNumber.includes(debouncedSearchQuery);
+      const matchesStatus =
+        statusFilter === "all" ||
+        call.status === statusFilter ||
+        (statusFilter === "inbound" && call.direction === "inbound") ||
+        (statusFilter === "outbound" && call.direction === "outbound");
+      return matchesSearch && matchesStatus;
+    });
+  }, [calls, debouncedSearchQuery, statusFilter]);
 
   return (
     <div className="space-y-6">
@@ -50,12 +72,19 @@ export default function CallHistoryPage() {
             <div>
               <CardTitle>Recent Calls</CardTitle>
               <CardDescription>
-                {calls.length === 0 ? "No calls yet" : `${calls.length} calls found`}
+                {filteredCalls.length === 0
+                  ? "No calls yet"
+                  : `${filteredCalls.length} calls found`}
               </CardDescription>
             </div>
             <div className="flex gap-2">
-              <Input placeholder="Search calls..." className="w-[250px]" />
-              <Select defaultValue="all">
+              <Input
+                placeholder="Search calls..."
+                className="w-[250px]"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
                 <SelectTrigger className="w-[150px]">
                   <SelectValue />
                 </SelectTrigger>
@@ -79,6 +108,14 @@ export default function CallHistoryPage() {
                 Call history will appear here once your voice agents start handling calls
               </p>
             </div>
+          ) : filteredCalls.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16">
+              <History className="mb-4 h-16 w-16 text-muted-foreground/50" />
+              <h3 className="mb-2 text-lg font-semibold">No matching calls found</h3>
+              <p className="max-w-sm text-center text-sm text-muted-foreground">
+                Try adjusting your search or filter criteria
+              </p>
+            </div>
           ) : (
             <Table>
               <TableHeader>
@@ -93,7 +130,7 @@ export default function CallHistoryPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {calls.map((call) => (
+                {filteredCalls.map((call) => (
                   <TableRow key={call.id}>
                     <TableCell className="text-sm">
                       {new Date(call.timestamp).toLocaleString()}

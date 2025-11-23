@@ -1,14 +1,20 @@
 """CRM endpoints for contacts, appointments, and call interactions."""
 
-from fastapi import APIRouter, Depends
+import logging
+
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.cache import cache_get, cache_invalidate, cache_set
+from app.core.limiter import limiter
 from app.db.session import get_db
 from app.models.appointment import Appointment
 from app.models.call_interaction import CallInteraction
 from app.models.contact import Contact
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/crm", tags=["crm"])
 
@@ -48,7 +54,9 @@ class ContactCreate(BaseModel):
 
 
 @router.get("/contacts", response_model=list[ContactResponse])
+@limiter.limit("100/minute")
 async def list_contacts(
+    request: Request,
     skip: int = 0,
     limit: int = 100,
     db: AsyncSession = Depends(get_db),
@@ -61,7 +69,9 @@ async def list_contacts(
 
 
 @router.get("/contacts/{contact_id}", response_model=ContactResponse)
+@limiter.limit("100/minute")
 async def get_contact(
+    request: Request,
     contact_id: int,
     db: AsyncSession = Depends(get_db),
 ) -> Contact:
@@ -76,7 +86,9 @@ async def get_contact(
 
 
 @router.post("/contacts", response_model=ContactResponse, status_code=201)
+@limiter.limit("100/minute")
 async def create_contact(
+    request: Request,
     contact_data: ContactCreate,
     db: AsyncSession = Depends(get_db),
 ) -> Contact:
@@ -88,23 +100,49 @@ async def create_contact(
     db.add(contact)
     await db.commit()
     await db.refresh(contact)
+
+    # Invalidate CRM stats cache after creating a contact
+    try:
+        invalidated = await cache_invalidate("crm:stats:*")
+        logger.info("Invalidated %d cache keys after contact creation", invalidated)
+    except Exception:
+        logger.exception("Failed to invalidate cache")
+
     return contact
 
 
 @router.get("/stats")
-async def get_crm_stats(db: AsyncSession = Depends(get_db)) -> dict[str, int]:
-    """Get CRM statistics."""
-    contacts_result = await db.execute(select(Contact))
-    contacts_count = len(list(contacts_result.scalars().all()))
+@limiter.limit("100/minute")
+async def get_crm_stats(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, int]:
+    """Get CRM statistics with 60-second cache."""
+    # Try to get from cache first
+    cache_key = "crm:stats:all"
+    cached_stats = await cache_get(cache_key)
 
-    appointments_result = await db.execute(select(Appointment))
-    appointments_count = len(list(appointments_result.scalars().all()))
+    if cached_stats is not None:
+        logger.debug("Returning cached CRM stats")
+        return dict(cached_stats)
 
-    calls_result = await db.execute(select(CallInteraction))
-    calls_count = len(list(calls_result.scalars().all()))
+    # Cache miss - fetch from database
+    logger.debug("Cache miss - fetching CRM stats from database")
 
-    return {
-        "total_contacts": contacts_count,
-        "total_appointments": appointments_count,
-        "total_calls": calls_count,
+    contacts_count = await db.scalar(select(func.count()).select_from(Contact))
+    appointments_count = await db.scalar(select(func.count()).select_from(Appointment))
+    calls_count = await db.scalar(
+        select(func.count()).select_from(CallInteraction),
+    )
+
+    stats = {
+        "total_contacts": contacts_count or 0,
+        "total_appointments": appointments_count or 0,
+        "total_calls": calls_count or 0,
     }
+
+    # Cache the results for 60 seconds
+    await cache_set(cache_key, stats, ttl=60)
+    logger.info("Cached CRM stats: %s", stats)
+
+    return stats

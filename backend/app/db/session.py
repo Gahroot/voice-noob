@@ -9,11 +9,14 @@ from app.core.config import settings
 # Create async engine
 engine = create_async_engine(
     str(settings.DATABASE_URL),
-    echo=settings.DEBUG,
+    echo="debug" if settings.DEBUG else False,
     future=True,
     pool_pre_ping=True,
     pool_size=10,
     max_overflow=20,
+    pool_recycle=3600,  # Recycle connections after 1 hour to prevent stale connections
+    pool_timeout=30,  # Timeout for getting connection from pool
+    pool_use_lifo=True,  # Use LIFO for better connection reuse (keeps hot connections)
 )
 
 # Create async session factory

@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import * as z from "zod";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -64,7 +64,15 @@ export default function NewAgentSimplifiedPage() {
     },
   });
 
-  const selectedTier = PRICING_TIERS.find((t) => t.id === form.watch("pricingTier"));
+  // Use useWatch instead of form.watch() for better performance
+  const pricingTier = useWatch({ control: form.control, name: "pricingTier" });
+  const enabledTools = useWatch({ control: form.control, name: "enabledTools" });
+
+  // Memoize selectedTier to prevent unnecessary recalculations
+  const selectedTier = useMemo(
+    () => PRICING_TIERS.find((t) => t.id === pricingTier),
+    [pricingTier]
+  );
 
   function onSubmit(data: AgentFormValues) {
     console.error("Creating agent with tier config:", {
@@ -154,7 +162,7 @@ export default function NewAgentSimplifiedPage() {
                 </CardHeader>
                 <CardContent>
                   <TierSelector
-                    selectedTier={form.watch("pricingTier")}
+                    selectedTier={pricingTier}
                     onTierChange={(tierId) =>
                       form.setValue("pricingTier", tierId as "budget" | "balanced" | "premium")
                     }
@@ -522,11 +530,11 @@ export default function NewAgentSimplifiedPage() {
                     </div>
                   </div>
 
-                  {form.watch("enabledTools").length > 0 && (
+                  {enabledTools.length > 0 && (
                     <div>
                       <span className="text-sm text-muted-foreground">Tools enabled:</span>
                       <div className="text-sm font-medium">
-                        {form.watch("enabledTools").length} integration(s)
+                        {enabledTools.length} integration(s)
                       </div>
                     </div>
                   )}
