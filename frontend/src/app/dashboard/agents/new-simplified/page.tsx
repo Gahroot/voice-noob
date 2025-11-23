@@ -287,45 +287,58 @@ export default function NewAgentSimplifiedPage() {
                           key={tool.id}
                           control={form.control}
                           name="enabledTools"
-                          render={({ field }) => (
-                            <FormItem className="flex flex-row items-start space-x-3 space-y-0 rounded-md border p-3">
-                              <FormControl>
-                                <input
-                                  type="checkbox"
-                                  className="h-4 w-4 mt-1"
-                                  checked={field.value?.includes(tool.id)}
-                                  onChange={(e) => {
-                                    const current = field.value || [];
-                                    field.onChange(
-                                      e.target.checked
-                                        ? [...current, tool.id]
-                                        : current.filter((v) => v !== tool.id)
-                                    );
-                                  }}
-                                  disabled={!tool.connected}
-                                />
-                              </FormControl>
-                              <div className="space-y-1 leading-none flex-1">
-                                <div className="flex items-center justify-between gap-2">
-                                  <FormLabel className={`font-medium cursor-pointer ${!tool.connected ? "text-muted-foreground" : ""}`}>
-                                    {tool.name}
-                                  </FormLabel>
-                                  {tool.connected ? (
-                                    <Badge variant="default" className="text-xs">
-                                      Connected
-                                    </Badge>
-                                  ) : (
-                                    <Badge variant="outline" className="text-xs">
-                                      Not Connected
-                                    </Badge>
-                                  )}
+                          render={({ field }) => {
+                            const isChecked = field.value?.includes(tool.id);
+                            const handleToggle = () => {
+                              if (!tool.connected) return;
+                              const current = field.value || [];
+                              field.onChange(
+                                isChecked
+                                  ? current.filter((v) => v !== tool.id)
+                                  : [...current, tool.id]
+                              );
+                            };
+
+                            return (
+                              <FormItem
+                                className={`flex flex-row items-start space-x-3 space-y-0 rounded-md border p-3 transition-all ${
+                                  tool.connected
+                                    ? "cursor-pointer hover:bg-accent hover:shadow-sm"
+                                    : "opacity-60 cursor-not-allowed"
+                                } ${isChecked ? "ring-2 ring-primary bg-primary/5" : ""}`}
+                                onClick={handleToggle}
+                              >
+                                <FormControl>
+                                  <input
+                                    type="checkbox"
+                                    className="h-4 w-4 mt-1 cursor-pointer"
+                                    checked={isChecked}
+                                    onChange={() => {}}
+                                    disabled={!tool.connected}
+                                  />
+                                </FormControl>
+                                <div className="space-y-1 leading-none flex-1 pointer-events-none">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <FormLabel className={`font-medium ${!tool.connected ? "text-muted-foreground" : ""}`}>
+                                      {tool.name}
+                                    </FormLabel>
+                                    {tool.connected ? (
+                                      <Badge variant="default" className="text-xs">
+                                        Connected
+                                      </Badge>
+                                    ) : (
+                                      <Badge variant="outline" className="text-xs">
+                                        Not Connected
+                                      </Badge>
+                                    )}
+                                  </div>
+                                  <FormDescription className="text-xs">
+                                    {tool.desc}
+                                  </FormDescription>
                                 </div>
-                                <FormDescription className="text-xs">
-                                  {tool.desc}
-                                </FormDescription>
-                              </div>
-                            </FormItem>
-                          )}
+                              </FormItem>
+                            );
+                          }}
                         />
                       ))}
                     </div>
