@@ -79,6 +79,12 @@ class BaseExternalService:
             await self._client.aclose()
             self._client = None
 
+    def _raise_rate_limit_error(self, retry_after: int) -> None:
+        """Raise rate limit error (extracted to satisfy TRY301)."""
+        raise ExternalServiceRateLimitError(
+            f"Rate limited by {self.base_url}, retry after {retry_after}s"
+        )
+
     async def request_with_retry(
         self,
         method: str,
@@ -119,9 +125,7 @@ class BaseExternalService:
                     if attempt < self.max_retries - 1:
                         await asyncio.sleep(retry_after)
                         continue
-                    raise ExternalServiceRateLimitError(
-                        f"Rate limited by {self.base_url}, retry after {retry_after}s"
-                    )
+                    self._raise_rate_limit_error(retry_after)
 
                 # Raise for other HTTP errors
                 response.raise_for_status()

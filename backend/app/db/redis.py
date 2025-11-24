@@ -1,5 +1,6 @@
 """Redis connection management with connection pooling."""
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING
 
@@ -19,45 +20,48 @@ logger = logging.getLogger(__name__)
 
 redis_client: "Redis | None" = None
 redis_pool: ConnectionPool | None = None
+_redis_lock = asyncio.Lock()
 
 
 async def get_redis() -> "Redis":
     """Get Redis client instance with connection pooling."""
     global redis_client, redis_pool
 
-    if redis_client is None:
-        try:
-            # Create connection pool with optimized settings
-            redis_pool = ConnectionPool.from_url(
-                str(settings.REDIS_URL),
-                encoding="utf-8",
-                decode_responses=True,
-                max_connections=50,  # Maximum connections in pool
-                socket_timeout=5.0,  # Socket timeout in seconds
-                socket_connect_timeout=5.0,  # Connection timeout
-                socket_keepalive=True,  # Enable TCP keepalive
-                retry_on_timeout=True,  # Retry on timeout
-                health_check_interval=30,  # Health check every 30 seconds
-            )
+    # Use lock to prevent race condition during initialization
+    async with _redis_lock:
+        if redis_client is None:
+            try:
+                # Create connection pool with optimized settings
+                redis_pool = ConnectionPool.from_url(
+                    str(settings.REDIS_URL),
+                    encoding="utf-8",
+                    decode_responses=True,
+                    max_connections=50,  # Maximum connections in pool
+                    socket_timeout=5.0,  # Socket timeout in seconds
+                    socket_connect_timeout=5.0,  # Connection timeout
+                    socket_keepalive=True,  # Enable TCP keepalive
+                    retry_on_timeout=True,  # Retry on timeout
+                    health_check_interval=30,  # Health check every 30 seconds
+                )
 
-            # Create Redis client with retry logic
-            retry = Retry(ExponentialBackoff(), retries=3)
-            redis_client = aioredis.Redis(
-                connection_pool=redis_pool,
-                retry=retry,
-                retry_on_error=[
-                    aioredis.ConnectionError,
-                    aioredis.TimeoutError,
-                ],
-            )
+                # Create Redis client with retry logic
+                retry = Retry(ExponentialBackoff(), retries=3)
+                redis_client = aioredis.Redis(
+                    connection_pool=redis_pool,
+                    retry=retry,
+                    retry_on_error=[
+                        aioredis.ConnectionError,
+                        aioredis.TimeoutError,
+                    ],
+                )
 
-            # Test connection
-            await redis_client.ping()
-            logger.info("Redis connection pool initialized successfully")
+                # Test connection
+                await redis_client.ping()
+                logger.info("Redis connection pool initialized successfully")
 
-        except Exception:
-            logger.exception("Failed to initialize Redis connection")
-            raise
+            except Exception:
+                logger.exception("Failed to initialize Redis connection")
+                raise
 
     return redis_client
 

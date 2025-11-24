@@ -2,7 +2,7 @@
 
 import logging
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,7 +26,7 @@ async def health_check() -> dict[str, str]:
 
 
 @router.get("/health/db")
-async def health_check_db(db: AsyncSession = Depends(get_db)) -> dict[str, str]:
+async def health_check_db(response: Response, db: AsyncSession = Depends(get_db)) -> dict[str, str]:
     """Database health check endpoint."""
     try:
         result = await db.execute(text("SELECT 1"))
@@ -34,11 +34,12 @@ async def health_check_db(db: AsyncSession = Depends(get_db)) -> dict[str, str]:
         return {"status": "healthy", "database": "connected"}
     except Exception as e:
         logger.exception("Database health check failed")
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         return {"status": "unhealthy", "database": str(e)}
 
 
 @router.get("/health/redis")
-async def health_check_redis() -> dict[str, str]:
+async def health_check_redis(response: Response) -> dict[str, str]:
     """Redis health check endpoint."""
     try:
         redis = await get_redis()
@@ -46,4 +47,5 @@ async def health_check_redis() -> dict[str, str]:
         return {"status": "healthy", "redis": "connected"}
     except Exception as e:
         logger.exception("Redis health check failed")
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         return {"status": "unhealthy", "redis": str(e)}

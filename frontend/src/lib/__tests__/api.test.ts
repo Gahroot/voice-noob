@@ -60,16 +60,9 @@ describe("Response Interceptor - Success", () => {
 });
 
 describe("Response Interceptor - 401 Errors", () => {
-  let originalLocation: Location;
-
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
-    originalLocation = window.location;
-  });
-
-  afterEach(() => {
-    window.location = originalLocation;
   });
 
   it("removes token on 401 error", () => {
@@ -221,7 +214,17 @@ describe("Interceptor Error Handling", () => {
   });
 
   it("handles errors without response data message", () => {
-    const error = {
+    const error: {
+      response: {
+        status: number;
+        data: { message?: string };
+      };
+      config: {
+        url: string;
+        method: string;
+      };
+      message: string;
+    } = {
       response: {
         status: 500,
         data: {},
@@ -238,7 +241,12 @@ describe("Interceptor Error Handling", () => {
   });
 
   it("handles network timeout errors", () => {
-    const error = {
+    const error: {
+      request: object;
+      response?: object;
+      config: { url: string; method: string };
+      message: string;
+    } = {
       request: {},
       config: {
         url: "/api/test",
@@ -252,7 +260,11 @@ describe("Interceptor Error Handling", () => {
   });
 
   it("handles request configuration errors", () => {
-    const error = {
+    const error: {
+      request?: object;
+      response?: object;
+      message: string;
+    } = {
       message: "Invalid URL",
     };
 

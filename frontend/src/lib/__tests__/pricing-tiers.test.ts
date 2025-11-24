@@ -72,7 +72,7 @@ describe("PRICING_TIERS", () => {
   it("only balanced tier is marked as recommended", () => {
     const recommendedTiers = PRICING_TIERS.filter((t) => t.recommended);
     expect(recommendedTiers.length).toBe(1);
-    expect(recommendedTiers[0].id).toBe("balanced");
+    expect(recommendedTiers[0]?.id).toBe("balanced");
   });
 });
 
@@ -208,7 +208,7 @@ describe("compareTiers", () => {
     const high = compareTiers(10000, 5);
 
     // Higher volume should have proportionally higher costs
-    expect(high[0].cost.totalCost).toBeGreaterThan(low[0].cost.totalCost);
+    expect(high[0]?.cost.totalCost).toBeGreaterThan(low[0]?.cost.totalCost ?? 0);
   });
 
   it("handles different call durations", () => {
@@ -216,14 +216,14 @@ describe("compareTiers", () => {
     const long = compareTiers(1000, 10);
 
     // Longer calls should have higher costs
-    expect(long[0].cost.totalCost).toBeGreaterThan(short[0].cost.totalCost);
+    expect(long[0]?.cost.totalCost).toBeGreaterThan(short[0]?.cost.totalCost ?? 0);
   });
 
   it("maintains tier order (budget, balanced, premium)", () => {
     const comparison = compareTiers(1000, 5);
-    expect(comparison[0].tier.id).toBe("budget");
-    expect(comparison[1].tier.id).toBe("balanced");
-    expect(comparison[2].tier.id).toBe("premium");
+    expect(comparison[0]?.tier.id).toBe("budget");
+    expect(comparison[1]?.tier.id).toBe("balanced");
+    expect(comparison[2]?.tier.id).toBe("premium");
   });
 
   it("includes full cost breakdown for each tier", () => {
@@ -239,7 +239,7 @@ describe("compareTiers", () => {
 
   it("savings decrease from budget to premium", () => {
     const comparison = compareTiers(1000, 5);
-    expect(comparison[0].savingsVsPremium).toBeGreaterThan(comparison[1].savingsVsPremium);
-    expect(comparison[1].savingsVsPremium).toBeGreaterThan(comparison[2].savingsVsPremium);
+    expect(comparison[0]?.savingsVsPremium).toBeGreaterThan(comparison[1]?.savingsVsPremium ?? 0);
+    expect(comparison[1]?.savingsVsPremium).toBeGreaterThan(comparison[2]?.savingsVsPremium ?? 0);
   });
 });

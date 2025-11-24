@@ -3,6 +3,7 @@
 import "./globals.css";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
+import { ErrorBoundary } from "@/components/error-boundary";
 
 export default function RootLayout({
   children,
@@ -26,7 +27,9 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="antialiased">
-        <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+        <ErrorBoundary>
+          <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+        </ErrorBoundary>
       </body>
     </html>
   );

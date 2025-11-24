@@ -10,10 +10,28 @@ export const api = axios.create({
   withCredentials: true,
 });
 
+// Safely get/set localStorage with error handling
+function safeGetItem(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch (error) {
+    console.warn(`Failed to access localStorage for key "${key}":`, error);
+    return null;
+  }
+}
+
+function safeRemoveItem(key: string): void {
+  try {
+    localStorage.removeItem(key);
+  } catch (error) {
+    console.warn(`Failed to remove localStorage key "${key}":`, error);
+  }
+}
+
 // Request interceptor for adding auth token
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem("access_token");
+    const token = safeGetItem("access_token");
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -34,8 +52,13 @@ api.interceptors.response.use(
         endpoint: error.config?.url,
         status: error.response.status,
       });
-      localStorage.removeItem("access_token");
-      window.location.href = "/login";
+      safeRemoveItem("access_token");
+      // Safely navigate to login
+      try {
+        window.location.href = "/login";
+      } catch (navError) {
+        console.error("Failed to redirect to login:", navError);
+      }
     } else if (error.response) {
       // Log API errors with details
       console.error("API error:", {

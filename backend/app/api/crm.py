@@ -8,6 +8,7 @@ from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import undefer
 
 from app.core.cache import cache_get, cache_invalidate, cache_set
 from app.core.limiter import limiter
@@ -179,7 +180,11 @@ async def list_contacts(
     # Fetch from database
     logger.debug("Cache miss - fetching contacts from database: skip=%d, limit=%d", skip, limit)
     result = await db.execute(
-        select(Contact).offset(skip).limit(limit).order_by(Contact.created_at.desc()),
+        select(Contact)
+        .options(undefer(Contact.notes))
+        .offset(skip)
+        .limit(limit)
+        .order_by(Contact.created_at.desc()),
     )
     contacts = list(result.scalars().all())
 
@@ -210,7 +215,9 @@ async def get_contact(
     # Fetch from database
     logger.debug("Cache miss - fetching contact from database: %d", contact_id)
     try:
-        result = await db.execute(select(Contact).where(Contact.id == contact_id))
+        result = await db.execute(
+            select(Contact).options(undefer(Contact.notes)).where(Contact.id == contact_id),
+        )
         contact = result.scalar_one_or_none()
     except DBAPIError as e:
         logger.exception("Database error retrieving contact: %d", contact_id)
@@ -327,26 +334,19 @@ async def get_crm_stats(
         logger.debug("Returning cached CRM stats")
         return dict(cached_stats)
 
-    # Cache miss - fetch from database with single aggregated query
+    # Cache miss - fetch from database with separate count queries
     logger.debug("Cache miss - fetching CRM stats from database")
 
-    # Use a single query with multiple aggregations for better performance
-    result = await db.execute(
-        select(
-            func.count(Contact.id).label("total_contacts"),
-            func.count(Appointment.id).label("total_appointments"),
-            func.count(CallInteraction.id).label("total_calls"),
-        )
-        .select_from(Contact)
-        .outerjoin(Appointment)
-        .outerjoin(CallInteraction)
-    )
-    row = result.one()
+    # Use separate count queries to avoid cartesian product issues
+    # This prevents count multiplication when contacts have multiple appointments/calls
+    total_contacts = await db.scalar(select(func.count()).select_from(Contact))
+    total_appointments = await db.scalar(select(func.count()).select_from(Appointment))
+    total_calls = await db.scalar(select(func.count()).select_from(CallInteraction))
 
     stats = {
-        "total_contacts": row.total_contacts or 0,
-        "total_appointments": row.total_appointments or 0,
-        "total_calls": row.total_calls or 0,
+        "total_contacts": total_contacts or 0,
+        "total_appointments": total_appointments or 0,
+        "total_calls": total_calls or 0,
     }
 
     # Cache the results for 60 seconds

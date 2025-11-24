@@ -153,7 +153,9 @@ describe("IntegrationsPage", () => {
 
     // Find and click the first Connect button
     const connectButtons = screen.getAllByRole("button", { name: "Connect" });
-    await user.click(connectButtons[0]);
+    const firstButton = connectButtons[0];
+    if (!firstButton) throw new Error("No connect button found");
+    await user.click(firstButton);
 
     // Dialog should open with title
     await waitFor(() => {
@@ -285,7 +287,9 @@ describe("IntegrationConfigForm - OAuth", () => {
 
     // Find Salesforce and click Connect
     const connectButtons = screen.getAllByRole("button", { name: "Connect" });
-    await user.click(connectButtons[0]);
+    const firstButton = connectButtons[0];
+    if (!firstButton) throw new Error("No connect button found");
+    await user.click(firstButton);
 
     await waitFor(() => {
       expect(screen.getByText("This integration will access:")).toBeInTheDocument();

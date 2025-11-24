@@ -15,6 +15,7 @@ from app.core.config import settings
 from app.core.limiter import limiter
 from app.db.redis import close_redis, get_redis
 from app.db.session import engine
+from app.middleware.security import SecurityHeadersMiddleware
 
 # Configure structured logging with async processors
 structlog.configure(
@@ -43,20 +44,27 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Startup
     logger.info("Starting application", app_name=settings.APP_NAME)
 
-    # Initialize Redis
-    await get_redis()
-    logger.info("Redis connection established")
+    try:
+        # Initialize Redis (fatal if fails)
+        await get_redis()
+        logger.info("Redis connection established")
+    except Exception:
+        logger.exception("Failed to initialize Redis - application cannot start")
+        raise  # Re-raise to prevent app startup
 
-    # Initialize Sentry if configured
+    # Initialize Sentry if configured (non-fatal)
     if settings.SENTRY_DSN:
-        import sentry_sdk
+        try:
+            import sentry_sdk
 
-        sentry_sdk.init(
-            dsn=settings.SENTRY_DSN,
-            environment=settings.SENTRY_ENVIRONMENT,
-            traces_sample_rate=settings.SENTRY_TRACES_SAMPLE_RATE,
-        )
-        logger.info("Sentry initialized")
+            sentry_sdk.init(
+                dsn=settings.SENTRY_DSN,
+                environment=settings.SENTRY_ENVIRONMENT,
+                traces_sample_rate=settings.SENTRY_TRACES_SAMPLE_RATE,
+            )
+            logger.info("Sentry initialized")
+        except Exception:
+            logger.exception("Failed to initialize Sentry - continuing without error tracking")
 
     yield
 
@@ -64,12 +72,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Shutting down application")
 
     # Close Redis connection
-    await close_redis()
-    logger.info("Redis connection closed")
+    try:
+        await close_redis()
+        logger.info("Redis connection closed")
+    except Exception:
+        logger.exception("Error closing Redis connection")
 
     # Dispose database engine and close all connections
-    await engine.dispose()
-    logger.info("Database connections closed")
+    try:
+        await engine.dispose()
+        logger.info("Database connections closed")
+    except Exception:
+        logger.exception("Error closing database connections")
 
 
 # Create FastAPI app
@@ -86,6 +100,9 @@ app = FastAPI(
 # Add rate limiting
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
+
+# Add security headers middleware
+app.add_middleware(SecurityHeadersMiddleware)
 
 # Add CORS middleware
 app.add_middleware(

@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
-import { afterEach, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, vi } from "vitest";
 
 // Cleanup after each test
 afterEach(() => {
@@ -54,7 +54,7 @@ Object.defineProperty(window, "localStorage", {
 
 // Mock window.location
 delete (window as { location?: Location }).location;
-window.location = {
+(window as { location: Location }).location = {
   href: "http://localhost:3000",
   origin: "http://localhost:3000",
   protocol: "http:",
@@ -64,9 +64,9 @@ window.location = {
   pathname: "/",
   search: "",
   hash: "",
-  reload: vi.fn(),
-  replace: vi.fn(),
-  assign: vi.fn(),
+  reload: vi.fn() as unknown as () => void,
+  replace: vi.fn() as unknown as (url: string | URL) => void,
+  assign: vi.fn() as unknown as (url: string | URL) => void,
   ancestorOrigins: {} as DOMStringList,
 } as Location;
 
