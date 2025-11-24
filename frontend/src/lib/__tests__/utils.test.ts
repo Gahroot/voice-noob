@@ -75,11 +75,7 @@ describe("cn utility function", () => {
   it("handles complex nested conditions", () => {
     const variant = "primary";
     const size = "lg";
-    const result = cn(
-      "base",
-      variant === "primary" && "bg-blue-500",
-      size === "lg" && "px-6 py-3"
-    );
+    const result = cn("base", variant === "primary" && "bg-blue-500", size === "lg" && "px-6 py-3");
     expect(result).toContain("base");
     expect(result).toContain("bg-blue-500");
     expect(result).toContain("px-6");

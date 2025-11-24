@@ -1,10 +1,12 @@
 """CRM endpoints for contacts, appointments, and call interactions."""
 
 import logging
+import re
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy import func, select
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.cache import cache_get, cache_invalidate, cache_set
@@ -20,6 +22,13 @@ router = APIRouter(prefix="/crm", tags=["crm"])
 
 # Constants
 MAX_CONTACTS_LIMIT = 1000  # Maximum number of contacts that can be fetched in one request
+MAX_SKIP_OFFSET = 1_000_000  # Maximum pagination skip offset
+MAX_NAME_LENGTH = 100  # Maximum length for first/last name
+MAX_PHONE_LENGTH = 20  # Maximum phone number length
+MIN_PHONE_LENGTH = 7  # Minimum phone number length
+MAX_COMPANY_NAME_LENGTH = 255  # Maximum company name length
+MAX_TAGS_LENGTH = 500  # Maximum tags length
+MAX_NOTES_LENGTH = 10000  # Maximum notes length
 
 
 # Pydantic schemas
@@ -48,12 +57,95 @@ class ContactCreate(BaseModel):
 
     first_name: str
     last_name: str | None = None
-    email: str | None = None
+    email: EmailStr | None = None
     phone_number: str
     company_name: str | None = None
     status: str = "new"
     tags: str | None = None
     notes: str | None = None
+
+    @field_validator("first_name")
+    @classmethod
+    def validate_first_name(cls, v: str) -> str:
+        """Validate first_name length and content."""
+        v = v.strip()
+        if not v:
+            raise ValueError("first_name cannot be empty")
+        if len(v) > MAX_NAME_LENGTH:
+            raise ValueError(f"first_name cannot exceed {MAX_NAME_LENGTH} characters")
+        return v
+
+    @field_validator("last_name")
+    @classmethod
+    def validate_last_name(cls, v: str | None) -> str | None:
+        """Validate last_name length."""
+        if v is not None:
+            v = v.strip()
+            if len(v) > MAX_NAME_LENGTH:
+                raise ValueError(f"last_name cannot exceed {MAX_NAME_LENGTH} characters")
+            if not v:  # Empty string after strip
+                return None
+        return v
+
+    @field_validator("phone_number")
+    @classmethod
+    def validate_phone_number(cls, v: str) -> str:
+        """Validate phone_number format and length."""
+        v = v.strip()
+        # Remove common phone number formatting characters
+        cleaned = re.sub(r"[^\d+]", "", v)
+        if not cleaned:
+            raise ValueError("phone_number cannot be empty")
+        if len(cleaned) > MAX_PHONE_LENGTH:
+            raise ValueError(f"phone_number cannot exceed {MAX_PHONE_LENGTH} characters")
+        if len(cleaned) < MIN_PHONE_LENGTH:
+            raise ValueError(f"phone_number must be at least {MIN_PHONE_LENGTH} digits")
+        return cleaned
+
+    @field_validator("company_name")
+    @classmethod
+    def validate_company_name(cls, v: str | None) -> str | None:
+        """Validate company_name length."""
+        if v is not None:
+            v = v.strip()
+            if len(v) > MAX_COMPANY_NAME_LENGTH:
+                raise ValueError(f"company_name cannot exceed {MAX_COMPANY_NAME_LENGTH} characters")
+            if not v:
+                return None
+        return v
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, v: str) -> str:
+        """Validate status is one of the allowed values."""
+        valid_statuses = {"new", "contacted", "qualified", "converted", "lost"}
+        if v not in valid_statuses:
+            raise ValueError(f"status must be one of: {', '.join(valid_statuses)}")
+        return v
+
+    @field_validator("tags")
+    @classmethod
+    def validate_tags(cls, v: str | None) -> str | None:
+        """Validate tags length."""
+        if v is not None:
+            v = v.strip()
+            if len(v) > MAX_TAGS_LENGTH:
+                raise ValueError(f"tags cannot exceed {MAX_TAGS_LENGTH} characters")
+            if not v:
+                return None
+        return v
+
+    @field_validator("notes")
+    @classmethod
+    def validate_notes(cls, v: str | None) -> str | None:
+        """Validate notes length."""
+        if v is not None:
+            v = v.strip()
+            if len(v) > MAX_NOTES_LENGTH:
+                raise ValueError(f"notes cannot exceed {MAX_NOTES_LENGTH} characters")
+            if not v:
+                return None
+        return v
 
 
 @router.get("/contacts", response_model=list[ContactResponse])
@@ -65,9 +157,15 @@ async def list_contacts(
     db: AsyncSession = Depends(get_db),
 ) -> list[Contact]:
     """List all contacts (simplified - normally would filter by user_id)."""
-    # Enforce max limit to prevent DoS
+    # Validate pagination parameters to prevent DoS
+    if skip < 0:
+        raise HTTPException(status_code=400, detail="Skip must be non-negative")
+    if limit < 1:
+        raise HTTPException(status_code=400, detail="Limit must be at least 1")
     if limit > MAX_CONTACTS_LIMIT:
         raise HTTPException(status_code=400, detail=f"Limit cannot exceed {MAX_CONTACTS_LIMIT}")
+    if skip > MAX_SKIP_OFFSET:  # Prevent massive table scans
+        raise HTTPException(status_code=400, detail="Skip offset too large")
 
     cache_key = f"crm:contacts:list:{skip}:{limit}"
 
@@ -86,24 +184,8 @@ async def list_contacts(
     contacts = list(result.scalars().all())
 
     # Cache for 5 minutes (300 seconds)
-    # Store as list of dicts for JSON serialization
-    contacts_data = [
-        {
-            "id": c.id,
-            "user_id": c.user_id,
-            "first_name": c.first_name,
-            "last_name": c.last_name,
-            "email": c.email,
-            "phone_number": c.phone_number,
-            "company_name": c.company_name,
-            "status": c.status,
-            "tags": c.tags,
-            "notes": c.notes,
-            "created_at": c.created_at,
-            "updated_at": c.updated_at,
-        }
-        for c in contacts
-    ]
+    # Use Pydantic model_dump for efficient serialization
+    contacts_data = [ContactResponse.model_validate(c).model_dump() for c in contacts]
     await cache_set(cache_key, contacts_data, ttl=300)
     logger.debug("Cached contacts list for 5 minutes")
     return contacts
@@ -130,29 +212,26 @@ async def get_contact(
     try:
         result = await db.execute(select(Contact).where(Contact.id == contact_id))
         contact = result.scalar_one_or_none()
-    except Exception:
-        logger.exception("Failed to retrieve contact: %d", contact_id)
-        raise
+    except DBAPIError as e:
+        logger.exception("Database error retrieving contact: %d", contact_id)
+        raise HTTPException(
+            status_code=503,
+            detail="Database temporarily unavailable. Please try again later.",
+        ) from e
+    except Exception as e:
+        logger.exception("Unexpected error retrieving contact: %d", contact_id)
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error",
+        ) from e
 
     if not contact:
         logger.error("Contact not found: %d", contact_id)
         raise HTTPException(status_code=404, detail="Contact not found")
 
     # Cache for 10 minutes (600 seconds)
-    contact_data = {
-        "id": contact.id,
-        "user_id": contact.user_id,
-        "first_name": contact.first_name,
-        "last_name": contact.last_name,
-        "email": contact.email,
-        "phone_number": contact.phone_number,
-        "company_name": contact.company_name,
-        "status": contact.status,
-        "tags": contact.tags,
-        "notes": contact.notes,
-        "created_at": contact.created_at,
-        "updated_at": contact.updated_at,
-    }
+    # Use Pydantic model_dump for efficient serialization
+    contact_data = ContactResponse.model_validate(contact).model_dump()
     await cache_set(cache_key, contact_data, ttl=600)
     logger.info("Retrieved contact: %d", contact_id)
     return contact
@@ -190,13 +269,47 @@ async def create_contact(
             logger.exception("Failed to invalidate cache after contact creation")
 
         return contact
-    except Exception:
-        logger.exception(
-            "Failed to create contact: user_id=%d, phone=%s",
+    except IntegrityError as e:
+        await db.rollback()
+        logger.warning(
+            "Integrity constraint violation creating contact: user_id=%d, phone=%s",
             1,
             contact_data.phone_number,
         )
-        raise
+        # Check if it's a duplicate phone or email
+        error_msg = str(e.orig) if hasattr(e, "orig") else str(e)
+        if "ix_contacts_user_id_phone_unique" in error_msg:
+            raise HTTPException(
+                status_code=409,
+                detail="A contact with this phone number already exists",
+            ) from e
+        if "ix_contacts_user_id_email_unique" in error_msg:
+            raise HTTPException(
+                status_code=409,
+                detail="A contact with this email already exists",
+            ) from e
+        raise HTTPException(
+            status_code=400,
+            detail="Failed to create contact due to constraint violation",
+        ) from e
+    except DBAPIError as e:
+        await db.rollback()
+        logger.exception("Database error creating contact: phone=%s", contact_data.phone_number)
+        raise HTTPException(
+            status_code=503,
+            detail="Database temporarily unavailable. Please try again later.",
+        ) from e
+    except Exception as e:
+        await db.rollback()
+        logger.exception(
+            "Unexpected error creating contact: user_id=%d, phone=%s",
+            1,
+            contact_data.phone_number,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error",
+        ) from e
 
 
 @router.get("/stats")
@@ -214,19 +327,26 @@ async def get_crm_stats(
         logger.debug("Returning cached CRM stats")
         return dict(cached_stats)
 
-    # Cache miss - fetch from database
+    # Cache miss - fetch from database with single aggregated query
     logger.debug("Cache miss - fetching CRM stats from database")
 
-    contacts_count = await db.scalar(select(func.count()).select_from(Contact))
-    appointments_count = await db.scalar(select(func.count()).select_from(Appointment))
-    calls_count = await db.scalar(
-        select(func.count()).select_from(CallInteraction),
+    # Use a single query with multiple aggregations for better performance
+    result = await db.execute(
+        select(
+            func.count(Contact.id).label("total_contacts"),
+            func.count(Appointment.id).label("total_appointments"),
+            func.count(CallInteraction.id).label("total_calls"),
+        )
+        .select_from(Contact)
+        .outerjoin(Appointment)
+        .outerjoin(CallInteraction)
     )
+    row = result.one()
 
     stats = {
-        "total_contacts": contacts_count or 0,
-        "total_appointments": appointments_count or 0,
-        "total_calls": calls_count or 0,
+        "total_contacts": row.total_contacts or 0,
+        "total_appointments": row.total_appointments or 0,
+        "total_calls": row.total_calls or 0,
     }
 
     # Cache the results for 60 seconds

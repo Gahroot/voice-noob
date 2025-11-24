@@ -135,7 +135,9 @@ describe("IntegrationsPage", () => {
     expect(
       screen.getByText("Access customer data, create leads, update opportunities")
     ).toBeInTheDocument();
-    expect(screen.getByText("Manage contacts, deals, and customer interactions")).toBeInTheDocument();
+    expect(
+      screen.getByText("Manage contacts, deals, and customer interactions")
+    ).toBeInTheDocument();
   });
 
   it("shows Connect button for non-connected integrations", () => {

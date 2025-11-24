@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, memo } from "react";
 import { useDebounce } from "use-debounce";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -158,7 +158,7 @@ export default function IntegrationsPage() {
   );
 }
 
-function IntegrationCard({
+const IntegrationCard = memo(function IntegrationCard({
   integration,
   isConnected,
 }: {
@@ -236,9 +236,9 @@ function IntegrationCard({
       </CardContent>
     </Card>
   );
-}
+});
 
-function IntegrationConfigForm({
+const IntegrationConfigForm = memo(function IntegrationConfigForm({
   integration,
   isConnected,
   onClose,
@@ -366,4 +366,4 @@ function IntegrationConfigForm({
       </div>
     </form>
   );
-}
+});

@@ -31,6 +31,77 @@ import { TierSelector } from "@/components/tier-selector";
 import { PRICING_TIERS } from "@/lib/pricing-tiers";
 import { ChevronRight } from "lucide-react";
 
+// Tool configurations - defined outside component to prevent recreation on every render
+const AVAILABLE_TOOLS = [
+  {
+    id: "google-calendar",
+    name: "Google Calendar",
+    desc: "Schedule meetings, check availability",
+    connected: false,
+  },
+  {
+    id: "salesforce",
+    name: "Salesforce",
+    desc: "Access CRM data",
+    connected: false,
+  },
+  {
+    id: "hubspot",
+    name: "HubSpot",
+    desc: "Manage contacts & deals",
+    connected: false,
+  },
+  {
+    id: "notion",
+    name: "Notion",
+    desc: "Query & update databases",
+    connected: false,
+  },
+  {
+    id: "slack",
+    name: "Slack",
+    desc: "Send messages & notifications",
+    connected: false,
+  },
+  { id: "gmail", name: "Gmail", desc: "Send emails", connected: false },
+  {
+    id: "google-sheets",
+    name: "Google Sheets",
+    desc: "Read & write spreadsheets",
+    connected: false,
+  },
+  {
+    id: "airtable",
+    name: "Airtable",
+    desc: "Access database records",
+    connected: false,
+  },
+  {
+    id: "zendesk",
+    name: "Zendesk",
+    desc: "Manage support tickets",
+    connected: false,
+  },
+  {
+    id: "stripe",
+    name: "Stripe",
+    desc: "Process payments",
+    connected: false,
+  },
+  {
+    id: "twilio",
+    name: "Twilio",
+    desc: "Send SMS messages",
+    connected: false,
+  },
+  {
+    id: "sendgrid",
+    name: "SendGrid",
+    desc: "Send transactional emails",
+    connected: false,
+  },
+] as const;
+
 const agentFormSchema = z.object({
   // Step 1: Pricing & Basic
   pricingTier: z.enum(["budget", "balanced", "premium"]).default("balanced"),
@@ -283,70 +354,7 @@ export default function NewAgentSimplifiedPage() {
                     </p>
 
                     <div className="grid gap-3 md:grid-cols-2">
-                      {[
-                        {
-                          id: "google-calendar",
-                          name: "Google Calendar",
-                          desc: "Schedule meetings, check availability",
-                          connected: false,
-                        },
-                        {
-                          id: "salesforce",
-                          name: "Salesforce",
-                          desc: "Access CRM data",
-                          connected: false,
-                        },
-                        {
-                          id: "hubspot",
-                          name: "HubSpot",
-                          desc: "Manage contacts & deals",
-                          connected: false,
-                        },
-                        {
-                          id: "notion",
-                          name: "Notion",
-                          desc: "Query & update databases",
-                          connected: false,
-                        },
-                        {
-                          id: "slack",
-                          name: "Slack",
-                          desc: "Send messages & notifications",
-                          connected: false,
-                        },
-                        { id: "gmail", name: "Gmail", desc: "Send emails", connected: false },
-                        {
-                          id: "google-sheets",
-                          name: "Google Sheets",
-                          desc: "Read & write spreadsheets",
-                          connected: false,
-                        },
-                        {
-                          id: "airtable",
-                          name: "Airtable",
-                          desc: "Access database records",
-                          connected: false,
-                        },
-                        {
-                          id: "stripe",
-                          name: "Stripe",
-                          desc: "Process payments",
-                          connected: false,
-                        },
-                        {
-                          id: "zendesk",
-                          name: "Zendesk",
-                          desc: "Create support tickets",
-                          connected: false,
-                        },
-                        {
-                          id: "github",
-                          name: "GitHub",
-                          desc: "Repository & issue management",
-                          connected: false,
-                        },
-                        { id: "jira", name: "Jira", desc: "Project management", connected: false },
-                      ].map((tool) => (
+                      {AVAILABLE_TOOLS.map((tool) => (
                         <FormField
                           key={tool.id}
                           control={form.control}

@@ -20,7 +20,7 @@ export default function TestAgentPage() {
   const [isConnected, setIsConnected] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [transcript, setTranscript] = useState<
-    Array<{ speaker: string; text: string; timestamp: Date }>
+    Array<{ id: string; speaker: string; text: string; timestamp: Date }>
   >([]);
 
   const handleConnect = () => {
@@ -29,6 +29,7 @@ export default function TestAgentPage() {
       // Simulate connection
       setTranscript([
         {
+          id: crypto.randomUUID(),
           speaker: "Agent",
           text: "Hello! How can I help you today?",
           timestamp: new Date(),
@@ -119,8 +120,8 @@ export default function TestAgentPage() {
                       </div>
                     ) : (
                       <div className="space-y-3">
-                        {transcript.map((item, index) => (
-                          <div key={index} className="space-y-1">
+                        {transcript.map((item) => (
+                          <div key={item.id} className="space-y-1">
                             <div className="flex items-center gap-2">
                               <Badge variant="outline" className="text-xs">
                                 {item.speaker}
