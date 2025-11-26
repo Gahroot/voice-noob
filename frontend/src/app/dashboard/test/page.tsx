@@ -29,6 +29,14 @@ type TranscriptItem = {
   timestamp: Date;
 };
 
+// WebRTC resources for proper cleanup
+type WebRTCResources = {
+  peerConnection: RTCPeerConnection | null;
+  dataChannel: RTCDataChannel | null;
+  audioStream: MediaStream | null;
+  audioElement: HTMLAudioElement | null;
+};
+
 export default function TestAgentPage() {
   const [selectedAgentId, setSelectedAgentId] = useState<string>("");
   const [isConnected, setIsConnected] = useState(false);
@@ -38,6 +46,18 @@ export default function TestAgentPage() {
 
   const sessionRef = useRef<RealtimeSession | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
+
+  // WebRTC resource refs for proper cleanup
+  const webrtcRef = useRef<WebRTCResources>({
+    peerConnection: null,
+    dataChannel: null,
+    audioStream: null,
+    audioElement: null,
+  });
+
+  // Batch transcript updates to reduce re-renders
+  const pendingTranscriptsRef = useRef<TranscriptItem[]>([]);
+  const flushTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Auto-scroll to bottom when transcript updates
   useEffect(() => {
@@ -50,7 +70,96 @@ export default function TestAgentPage() {
     queryFn: fetchAgents,
   });
 
+  // Flush pending transcript updates
+  const flushTranscripts = useCallback(() => {
+    if (pendingTranscriptsRef.current.length > 0) {
+      const pending = [...pendingTranscriptsRef.current];
+      pendingTranscriptsRef.current = [];
+      setTranscript((prev) => {
+        // Deduplicate by checking existing texts
+        const existingTexts = new Set(prev.map((t) => `${t.speaker}:${t.text}`));
+        const newItems = pending.filter(
+          (item) => !existingTexts.has(`${item.speaker}:${item.text}`)
+        );
+        return [...prev, ...newItems];
+      });
+    }
+  }, []);
+
+  // Batched addTranscript that groups updates
+  const addTranscriptBatched = useCallback(
+    (speaker: string, text: string) => {
+      pendingTranscriptsRef.current.push({
+        id: crypto.randomUUID(),
+        speaker,
+        text,
+        timestamp: new Date(),
+      });
+
+      // Debounce flush - wait 50ms for more items before flushing
+      if (flushTimeoutRef.current) {
+        clearTimeout(flushTimeoutRef.current);
+      }
+      flushTimeoutRef.current = setTimeout(flushTranscripts, 50);
+    },
+    [flushTranscripts]
+  );
+
   const cleanup = useCallback(() => {
+    // Clear any pending flush timeout
+    if (flushTimeoutRef.current) {
+      clearTimeout(flushTimeoutRef.current);
+      flushTimeoutRef.current = null;
+    }
+
+    // Flush any remaining transcripts
+    flushTranscripts();
+
+    // Clean up WebRTC resources
+    const { peerConnection, dataChannel, audioStream, audioElement } = webrtcRef.current;
+
+    if (dataChannel) {
+      try {
+        dataChannel.close();
+      } catch (e) {
+        console.error("[Cleanup] Error closing data channel:", e);
+      }
+    }
+
+    if (peerConnection) {
+      try {
+        peerConnection.close();
+      } catch (e) {
+        console.error("[Cleanup] Error closing peer connection:", e);
+      }
+    }
+
+    if (audioStream) {
+      try {
+        audioStream.getTracks().forEach((track) => track.stop());
+      } catch (e) {
+        console.error("[Cleanup] Error stopping audio tracks:", e);
+      }
+    }
+
+    if (audioElement) {
+      try {
+        audioElement.srcObject = null;
+        audioElement.remove();
+      } catch (e) {
+        console.error("[Cleanup] Error cleaning up audio element:", e);
+      }
+    }
+
+    // Reset refs
+    webrtcRef.current = {
+      peerConnection: null,
+      dataChannel: null,
+      audioStream: null,
+      audioElement: null,
+    };
+
+    // Clean up session ref
     if (sessionRef.current) {
       try {
         sessionRef.current.close();
@@ -59,7 +168,7 @@ export default function TestAgentPage() {
       }
       sessionRef.current = null;
     }
-  }, []);
+  }, [flushTranscripts]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -68,7 +177,8 @@ export default function TestAgentPage() {
     };
   }, [cleanup]);
 
-  const addTranscript = useCallback((speaker: string, text: string) => {
+  // Immediate addTranscript for critical messages (system messages during connect)
+  const addTranscriptImmediate = useCallback((speaker: string, text: string) => {
     setTranscript((prev) => [
       ...prev,
       {
@@ -79,6 +189,9 @@ export default function TestAgentPage() {
       },
     ]);
   }, []);
+
+  // Use batched version for high-frequency updates (history_updated handler)
+  const addTranscript = addTranscriptBatched;
 
   const handleConnect = async () => {
     if (isConnected) {
@@ -149,7 +262,7 @@ export default function TestAgentPage() {
       session.on("history_updated", (history: RealtimeItem[]) => {
         console.log("[History Updated]", history.length, "items");
 
-        // Process history to extract transcripts
+        // Process history to extract transcripts - use batched updates
         for (const item of history) {
           if (item.type === "message") {
             const messageItem = item as RealtimeItem & {
@@ -162,74 +275,13 @@ export default function TestAgentPage() {
             if (content && Array.isArray(content)) {
               for (const part of content) {
                 if (part.type === "input_text" && part.text) {
-                  // Check if we already have this transcript
-                  setTranscript((prev) => {
-                    const exists = prev.some((t) => t.text === part.text && t.speaker === "You");
-                    if (!exists) {
-                      return [
-                        ...prev,
-                        {
-                          id: crypto.randomUUID(),
-                          speaker: "You",
-                          text: part.text ?? "",
-                          timestamp: new Date(),
-                        },
-                      ];
-                    }
-                    return prev;
-                  });
+                  addTranscriptBatched("You", part.text);
                 } else if (part.type === "text" && part.text && role === "assistant") {
-                  setTranscript((prev) => {
-                    const exists = prev.some((t) => t.text === part.text && t.speaker === "Agent");
-                    if (!exists) {
-                      return [
-                        ...prev,
-                        {
-                          id: crypto.randomUUID(),
-                          speaker: "Agent",
-                          text: part.text ?? "",
-                          timestamp: new Date(),
-                        },
-                      ];
-                    }
-                    return prev;
-                  });
+                  addTranscriptBatched("Agent", part.text);
                 } else if (part.type === "input_audio" && part.transcript) {
-                  setTranscript((prev) => {
-                    const exists = prev.some(
-                      (t) => t.text === part.transcript && t.speaker === "You"
-                    );
-                    if (!exists) {
-                      return [
-                        ...prev,
-                        {
-                          id: crypto.randomUUID(),
-                          speaker: "You",
-                          text: part.transcript ?? "",
-                          timestamp: new Date(),
-                        },
-                      ];
-                    }
-                    return prev;
-                  });
+                  addTranscriptBatched("You", part.transcript);
                 } else if (part.type === "audio" && part.transcript && role === "assistant") {
-                  setTranscript((prev) => {
-                    const exists = prev.some(
-                      (t) => t.text === part.transcript && t.speaker === "Agent"
-                    );
-                    if (!exists) {
-                      return [
-                        ...prev,
-                        {
-                          id: crypto.randomUUID(),
-                          speaker: "Agent",
-                          text: part.transcript ?? "",
-                          timestamp: new Date(),
-                        },
-                      ];
-                    }
-                    return prev;
-                  });
+                  addTranscriptBatched("Agent", part.transcript);
                 }
               }
             }
@@ -278,6 +330,14 @@ export default function TestAgentPage() {
       audioElement.autoplay = true;
       pc.ontrack = (event) => {
         audioElement.srcObject = event.streams[0] ?? null;
+      };
+
+      // Store WebRTC resources in refs for proper cleanup
+      webrtcRef.current = {
+        peerConnection: pc,
+        dataChannel,
+        audioStream,
+        audioElement,
       };
 
       // Create offer
@@ -449,22 +509,14 @@ export default function TestAgentPage() {
         }
       };
 
-      // Store references for cleanup
-      sessionRef.current = {
-        close: () => {
-          dataChannel.close();
-          pc.close();
-          audioStream.getTracks().forEach((t) => t.stop());
-        },
-        mute: (muted: boolean) => {
-          audioStream.getAudioTracks().forEach((track) => {
-            track.enabled = !muted;
-          });
-        },
-      } as unknown as RealtimeSession;
+      // sessionRef now uses webrtcRef for cleanup (handled by cleanup function)
+      // No need to manually assign here as webrtcRef.current is already set above
 
-      addTranscript("System", `Tier: ${selectedAgent.pricing_tier}`);
-      addTranscript("System", `Tools: ${selectedAgent.enabled_tools.join(", ") || "None"}`);
+      addTranscriptImmediate("System", `Tier: ${selectedAgent.pricing_tier}`);
+      addTranscriptImmediate(
+        "System",
+        `Tools: ${selectedAgent.enabled_tools.join(", ") || "None"}`
+      );
     } catch (error: unknown) {
       const err = error as Error;
       console.error("[WebRTC] Connection error:", err);
@@ -487,9 +539,12 @@ export default function TestAgentPage() {
   };
 
   const handleMuteToggle = () => {
-    if (sessionRef.current) {
+    const { audioStream } = webrtcRef.current;
+    if (audioStream) {
       const newMuted = !isMuted;
-      sessionRef.current.mute(newMuted);
+      audioStream.getAudioTracks().forEach((track) => {
+        track.enabled = !newMuted;
+      });
       setIsMuted(newMuted);
     }
   };

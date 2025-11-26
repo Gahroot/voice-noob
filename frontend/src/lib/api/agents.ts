@@ -105,6 +105,39 @@ export async function getAgent(agentId: string): Promise<Agent> {
   return response.json();
 }
 
+export interface UpdateAgentRequest {
+  name?: string;
+  description?: string;
+  pricing_tier?: "budget" | "balanced" | "premium";
+  system_prompt?: string;
+  language?: string;
+  enabled_tools?: string[];
+  phone_number_id?: string | null;
+  enable_recording?: boolean;
+  enable_transcript?: boolean;
+  is_active?: boolean;
+}
+
+/**
+ * Update an existing agent
+ */
+export async function updateAgent(agentId: string, request: UpdateAgentRequest): Promise<Agent> {
+  const response = await fetchWithTimeout(`${API_BASE}/api/v1/agents/${agentId}`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: response.statusText }));
+    throw new Error(error.detail ?? "Failed to update agent");
+  }
+
+  return response.json();
+}
+
 /**
  * Delete an agent
  */

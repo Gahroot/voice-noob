@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Bot, Phone, TrendingUp, Clock } from "lucide-react";
 
@@ -77,7 +78,7 @@ export default function DashboardPage() {
             <CardDescription>Get started with your platform</CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
-            <a
+            <Link
               href="/dashboard/agents/new-simplified"
               className="block rounded-lg border p-4 transition-colors hover:bg-accent"
             >
@@ -85,15 +86,15 @@ export default function DashboardPage() {
               <div className="text-sm text-muted-foreground">
                 Choose pricing tier & configure your agent
               </div>
-            </a>
-            <a
+            </Link>
+            <Link
               href="/dashboard/phone-numbers"
               className="block rounded-lg border p-4 transition-colors hover:bg-accent"
             >
               <div className="font-medium">Get Phone Number</div>
               <div className="text-sm text-muted-foreground">Purchase a number for your agents</div>
-            </a>
-            <a
+            </Link>
+            <Link
               href="/dashboard/settings"
               className="block rounded-lg border p-4 transition-colors hover:bg-accent"
             >
@@ -101,7 +102,7 @@ export default function DashboardPage() {
               <div className="text-sm text-muted-foreground">
                 Add OpenAI, Deepgram, ElevenLabs keys
               </div>
-            </a>
+            </Link>
           </CardContent>
         </Card>
       </div>
