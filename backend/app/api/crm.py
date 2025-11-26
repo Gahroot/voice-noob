@@ -341,6 +341,257 @@ async def create_contact(
         ) from e
 
 
+class ContactUpdate(BaseModel):
+    """Contact update schema - all fields optional."""
+
+    first_name: str | None = None
+    last_name: str | None = None
+    email: EmailStr | None = None
+    phone_number: str | None = None
+    company_name: str | None = None
+    status: str | None = None
+    tags: str | None = None
+    notes: str | None = None
+
+    @field_validator("first_name")
+    @classmethod
+    def validate_first_name(cls, v: str | None) -> str | None:
+        """Validate first_name length and content."""
+        if v is not None:
+            v = v.strip()
+            if not v:
+                raise ValueError("first_name cannot be empty")
+            if len(v) > MAX_NAME_LENGTH:
+                raise ValueError(f"first_name cannot exceed {MAX_NAME_LENGTH} characters")
+        return v
+
+    @field_validator("last_name")
+    @classmethod
+    def validate_last_name(cls, v: str | None) -> str | None:
+        """Validate last_name length."""
+        if v is not None:
+            v = v.strip()
+            if len(v) > MAX_NAME_LENGTH:
+                raise ValueError(f"last_name cannot exceed {MAX_NAME_LENGTH} characters")
+            if not v:
+                return None
+        return v
+
+    @field_validator("phone_number")
+    @classmethod
+    def validate_phone_number(cls, v: str | None) -> str | None:
+        """Validate phone_number format and length."""
+        if v is not None:
+            v = v.strip()
+            cleaned = re.sub(r"[^\d+]", "", v)
+            if not cleaned:
+                raise ValueError("phone_number cannot be empty")
+            if len(cleaned) > MAX_PHONE_LENGTH:
+                raise ValueError(f"phone_number cannot exceed {MAX_PHONE_LENGTH} characters")
+            if len(cleaned) < MIN_PHONE_LENGTH:
+                raise ValueError(f"phone_number must be at least {MIN_PHONE_LENGTH} digits")
+            return cleaned
+        return v
+
+    @field_validator("company_name")
+    @classmethod
+    def validate_company_name(cls, v: str | None) -> str | None:
+        """Validate company_name length."""
+        if v is not None:
+            v = v.strip()
+            if len(v) > MAX_COMPANY_NAME_LENGTH:
+                raise ValueError(f"company_name cannot exceed {MAX_COMPANY_NAME_LENGTH} characters")
+            if not v:
+                return None
+        return v
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, v: str | None) -> str | None:
+        """Validate status is one of the allowed values."""
+        if v is not None:
+            valid_statuses = {"new", "contacted", "qualified", "converted", "lost"}
+            if v not in valid_statuses:
+                raise ValueError(f"status must be one of: {', '.join(valid_statuses)}")
+        return v
+
+    @field_validator("tags")
+    @classmethod
+    def validate_tags(cls, v: str | None) -> str | None:
+        """Validate tags length."""
+        if v is not None:
+            v = v.strip()
+            if len(v) > MAX_TAGS_LENGTH:
+                raise ValueError(f"tags cannot exceed {MAX_TAGS_LENGTH} characters")
+            if not v:
+                return None
+        return v
+
+    @field_validator("notes")
+    @classmethod
+    def validate_notes(cls, v: str | None) -> str | None:
+        """Validate notes length."""
+        if v is not None:
+            v = v.strip()
+            if len(v) > MAX_NOTES_LENGTH:
+                raise ValueError(f"notes cannot exceed {MAX_NOTES_LENGTH} characters")
+            if not v:
+                return None
+        return v
+
+
+@router.put("/contacts/{contact_id}", response_model=ContactResponse)
+@limiter.limit("100/minute")
+async def update_contact(
+    request: Request,
+    contact_id: int,
+    contact_data: ContactUpdate,
+    db: AsyncSession = Depends(get_db),
+) -> Contact:
+    """Update an existing contact (must belong to current user)."""
+    user_id = _get_current_user_id()
+
+    # Fetch existing contact - filter by user_id for security
+    try:
+        result = await db.execute(
+            select(Contact)
+            .options(undefer(Contact.notes))
+            .where(Contact.id == contact_id, Contact.user_id == user_id),
+        )
+        contact = result.scalar_one_or_none()
+    except DBAPIError as e:
+        logger.exception("Database error retrieving contact for update: %d", contact_id)
+        raise HTTPException(
+            status_code=503,
+            detail="Database temporarily unavailable. Please try again later.",
+        ) from e
+
+    if not contact:
+        logger.error("Contact not found or unauthorized for update: %d", contact_id)
+        raise HTTPException(status_code=404, detail="Contact not found")
+
+    # Update only provided fields
+    update_data = contact_data.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(contact, field, value)
+
+    try:
+        await db.commit()
+        await db.refresh(contact)
+
+        logger.info(
+            "Updated contact: id=%d, user_id=%d",
+            contact.id,
+            contact.user_id,
+        )
+
+        # Invalidate caches
+        try:
+            await cache_invalidate(f"crm:contact:{user_id}:{contact_id}")
+            await cache_invalidate(f"crm:contacts:list:{user_id}:*")
+            await cache_invalidate("crm:stats:*")
+        except Exception:
+            logger.exception("Failed to invalidate cache after contact update")
+
+        return contact
+    except IntegrityError as e:
+        await db.rollback()
+        logger.warning(
+            "Integrity constraint violation updating contact: id=%d",
+            contact_id,
+        )
+        error_msg = str(e.orig) if hasattr(e, "orig") else str(e)
+        if "ix_contacts_user_id_phone_unique" in error_msg:
+            raise HTTPException(
+                status_code=409,
+                detail="A contact with this phone number already exists",
+            ) from e
+        if "ix_contacts_user_id_email_unique" in error_msg:
+            raise HTTPException(
+                status_code=409,
+                detail="A contact with this email already exists",
+            ) from e
+        raise HTTPException(
+            status_code=400,
+            detail="Failed to update contact due to constraint violation",
+        ) from e
+    except DBAPIError as e:
+        await db.rollback()
+        logger.exception("Database error updating contact: %d", contact_id)
+        raise HTTPException(
+            status_code=503,
+            detail="Database temporarily unavailable. Please try again later.",
+        ) from e
+    except Exception as e:
+        await db.rollback()
+        logger.exception("Unexpected error updating contact: %d", contact_id)
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error",
+        ) from e
+
+
+@router.delete("/contacts/{contact_id}", status_code=204)
+@limiter.limit("100/minute")
+async def delete_contact(
+    request: Request,
+    contact_id: int,
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Delete a contact (must belong to current user)."""
+    user_id = _get_current_user_id()
+
+    # Fetch existing contact - filter by user_id for security
+    try:
+        result = await db.execute(
+            select(Contact).where(Contact.id == contact_id, Contact.user_id == user_id),
+        )
+        contact = result.scalar_one_or_none()
+    except DBAPIError as e:
+        logger.exception("Database error retrieving contact for deletion: %d", contact_id)
+        raise HTTPException(
+            status_code=503,
+            detail="Database temporarily unavailable. Please try again later.",
+        ) from e
+
+    if not contact:
+        logger.error("Contact not found or unauthorized for deletion: %d", contact_id)
+        raise HTTPException(status_code=404, detail="Contact not found")
+
+    try:
+        await db.delete(contact)
+        await db.commit()
+
+        logger.info(
+            "Deleted contact: id=%d, user_id=%d",
+            contact.id,
+            user_id,
+        )
+
+        # Invalidate caches
+        try:
+            await cache_invalidate(f"crm:contact:{user_id}:{contact_id}")
+            await cache_invalidate(f"crm:contacts:list:{user_id}:*")
+            await cache_invalidate("crm:stats:*")
+        except Exception:
+            logger.exception("Failed to invalidate cache after contact deletion")
+
+    except DBAPIError as e:
+        await db.rollback()
+        logger.exception("Database error deleting contact: %d", contact_id)
+        raise HTTPException(
+            status_code=503,
+            detail="Database temporarily unavailable. Please try again later.",
+        ) from e
+    except Exception as e:
+        await db.rollback()
+        logger.exception("Unexpected error deleting contact: %d", contact_id)
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error",
+        ) from e
+
+
 @router.get("/stats")
 @limiter.limit("100/minute")
 async def get_crm_stats(
