@@ -24,6 +24,7 @@ from app.api import (
     agents,
     auth,
     calls,
+    compliance,
     crm,
     health,
     phone_numbers,
@@ -151,6 +152,7 @@ app.include_router(telephony_ws.router)  # Telephony WebSocket for media streams
 app.include_router(calls.router)  # Call history API
 app.include_router(phone_numbers.router)  # Phone numbers API
 app.include_router(auth.router)  # Authentication API
+app.include_router(compliance.router)  # Compliance API (GDPR/CCPA)
 
 
 @app.get("/")
