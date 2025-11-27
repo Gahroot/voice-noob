@@ -18,6 +18,8 @@ export interface CallRecord {
   agent_name: string | null;
   contact_id: number | null;
   contact_name: string | null;
+  workspace_id: string | null;
+  workspace_name: string | null;
   direction: "inbound" | "outbound";
   status: string;
   from_number: string;
@@ -42,6 +44,7 @@ export interface ListCallsParams {
   page?: number;
   page_size?: number;
   agent_id?: string;
+  workspace_id?: string;
   direction?: "inbound" | "outbound";
   status?: string;
 }
@@ -63,6 +66,7 @@ export async function listCalls(params: ListCallsParams = {}): Promise<CallRecor
   if (params.page) searchParams.set("page", params.page.toString());
   if (params.page_size) searchParams.set("page_size", params.page_size.toString());
   if (params.agent_id) searchParams.set("agent_id", params.agent_id);
+  if (params.workspace_id) searchParams.set("workspace_id", params.workspace_id);
   if (params.direction) searchParams.set("direction", params.direction);
   if (params.status) searchParams.set("status", params.status);
 

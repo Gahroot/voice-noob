@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 # Create async engine
 engine = create_async_engine(
     str(settings.DATABASE_URL),
-    echo="debug" if settings.DEBUG else False,
+    echo=False,  # Disable SQL query logging (too verbose even in debug mode)
     future=True,
     pool_pre_ping=True,
     pool_size=10,

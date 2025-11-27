@@ -2,21 +2,9 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import {
-  Plus,
-  Bot,
-  MoreVertical,
-  Play,
-  Pause,
-  AlertCircle,
-  Phone,
-  PhoneOff,
-  PhoneOutgoing,
-  Wrench,
-  Clock,
-} from "lucide-react";
+import { Plus, Bot, MoreVertical, AlertCircle, Phone, Wrench, Clock } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -116,11 +104,11 @@ export default function AgentsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Voice Agents</h1>
-          <p className="text-muted-foreground">Manage and configure your AI voice agents</p>
+          <h1 className="text-xl font-semibold">Voice Agents</h1>
+          <p className="text-sm text-muted-foreground">Manage and configure your AI voice agents</p>
         </div>
-        <Button asChild>
-          <Link href="/dashboard/agents/new-simplified">
+        <Button size="sm" asChild>
+          <Link href="/dashboard/agents/create-agent">
             <Plus className="mr-2 h-4 w-4" />
             Create Agent
           </Link>
@@ -154,8 +142,8 @@ export default function AgentsPage() {
             <p className="mb-4 max-w-sm text-center text-sm text-muted-foreground">
               Create your first voice agent to handle inbound and outbound calls with AI
             </p>
-            <Button asChild>
-              <Link href="/dashboard/agents/new-simplified">
+            <Button size="sm" asChild>
+              <Link href="/dashboard/agents/create-agent">
                 <Plus className="mr-2 h-4 w-4" />
                 Create Your First Agent
               </Link>
@@ -163,27 +151,35 @@ export default function AgentsPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {agents.map((agent) => (
-            <Card key={agent.id} className="transition-shadow hover:shadow-md">
-              <CardHeader>
-                <div className="flex items-start justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
-                      <Bot className="h-5 w-5 text-primary" />
+            <Card
+              key={agent.id}
+              className="group cursor-pointer transition-all hover:border-primary/50"
+              onClick={() => router.push(`/dashboard/agents/${agent.id}`)}
+            >
+              <CardContent className="p-4">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-2.5 overflow-hidden">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/10">
+                      <Bot className="h-4 w-4 text-primary" />
                     </div>
-                    <div>
-                      <CardTitle className="text-lg">{agent.name}</CardTitle>
-                      <CardDescription className="text-xs">
-                        {agent.pricing_tier.charAt(0).toUpperCase() + agent.pricing_tier.slice(1)} •{" "}
-                        {agent.language}
-                      </CardDescription>
+                    <div className="min-w-0">
+                      <h3 className="truncate text-sm font-medium">{agent.name}</h3>
+                      <p className="text-xs text-muted-foreground">
+                        {agent.pricing_tier.charAt(0).toUpperCase() + agent.pricing_tier.slice(1)}
+                      </p>
                     </div>
                   </div>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon">
-                        <MoreVertical className="h-4 w-4" />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 shrink-0"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <MoreVertical className="h-3.5 w-3.5" />
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
@@ -192,7 +188,6 @@ export default function AgentsPage() {
                       </DropdownMenuItem>
                       <DropdownMenuItem onClick={() => handleTest(agent.id)}>Test</DropdownMenuItem>
                       <DropdownMenuItem onClick={() => handleMakeCall(agent)}>
-                        <PhoneOutgoing className="mr-2 h-4 w-4" />
                         Make Call
                       </DropdownMenuItem>
                       <DropdownMenuItem onClick={() => handleDuplicate(agent.id)}>
@@ -208,65 +203,36 @@ export default function AgentsPage() {
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </div>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">Status</span>
-                    <Badge variant={agent.is_active ? "default" : "secondary"}>
-                      {agent.is_active ? (
-                        <>
-                          <Play className="mr-1 h-3 w-3" /> Active
-                        </>
-                      ) : (
-                        <>
-                          <Pause className="mr-1 h-3 w-3" /> Inactive
-                        </>
-                      )}
+
+                <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                  <Badge
+                    variant={agent.is_active ? "default" : "secondary"}
+                    className="h-5 px-1.5 text-[10px]"
+                  >
+                    {agent.is_active ? "Active" : "Inactive"}
+                  </Badge>
+                  {agent.phone_number_id ? (
+                    <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
+                      <Phone className="mr-0.5 h-2.5 w-2.5 text-green-500" />
+                      Phone
                     </Badge>
-                  </div>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">Phone</span>
-                    {agent.phone_number_id ? (
-                      <Badge variant="outline" className="font-mono text-xs">
-                        <Phone className="mr-1 h-3 w-3 text-green-500" />
-                        Assigned
-                      </Badge>
-                    ) : (
-                      <Badge variant="secondary" className="text-xs text-muted-foreground">
-                        <PhoneOff className="mr-1 h-3 w-3" />
-                        Not assigned
-                      </Badge>
-                    )}
-                  </div>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">Tools</span>
-                    {agent.enabled_tools.length > 0 ? (
-                      <Badge variant="outline" className="text-xs">
-                        <Wrench className="mr-1 h-3 w-3" />
-                        {agent.enabled_tools.length} enabled
-                      </Badge>
-                    ) : (
-                      <Badge variant="destructive" className="text-xs">
-                        No tools
-                      </Badge>
-                    )}
-                  </div>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">Calls</span>
-                    <div className="flex items-center gap-2">
-                      <span className="font-semibold">{agent.total_calls}</span>
-                      {agent.last_call_at && (
-                        <span
-                          className="flex items-center text-xs text-muted-foreground"
-                          title={`Last call: ${new Date(agent.last_call_at).toLocaleString()}`}
-                        >
-                          <Clock className="mr-1 h-3 w-3" />
-                          {formatRelativeTime(agent.last_call_at)}
-                        </span>
-                      )}
-                    </div>
-                  </div>
+                  ) : null}
+                  {agent.enabled_tools.length > 0 && (
+                    <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
+                      <Wrench className="mr-0.5 h-2.5 w-2.5" />
+                      {agent.enabled_tools.length}
+                    </Badge>
+                  )}
+                </div>
+
+                <div className="mt-2.5 flex items-center justify-between border-t border-border/50 pt-2.5 text-xs text-muted-foreground">
+                  <span>{agent.total_calls} calls</span>
+                  {agent.last_call_at && (
+                    <span className="flex items-center">
+                      <Clock className="mr-1 h-3 w-3" />
+                      {formatRelativeTime(agent.last_call_at)}
+                    </span>
+                  )}
                 </div>
               </CardContent>
             </Card>

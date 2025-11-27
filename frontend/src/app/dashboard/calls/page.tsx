@@ -5,7 +5,7 @@ import { useDebounce } from "use-debounce";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
   History,
@@ -35,6 +35,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { listCalls, type CallRecord } from "@/lib/api/calls";
+import { api } from "@/lib/api";
+import { FolderOpen } from "lucide-react";
+
+interface Workspace {
+  id: string;
+  name: string;
+  description: string | null;
+  is_default: boolean;
+}
 
 function formatDuration(seconds: number): string {
   const mins = Math.floor(seconds / 60);
@@ -57,16 +66,27 @@ export default function CallHistoryPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery] = useDebounce(searchQuery, 300);
   const [statusFilter, setStatusFilter] = useState("all");
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>("all");
   const [page, setPage] = useState(1);
   const pageSize = 20;
 
+  // Fetch workspaces
+  const { data: workspaces = [] } = useQuery<Workspace[]>({
+    queryKey: ["workspaces"],
+    queryFn: async () => {
+      const response = await api.get("/api/v1/workspaces");
+      return response.data;
+    },
+  });
+
   // Fetch calls from API
   const { data, isLoading, error } = useQuery({
-    queryKey: ["calls", page, statusFilter],
+    queryKey: ["calls", page, statusFilter, selectedWorkspaceId],
     queryFn: () =>
       listCalls({
         page,
         page_size: pageSize,
+        workspace_id: selectedWorkspaceId !== "all" ? selectedWorkspaceId : undefined,
         status:
           statusFilter !== "all" && !["inbound", "outbound"].includes(statusFilter)
             ? statusFilter
@@ -167,54 +187,70 @@ export default function CallHistoryPage() {
   };
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Call History</h1>
-        <p className="text-muted-foreground">View and analyze your voice agent call logs</p>
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-semibold">Call History</h1>
+          <p className="text-sm text-muted-foreground">
+            {isLoading
+              ? "Loading..."
+              : totalCalls === 0
+                ? "No calls yet"
+                : `${totalCalls} total calls`}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Input
+            placeholder="Search calls..."
+            className="w-[200px]"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+          {workspaces.length > 0 && (
+            <Select
+              value={selectedWorkspaceId}
+              onValueChange={(value) => {
+                setSelectedWorkspaceId(value);
+                setPage(1);
+              }}
+            >
+              <SelectTrigger className="h-8 w-[180px] text-sm">
+                <FolderOpen className="mr-2 h-3.5 w-3.5" />
+                <SelectValue placeholder="All Workspaces" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Workspaces</SelectItem>
+                {workspaces.map((ws) => (
+                  <SelectItem key={ws.id} value={ws.id}>
+                    {ws.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          <Select
+            value={statusFilter}
+            onValueChange={(value) => {
+              setStatusFilter(value);
+              setPage(1);
+            }}
+          >
+            <SelectTrigger className="h-8 w-[130px] text-sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Calls</SelectItem>
+              <SelectItem value="completed">Completed</SelectItem>
+              <SelectItem value="failed">Failed</SelectItem>
+              <SelectItem value="in_progress">In Progress</SelectItem>
+              <SelectItem value="inbound">Inbound</SelectItem>
+              <SelectItem value="outbound">Outbound</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle>Recent Calls</CardTitle>
-              <CardDescription>
-                {isLoading
-                  ? "Loading..."
-                  : totalCalls === 0
-                    ? "No calls yet"
-                    : `${totalCalls} total calls`}
-              </CardDescription>
-            </div>
-            <div className="flex gap-2">
-              <Input
-                placeholder="Search calls..."
-                className="w-[250px]"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-              <Select
-                value={statusFilter}
-                onValueChange={(value) => {
-                  setStatusFilter(value);
-                  setPage(1); // Reset to first page when filter changes
-                }}
-              >
-                <SelectTrigger className="w-[150px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Calls</SelectItem>
-                  <SelectItem value="completed">Completed</SelectItem>
-                  <SelectItem value="failed">Failed</SelectItem>
-                  <SelectItem value="in_progress">In Progress</SelectItem>
-                  <SelectItem value="inbound">Inbound</SelectItem>
-                  <SelectItem value="outbound">Outbound</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-        </CardHeader>
         <CardContent>
           {isLoading ? (
             <div className="flex flex-col items-center justify-center py-16">

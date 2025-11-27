@@ -13,6 +13,7 @@ from app.db.base import Base
 if TYPE_CHECKING:
     from app.models.agent import Agent
     from app.models.contact import Contact
+    from app.models.workspace import Workspace
 
 
 class CallDirection(str, Enum):
@@ -77,6 +78,15 @@ class CallRecord(Base):
         comment="CRM contact if applicable",
     )
 
+    # Workspace reference (for data isolation between clients/workspaces)
+    workspace_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+        comment="Workspace this call belongs to",
+    )
+
     # Call details
     direction: Mapped[str] = mapped_column(
         String(20), nullable=False, comment="Call direction: inbound or outbound"
@@ -131,6 +141,7 @@ class CallRecord(Base):
     # Relationships
     agent: Mapped["Agent | None"] = relationship("Agent", lazy="selectin")
     contact: Mapped["Contact | None"] = relationship("Contact", lazy="selectin")
+    workspace: Mapped["Workspace | None"] = relationship("Workspace", lazy="selectin")
 
     def __repr__(self) -> str:
         return (

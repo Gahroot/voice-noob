@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -291,8 +291,8 @@ export default function AppointmentsPage() {
     return (
       <div className="space-y-6">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Appointments</h1>
-          <p className="text-muted-foreground">Manage your scheduled appointments</p>
+          <h1 className="text-xl font-semibold">Appointments</h1>
+          <p className="text-sm text-muted-foreground">Manage your scheduled appointments</p>
         </div>
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12">
@@ -308,17 +308,17 @@ export default function AppointmentsPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Appointments</h1>
-          <p className="text-muted-foreground">Manage your scheduled appointments</p>
+          <h1 className="text-xl font-semibold">Appointments</h1>
+          <p className="text-sm text-muted-foreground">Manage your scheduled appointments</p>
         </div>
         <div className="flex items-center gap-3">
           {workspaces.length > 0 ? (
             <Select value={selectedWorkspaceId} onValueChange={setSelectedWorkspaceId}>
-              <SelectTrigger className="w-[200px]">
-                <FolderOpen className="mr-2 h-4 w-4" />
+              <SelectTrigger className="h-8 w-[180px] text-sm">
+                <FolderOpen className="mr-2 h-3.5 w-3.5" />
                 <SelectValue placeholder="All Workspaces" />
               </SelectTrigger>
               <SelectContent>
@@ -338,7 +338,7 @@ export default function AppointmentsPage() {
               Create a workspace
             </Link>
           )}
-          <Button onClick={openAddModal} disabled={contacts.length === 0}>
+          <Button size="sm" onClick={openAddModal} disabled={contacts.length === 0}>
             <Plus className="mr-2 h-4 w-4" />
             New Appointment
           </Button>
@@ -346,46 +346,49 @@ export default function AppointmentsPage() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-3 md:grid-cols-3">
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Scheduled</CardTitle>
-            <Calendar className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{scheduledCount}</div>
-            <p className="text-xs text-muted-foreground">Upcoming appointments</p>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-muted-foreground">Scheduled</p>
+                <p className="text-lg font-semibold">{scheduledCount}</p>
+              </div>
+              <Calendar className="h-4 w-4 text-muted-foreground" />
+            </div>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Completed</CardTitle>
-            <Clock className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{completedCount}</div>
-            <p className="text-xs text-muted-foreground">Successfully completed</p>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-muted-foreground">Completed</p>
+                <p className="text-lg font-semibold">{completedCount}</p>
+              </div>
+              <Clock className="h-4 w-4 text-muted-foreground" />
+            </div>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Cancelled</CardTitle>
-            <X className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{cancelledCount}</div>
-            <p className="text-xs text-muted-foreground">Cancelled appointments</p>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-muted-foreground">Cancelled</p>
+                <p className="text-lg font-semibold">{cancelledCount}</p>
+              </div>
+              <X className="h-4 w-4 text-muted-foreground" />
+            </div>
           </CardContent>
         </Card>
       </div>
 
       {/* Filter */}
-      <div className="flex items-center gap-4">
-        <Label htmlFor="status-filter">Filter by status:</Label>
+      <div className="flex items-center gap-2">
+        <span className="text-sm text-muted-foreground">Filter:</span>
         <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-[180px]">
+          <SelectTrigger className="h-8 w-[140px] text-xs">
             <SelectValue placeholder="All statuses" />
           </SelectTrigger>
           <SelectContent>
@@ -399,98 +402,93 @@ export default function AppointmentsPage() {
       </div>
 
       {/* Appointments List */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Appointments</CardTitle>
-          <CardDescription>
-            {isLoading
-              ? "Loading appointments..."
-              : appointments.length === 0
-                ? "No appointments yet. Create your first appointment to get started."
-                : `Showing ${appointments.length} appointment${appointments.length !== 1 ? "s" : ""}`}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {isLoading ? (
-            <div className="flex flex-col items-center justify-center py-12">
-              <Loader2 className="mb-4 h-8 w-8 animate-spin text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">Loading appointments...</p>
-            </div>
-          ) : contacts.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-center">
-              <div className="mb-4 rounded-full bg-muted p-3">
-                <User className="h-6 w-6 text-muted-foreground" />
-              </div>
-              <p className="text-lg font-medium">No contacts available</p>
-              <p className="mb-4 text-sm text-muted-foreground">
-                You need to add contacts before creating appointments
-              </p>
-              <Button variant="outline" asChild>
-                <a href="/dashboard/crm">Go to CRM</a>
-              </Button>
-            </div>
-          ) : appointments.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-center">
-              <div className="mb-4 rounded-full bg-muted p-3">
-                <Calendar className="h-6 w-6 text-muted-foreground" />
-              </div>
-              <p className="text-lg font-medium">No appointments yet</p>
-              <p className="mb-4 text-sm text-muted-foreground">
-                Create appointments manually or they&apos;ll be created automatically from voice
-                agent calls
-              </p>
-              <Button onClick={openAddModal}>
-                <Plus className="mr-2 h-4 w-4" />
-                Create Your First Appointment
-              </Button>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {appointments.map((appointment) => (
-                <div
-                  key={appointment.id}
-                  className="flex items-center justify-between rounded-lg border p-4 transition-colors hover:bg-accent"
-                >
-                  <div className="flex-1 space-y-1">
-                    <div className="flex items-center gap-2">
-                      <p className="font-medium">{formatDateTime(appointment.scheduled_at)}</p>
-                      <span
-                        className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${getStatusColor(appointment.status)}`}
-                      >
-                        {appointment.status.replace("_", " ")}
-                      </span>
+      {isLoading ? (
+        <Card>
+          <CardContent className="flex items-center justify-center py-16">
+            <p className="text-muted-foreground">Loading appointments...</p>
+          </CardContent>
+        </Card>
+      ) : contacts.length === 0 ? (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-16">
+            <User className="mb-4 h-16 w-16 text-muted-foreground/50" />
+            <h3 className="mb-2 text-lg font-semibold">No contacts available</h3>
+            <p className="mb-4 max-w-sm text-center text-sm text-muted-foreground">
+              You need to add contacts before creating appointments
+            </p>
+            <Button variant="outline" asChild>
+              <a href="/dashboard/crm">Go to CRM</a>
+            </Button>
+          </CardContent>
+        </Card>
+      ) : appointments.length === 0 ? (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-16">
+            <Calendar className="mb-4 h-16 w-16 text-muted-foreground/50" />
+            <h3 className="mb-2 text-lg font-semibold">No appointments yet</h3>
+            <p className="mb-4 max-w-sm text-center text-sm text-muted-foreground">
+              Create appointments manually or they&apos;ll be created automatically from voice agent
+              calls
+            </p>
+            <Button onClick={openAddModal}>
+              <Plus className="mr-2 h-4 w-4" />
+              Create Your First Appointment
+            </Button>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {appointments.map((appointment) => (
+            <Card
+              key={appointment.id}
+              className="group cursor-pointer transition-all hover:border-primary/50"
+              onClick={() => openViewModal(appointment)}
+            >
+              <CardContent className="p-4">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-2.5 overflow-hidden">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/10">
+                      <Calendar className="h-4 w-4 text-primary" />
                     </div>
-                    <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                      {appointment.contact_name && (
-                        <div className="flex items-center gap-1">
-                          <User className="h-3 w-3" />
-                          {appointment.contact_name}
-                        </div>
-                      )}
-                      {appointment.contact_phone && (
-                        <div className="flex items-center gap-1">
-                          <Phone className="h-3 w-3" />
-                          {appointment.contact_phone}
-                        </div>
-                      )}
-                      <div className="flex items-center gap-1">
-                        <Clock className="h-3 w-3" />
-                        {appointment.duration_minutes} min
-                      </div>
-                      {appointment.service_type && (
-                        <span className="text-muted-foreground">{appointment.service_type}</span>
-                      )}
+                    <div className="min-w-0">
+                      <h3 className="truncate text-sm font-medium">
+                        {appointment.contact_name ?? "Unknown Contact"}
+                      </h3>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {formatDateTime(appointment.scheduled_at)}
+                      </p>
                     </div>
                   </div>
-                  <Button variant="outline" size="sm" onClick={() => openViewModal(appointment)}>
-                    View Details
-                  </Button>
+                  <span
+                    className={`inline-flex h-5 shrink-0 items-center rounded-full px-1.5 text-[10px] font-medium ${getStatusColor(appointment.status)}`}
+                  >
+                    {appointment.status.replace("_", " ")}
+                  </span>
                 </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+
+                <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  {appointment.contact_phone && (
+                    <div className="flex items-center gap-1">
+                      <Phone className="h-3 w-3" />
+                      <span>{appointment.contact_phone}</span>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-1">
+                    <Clock className="h-3 w-3" />
+                    <span>{appointment.duration_minutes} min</span>
+                  </div>
+                </div>
+
+                {appointment.service_type && (
+                  <div className="mt-2.5 border-t border-border/50 pt-2.5 text-xs text-muted-foreground">
+                    {appointment.service_type}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
 
       {/* Appointment Modal */}
       <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>

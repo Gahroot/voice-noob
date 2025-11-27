@@ -170,19 +170,15 @@ async def list_phone_numbers(
     if provider == "twilio":
         twilio_service = await get_twilio_service(current_user.id, db)
         if not twilio_service:
-            raise HTTPException(
-                status_code=400,
-                detail="Twilio credentials not configured. Please add them in Settings.",
-            )
+            # Return empty list when credentials not configured (not an error)
+            return []
         numbers = await twilio_service.list_phone_numbers()
 
     elif provider == "telnyx":
         telnyx_service = await get_telnyx_service(current_user.id, db)
         if not telnyx_service:
-            raise HTTPException(
-                status_code=400,
-                detail="Telnyx credentials not configured. Please add them in Settings.",
-            )
+            # Return empty list when credentials not configured (not an error)
+            return []
         numbers = await telnyx_service.list_phone_numbers()
 
     else:

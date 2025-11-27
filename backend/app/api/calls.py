@@ -32,6 +32,8 @@ class CallRecordResponse(BaseModel):
     agent_name: str | None = None
     contact_id: int | None
     contact_name: str | None = None
+    workspace_id: str | None = None
+    workspace_name: str | None = None
     direction: str
     status: str
     from_number: str
@@ -68,6 +70,7 @@ async def list_calls(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     agent_id: str | None = Query(default=None, description="Filter by agent ID"),
+    workspace_id: str | None = Query(default=None, description="Filter by workspace ID"),
     direction: str | None = Query(
         default=None, description="Filter by direction: inbound or outbound"
     ),
@@ -97,6 +100,8 @@ async def list_calls(
     # Apply filters
     if agent_id:
         query = query.where(CallRecord.agent_id == uuid.UUID(agent_id))
+    if workspace_id:
+        query = query.where(CallRecord.workspace_id == uuid.UUID(workspace_id))
     if direction:
         query = query.where(CallRecord.direction == direction)
     if status:
@@ -106,6 +111,8 @@ async def list_calls(
     count_query = select(CallRecord.id).where(CallRecord.user_id == user_uuid)
     if agent_id:
         count_query = count_query.where(CallRecord.agent_id == uuid.UUID(agent_id))
+    if workspace_id:
+        count_query = count_query.where(CallRecord.workspace_id == uuid.UUID(workspace_id))
     if direction:
         count_query = count_query.where(CallRecord.direction == direction)
     if status:
@@ -121,16 +128,19 @@ async def list_calls(
     result = await db.execute(query)
     records = result.scalars().all()
 
-    # Build response with agent and contact names
+    # Build response with agent, contact, and workspace names
     calls = []
     for record in records:
         agent_name = None
         contact_name = None
+        workspace_name = None
 
         if record.agent:
             agent_name = record.agent.name
         if record.contact:
             contact_name = f"{record.contact.first_name} {record.contact.last_name or ''}".strip()
+        if record.workspace:
+            workspace_name = record.workspace.name
 
         calls.append(
             CallRecordResponse(
@@ -141,6 +151,8 @@ async def list_calls(
                 agent_name=agent_name,
                 contact_id=record.contact_id,
                 contact_name=contact_name,
+                workspace_id=str(record.workspace_id) if record.workspace_id else None,
+                workspace_name=workspace_name,
                 direction=record.direction,
                 status=record.status,
                 from_number=record.from_number,
@@ -198,11 +210,14 @@ async def get_call(
 
     agent_name = None
     contact_name = None
+    workspace_name = None
 
     if record.agent:
         agent_name = record.agent.name
     if record.contact:
         contact_name = f"{record.contact.first_name} {record.contact.last_name or ''}".strip()
+    if record.workspace:
+        workspace_name = record.workspace.name
 
     return CallRecordResponse(
         id=str(record.id),
@@ -212,6 +227,8 @@ async def get_call(
         agent_name=agent_name,
         contact_id=record.contact_id,
         contact_name=contact_name,
+        workspace_id=str(record.workspace_id) if record.workspace_id else None,
+        workspace_name=workspace_name,
         direction=record.direction,
         status=record.status,
         from_number=record.from_number,

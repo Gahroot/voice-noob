@@ -2,10 +2,12 @@
 
 import { useState, useMemo, memo } from "react";
 import { useDebounce } from "use-debounce";
+import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { api } from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -26,6 +28,7 @@ import {
   FileText,
   Send,
   Clock,
+  FolderOpen,
 } from "lucide-react";
 import {
   Dialog,
@@ -36,6 +39,20 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { AVAILABLE_INTEGRATIONS, type Integration } from "@/lib/integrations";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+
+interface Workspace {
+  id: string;
+  name: string;
+  description: string | null;
+  is_default: boolean;
+}
 
 const getIntegrationIcon = (integrationId: string) => {
   const iconMap: Record<string, React.ComponentType> = {
@@ -65,6 +82,16 @@ export default function IntegrationsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery] = useDebounce(searchQuery, 300);
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>("all");
+
+  // Fetch workspaces
+  const { data: workspaces = [] } = useQuery<Workspace[]>({
+    queryKey: ["workspaces"],
+    queryFn: async () => {
+      const response = await api.get("/api/v1/workspaces");
+      return response.data;
+    },
+  });
 
   // Internal tools are always "connected" (no credentials needed)
   const internalTools = new Set<string>(["crm", "bookings"]);
@@ -96,41 +123,63 @@ export default function IntegrationsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Integrations & Tools</h1>
-        <p className="text-muted-foreground">
-          Connect external services for your voice agents to use
-        </p>
-      </div>
-
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Badge variant="secondary" className="font-normal">
-            {connectedCount} Connected
-          </Badge>
-          <Badge variant="outline" className="font-normal">
-            {AVAILABLE_INTEGRATIONS.length} Available
-          </Badge>
+        <div>
+          <h1 className="text-xl font-semibold">Integrations & Tools</h1>
+          <p className="text-sm text-muted-foreground">
+            Connect external services for your voice agents to use
+          </p>
         </div>
-        <div className="relative w-[300px]">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            placeholder="Search integrations..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-9"
-          />
+        <div className="flex items-center gap-2">
+          {workspaces.length > 0 && (
+            <Select
+              value={selectedWorkspaceId}
+              onValueChange={(value) => setSelectedWorkspaceId(value)}
+            >
+              <SelectTrigger className="h-8 w-[180px] text-sm">
+                <FolderOpen className="mr-2 h-3.5 w-3.5" />
+                <SelectValue placeholder="All Workspaces" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Workspaces</SelectItem>
+                {workspaces.map((ws) => (
+                  <SelectItem key={ws.id} value={ws.id}>
+                    {ws.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          <div className="relative w-[250px]">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Search integrations..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="h-8 pl-9 text-sm"
+            />
+          </div>
         </div>
       </div>
 
       <Tabs defaultValue="all" onValueChange={setSelectedCategory}>
-        <TabsList>
-          {categories.map((cat) => (
-            <TabsTrigger key={cat.value} value={cat.value}>
-              {cat.label}
-            </TabsTrigger>
-          ))}
-        </TabsList>
+        <div className="flex items-center justify-between">
+          <TabsList>
+            {categories.map((cat) => (
+              <TabsTrigger key={cat.value} value={cat.value}>
+                {cat.label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+          <div className="flex items-center gap-2">
+            <Badge variant="secondary" className="font-normal">
+              {connectedCount} Connected
+            </Badge>
+            <Badge variant="outline" className="font-normal">
+              {AVAILABLE_INTEGRATIONS.length} Available
+            </Badge>
+          </div>
+        </div>
 
         <TabsContent value={selectedCategory} className="mt-6">
           {filteredIntegrations.length === 0 ? (
@@ -144,7 +193,7 @@ export default function IntegrationsPage() {
               </CardContent>
             </Card>
           ) : (
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {filteredIntegrations.map((integration) => (
                 <IntegrationCard
                   key={integration.id}
@@ -171,39 +220,45 @@ const IntegrationCard = memo(function IntegrationCard({
   const Icon = getIntegrationIcon(integration.id);
 
   return (
-    <Card className="transition-shadow hover:shadow-md">
-      <CardHeader>
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
-              <Icon className="h-5 w-5 text-primary" />
+    <Card className="group transition-all hover:border-primary/50">
+      <CardContent className="p-4">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex items-center gap-2.5 overflow-hidden">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/10">
+              <Icon className="h-4 w-4 text-primary" />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <CardTitle className="text-base">{integration.name}</CardTitle>
-                {integration.isPopular && (
-                  <Badge variant="secondary" className="text-xs">
-                    Popular
-                  </Badge>
-                )}
-              </div>
-              <CardDescription className="mt-1 text-xs">
-                {integration.category.toUpperCase()}
-              </CardDescription>
+            <div className="min-w-0">
+              <h3 className="truncate text-sm font-medium">{integration.name}</h3>
+              <p className="text-xs text-muted-foreground">
+                {integration.category.charAt(0).toUpperCase() + integration.category.slice(1)}
+              </p>
             </div>
           </div>
-          {isConnected && <Check className="h-5 w-5 text-green-600 dark:text-green-400" />}
+          <div className="flex shrink-0 items-center gap-1.5">
+            {integration.isPopular && (
+              <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">
+                Popular
+              </Badge>
+            )}
+            {isConnected && <Check className="h-4 w-4 text-green-500" />}
+          </div>
         </div>
-      </CardHeader>
-      <CardContent>
-        <p className="mb-4 line-clamp-2 text-sm text-muted-foreground">{integration.description}</p>
-        <div className="flex gap-2">
+
+        <p className="mt-2.5 line-clamp-2 min-h-[2lh] text-xs text-muted-foreground">
+          {integration.description}
+        </p>
+
+        <div className="mt-3 flex gap-2 border-t border-border/50 pt-3">
           <Dialog open={isConfigDialogOpen} onOpenChange={setIsConfigDialogOpen}>
             <DialogTrigger asChild>
-              <Button variant={isConnected ? "outline" : "default"} className="flex-1" size="sm">
+              <Button
+                variant={isConnected ? "ghost" : "default"}
+                size="sm"
+                className="h-7 flex-1 text-xs"
+              >
                 {isConnected ? (
                   <>
-                    <SettingsIcon className="mr-2 h-3 w-3" />
+                    <SettingsIcon className="mr-1 h-3 w-3" />
                     Configure
                   </>
                 ) : (
@@ -228,7 +283,7 @@ const IntegrationCard = memo(function IntegrationCard({
             </DialogContent>
           </Dialog>
           {integration.documentationUrl && (
-            <Button variant="ghost" size="sm" asChild>
+            <Button variant="ghost" size="sm" className="h-7 text-xs" asChild>
               <a href={integration.documentationUrl} target="_blank" rel="noopener noreferrer">
                 Docs
               </a>

@@ -97,6 +97,10 @@ export async function listPhoneNumbers(provider: Provider): Promise<PhoneNumber[
   );
 
   if (!response.ok) {
+    // 400 typically means provider not configured - return empty array silently
+    if (response.status === 400) {
+      return [];
+    }
     const error = await response.json().catch(() => ({ detail: response.statusText }));
     throw new Error(error.detail ?? "Failed to list phone numbers");
   }

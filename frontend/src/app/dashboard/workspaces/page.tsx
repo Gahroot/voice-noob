@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -32,17 +32,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Plus,
-  Loader2,
-  AlertCircle,
-  FolderOpen,
-  Users,
-  Bot,
-  Settings,
-  Trash2,
-  Globe,
-} from "lucide-react";
+import { Plus, Loader2, AlertCircle, FolderOpen, Users, Bot, Settings, Trash2 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
@@ -290,8 +280,8 @@ export default function WorkspacesPage() {
     return (
       <div className="space-y-6">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Workspaces</h1>
-          <p className="text-muted-foreground">
+          <h1 className="text-xl font-semibold">Workspaces</h1>
+          <p className="text-sm text-muted-foreground">
             Organize your agents, contacts, and appointments into separate workspaces
           </p>
         </div>
@@ -309,155 +299,154 @@ export default function WorkspacesPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Workspaces</h1>
-          <p className="text-muted-foreground">
-            Organize your agents, contacts, and appointments into separate workspaces
+          <h1 className="text-xl font-semibold">Workspaces</h1>
+          <p className="text-sm text-muted-foreground">
+            Organize your agents, contacts, and appointments
           </p>
         </div>
-        <Button onClick={openAddModal}>
+        <Button size="sm" onClick={openAddModal}>
           <Plus className="mr-2 h-4 w-4" />
           New Workspace
         </Button>
       </div>
 
       {/* Stats Cards */}
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-3 md:grid-cols-3">
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Workspaces</CardTitle>
-            <FolderOpen className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{workspaces.length}</div>
-            <p className="text-xs text-muted-foreground">Active workspaces</p>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-muted-foreground">Total Workspaces</p>
+                <p className="text-lg font-semibold">{workspaces.length}</p>
+              </div>
+              <FolderOpen className="h-4 w-4 text-muted-foreground" />
+            </div>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Contacts</CardTitle>
-            <Users className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {workspaces.reduce((sum, w) => sum + w.contact_count, 0)}
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-muted-foreground">Total Contacts</p>
+                <p className="text-lg font-semibold">
+                  {workspaces.reduce((sum, w) => sum + w.contact_count, 0)}
+                </p>
+              </div>
+              <Users className="h-4 w-4 text-muted-foreground" />
             </div>
-            <p className="text-xs text-muted-foreground">Across all workspaces</p>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Assigned Agents</CardTitle>
-            <Bot className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {workspaces.reduce((sum, w) => sum + w.agent_count, 0)}
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-muted-foreground">Assigned Agents</p>
+                <p className="text-lg font-semibold">
+                  {workspaces.reduce((sum, w) => sum + w.agent_count, 0)}
+                </p>
+              </div>
+              <Bot className="h-4 w-4 text-muted-foreground" />
             </div>
-            <p className="text-xs text-muted-foreground">Total agent assignments</p>
           </CardContent>
         </Card>
       </div>
 
       {/* Workspaces List */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Your Workspaces</CardTitle>
-          <CardDescription>
-            {isLoading
-              ? "Loading workspaces..."
-              : workspaces.length === 0
-                ? "No workspaces yet. Create your first workspace to get started."
-                : `Showing ${workspaces.length} workspace${workspaces.length !== 1 ? "s" : ""}`}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {isLoading ? (
-            <div className="flex flex-col items-center justify-center py-12">
-              <Loader2 className="mb-4 h-8 w-8 animate-spin text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">Loading workspaces...</p>
-            </div>
-          ) : workspaces.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-center">
-              <div className="mb-4 rounded-full bg-muted p-3">
-                <FolderOpen className="h-6 w-6 text-muted-foreground" />
-              </div>
-              <p className="text-lg font-medium">No workspaces yet</p>
-              <p className="mb-4 text-sm text-muted-foreground">
-                Create workspaces to organize your agents, contacts, and appointments
-              </p>
-              <Button onClick={openAddModal}>
-                <Plus className="mr-2 h-4 w-4" />
-                Create Your First Workspace
-              </Button>
-            </div>
-          ) : (
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              {workspaces.map((workspace) => (
-                <Card key={workspace.id} className="relative">
-                  <CardHeader className="pb-2">
-                    <div className="flex items-start justify-between">
-                      <div className="space-y-1">
-                        <CardTitle className="flex items-center gap-2 text-lg">
-                          {workspace.name}
-                          {workspace.is_default && (
-                            <Badge variant="secondary" className="text-xs">
-                              Default
-                            </Badge>
-                          )}
-                        </CardTitle>
-                        <CardDescription className="line-clamp-2">
-                          {workspace.description ?? "No description"}
-                        </CardDescription>
-                      </div>
+      {isLoading ? (
+        <Card>
+          <CardContent className="flex items-center justify-center py-16">
+            <p className="text-muted-foreground">Loading workspaces...</p>
+          </CardContent>
+        </Card>
+      ) : workspaces.length === 0 ? (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-16">
+            <FolderOpen className="mb-4 h-16 w-16 text-muted-foreground/50" />
+            <h3 className="mb-2 text-lg font-semibold">No workspaces yet</h3>
+            <p className="mb-4 max-w-sm text-center text-sm text-muted-foreground">
+              Create workspaces to organize your agents, contacts, and appointments
+            </p>
+            <Button onClick={openAddModal}>
+              <Plus className="mr-2 h-4 w-4" />
+              Create Your First Workspace
+            </Button>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {workspaces.map((workspace) => (
+            <Card
+              key={workspace.id}
+              className="group cursor-pointer transition-all hover:border-primary/50"
+              onClick={() => openViewModal(workspace)}
+            >
+              <CardContent className="p-4">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-2.5 overflow-hidden">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/10">
+                      <FolderOpen className="h-4 w-4 text-primary" />
                     </div>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                      <div className="flex items-center gap-1">
-                        <Users className="h-4 w-4" />
-                        <span>{workspace.contact_count} contacts</span>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <Bot className="h-4 w-4" />
-                        <span>{workspace.agent_count} agents</span>
-                      </div>
+                    <div className="min-w-0">
+                      <h3 className="truncate text-sm font-medium">{workspace.name}</h3>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {workspace.settings.timezone ?? "No timezone"}
+                      </p>
                     </div>
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <Globe className="h-4 w-4" />
-                      <span>{workspace.settings.timezone ?? "Not set"}</span>
-                    </div>
-                    <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="flex-1"
-                        onClick={() => openViewModal(workspace)}
-                      >
-                        <Settings className="mr-2 h-4 w-4" />
-                        Settings
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="flex-1"
-                        onClick={() => openAgentsModal(workspace)}
-                      >
-                        <Bot className="mr-2 h-4 w-4" />
-                        Agents
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+                  </div>
+                  {workspace.is_default && (
+                    <Badge variant="secondary" className="h-5 shrink-0 px-1.5 text-[10px]">
+                      Default
+                    </Badge>
+                  )}
+                </div>
+
+                <div className="mt-3 flex items-center gap-3 text-xs text-muted-foreground">
+                  <div className="flex items-center gap-1">
+                    <Users className="h-3 w-3" />
+                    <span>{workspace.contact_count}</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Bot className="h-3 w-3" />
+                    <span>{workspace.agent_count}</span>
+                  </div>
+                </div>
+
+                <div className="mt-3 flex gap-2 border-t border-border/50 pt-3">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 flex-1 text-xs"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openViewModal(workspace);
+                    }}
+                  >
+                    <Settings className="mr-1 h-3 w-3" />
+                    Settings
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 flex-1 text-xs"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openAgentsModal(workspace);
+                    }}
+                  >
+                    <Bot className="mr-1 h-3 w-3" />
+                    Agents
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
 
       {/* Workspace Settings Modal */}
       <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>

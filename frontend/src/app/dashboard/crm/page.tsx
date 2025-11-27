@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -245,8 +245,8 @@ export default function CRMPage() {
     return (
       <div className="space-y-6">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">CRM</h1>
-          <p className="text-muted-foreground">
+          <h1 className="text-xl font-semibold">CRM</h1>
+          <p className="text-sm text-muted-foreground">
             Manage your contacts, appointments, and call interactions
           </p>
         </div>
@@ -264,19 +264,17 @@ export default function CRMPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">CRM</h1>
-          <p className="text-muted-foreground">
-            Manage your contacts, appointments, and call interactions
-          </p>
+          <h1 className="text-xl font-semibold">CRM</h1>
+          <p className="text-sm text-muted-foreground">Manage your contacts and interactions</p>
         </div>
         <div className="flex items-center gap-3">
           {workspaces.length > 0 ? (
             <Select value={selectedWorkspaceId} onValueChange={setSelectedWorkspaceId}>
-              <SelectTrigger className="w-[200px]">
-                <FolderOpen className="mr-2 h-4 w-4" />
+              <SelectTrigger className="h-8 w-[180px] text-sm">
+                <FolderOpen className="mr-2 h-3.5 w-3.5" />
                 <SelectValue placeholder="All Workspaces" />
               </SelectTrigger>
               <SelectContent>
@@ -296,7 +294,7 @@ export default function CRMPage() {
               Create a workspace
             </Link>
           )}
-          <Button onClick={openAddModal}>
+          <Button size="sm" onClick={openAddModal}>
             <Plus className="mr-2 h-4 w-4" />
             Add Contact
           </Button>
@@ -304,128 +302,121 @@ export default function CRMPage() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-3 md:grid-cols-3">
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Contacts</CardTitle>
-            <Phone className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{contacts.length}</div>
-            <p className="text-xs text-muted-foreground">Across all statuses</p>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-muted-foreground">Total Contacts</p>
+                <p className="text-lg font-semibold">{contacts.length}</p>
+              </div>
+              <Phone className="h-4 w-4 text-muted-foreground" />
+            </div>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Appointments</CardTitle>
-            <Building2 className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">0</div>
-            <p className="text-xs text-muted-foreground">Scheduled this month</p>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-muted-foreground">Appointments</p>
+                <p className="text-lg font-semibold">0</p>
+              </div>
+              <Building2 className="h-4 w-4 text-muted-foreground" />
+            </div>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Call Interactions</CardTitle>
-            <Phone className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">0</div>
-            <p className="text-xs text-muted-foreground">Total interactions logged</p>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-muted-foreground">Call Interactions</p>
+                <p className="text-lg font-semibold">0</p>
+              </div>
+              <Phone className="h-4 w-4 text-muted-foreground" />
+            </div>
           </CardContent>
         </Card>
       </div>
 
       {/* Contacts List */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Contacts</CardTitle>
-          <CardDescription>
-            {isLoading
-              ? "Loading contacts..."
-              : contacts.length === 0
-                ? "No contacts yet. Add your first contact to get started."
-                : `Showing ${contacts.length} contact${contacts.length !== 1 ? "s" : ""}`}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {isLoading ? (
-            <div className="flex flex-col items-center justify-center py-12">
-              <Loader2 className="mb-4 h-8 w-8 animate-spin text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">Loading contacts...</p>
-            </div>
-          ) : contacts.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-center">
-              <div className="mb-4 rounded-full bg-muted p-3">
-                <Phone className="h-6 w-6 text-muted-foreground" />
-              </div>
-              <p className="text-lg font-medium">No contacts yet</p>
-              <p className="mb-4 text-sm text-muted-foreground">
-                Add contacts manually or they&apos;ll be created automatically from voice agent
-                calls
-              </p>
-              <Button onClick={openAddModal}>
-                <Plus className="mr-2 h-4 w-4" />
-                Add Your First Contact
-              </Button>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {contacts.map((contact) => (
-                <div
-                  key={contact.id}
-                  className="flex items-center justify-between rounded-lg border p-4 transition-colors hover:bg-accent"
-                >
-                  <div className="flex-1 space-y-1">
-                    <div className="flex items-center gap-2">
-                      <p className="font-medium">
-                        {contact.first_name} {contact.last_name}
-                      </p>
-                      <span
-                        className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${getStatusColor(contact.status)}`}
-                      >
-                        {contact.status}
-                      </span>
+      {isLoading ? (
+        <Card>
+          <CardContent className="flex items-center justify-center py-16">
+            <p className="text-muted-foreground">Loading contacts...</p>
+          </CardContent>
+        </Card>
+      ) : contacts.length === 0 ? (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-16">
+            <Phone className="mb-4 h-16 w-16 text-muted-foreground/50" />
+            <h3 className="mb-2 text-lg font-semibold">No contacts yet</h3>
+            <p className="mb-4 max-w-sm text-center text-sm text-muted-foreground">
+              Add contacts manually or they&apos;ll be created automatically from voice agent calls
+            </p>
+            <Button size="sm" onClick={openAddModal}>
+              <Plus className="mr-2 h-4 w-4" />
+              Add Your First Contact
+            </Button>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {contacts.map((contact) => (
+            <Card
+              key={contact.id}
+              className="group cursor-pointer transition-all hover:border-primary/50"
+              onClick={() => openViewModal(contact)}
+            >
+              <CardContent className="p-4">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-2.5 overflow-hidden">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/10">
+                      <Phone className="h-4 w-4 text-primary" />
                     </div>
-                    <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                      {contact.phone_number && (
-                        <div className="flex items-center gap-1">
-                          <Phone className="h-3 w-3" />
-                          {contact.phone_number}
-                        </div>
-                      )}
-                      {contact.email && (
-                        <div className="flex items-center gap-1">
-                          <Mail className="h-3 w-3" />
-                          {contact.email}
-                        </div>
-                      )}
-                      {contact.company_name && (
-                        <div className="flex items-center gap-1">
-                          <Building2 className="h-3 w-3" />
-                          {contact.company_name}
-                        </div>
-                      )}
-                      {contact.tags && (
-                        <div className="flex items-center gap-1">
-                          <Tag className="h-3 w-3" />
-                          {contact.tags}
-                        </div>
-                      )}
+                    <div className="min-w-0">
+                      <h3 className="truncate text-sm font-medium">
+                        {contact.first_name} {contact.last_name}
+                      </h3>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {contact.phone_number}
+                      </p>
                     </div>
                   </div>
-                  <Button variant="outline" size="sm" onClick={() => openViewModal(contact)}>
-                    View Details
-                  </Button>
+                  <span
+                    className={`inline-flex h-5 shrink-0 items-center rounded-full px-1.5 text-[10px] font-medium ${getStatusColor(contact.status)}`}
+                  >
+                    {contact.status}
+                  </span>
                 </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+
+                <div className="mt-3 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                  {contact.email && (
+                    <div className="flex items-center gap-1">
+                      <Mail className="h-3 w-3" />
+                      <span className="truncate">{contact.email}</span>
+                    </div>
+                  )}
+                  {contact.company_name && (
+                    <div className="flex items-center gap-1">
+                      <Building2 className="h-3 w-3" />
+                      <span className="truncate">{contact.company_name}</span>
+                    </div>
+                  )}
+                </div>
+
+                {contact.tags && (
+                  <div className="mt-2.5 flex items-center gap-1 border-t border-border/50 pt-2.5 text-xs text-muted-foreground">
+                    <Tag className="h-3 w-3" />
+                    <span className="truncate">{contact.tags}</span>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
 
       {/* Contact Modal */}
       <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>

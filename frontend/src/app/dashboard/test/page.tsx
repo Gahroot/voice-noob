@@ -7,7 +7,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { fetchAgents, updateAgent } from "@/lib/api/agents";
 import { Button } from "@/components/ui/button";
-import { Play, Save } from "lucide-react";
+import { Play, Square, Loader2, Save } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -30,6 +30,9 @@ type TranscriptItem = {
   timestamp: Date;
 };
 
+// Connection status type
+type ConnectionStatus = "idle" | "connecting" | "connected";
+
 // WebRTC resources for proper cleanup
 type WebRTCResources = {
   peerConnection: RTCPeerConnection | null;
@@ -37,6 +40,132 @@ type WebRTCResources = {
   audioStream: MediaStream | null;
   audioElement: HTMLAudioElement | null;
 };
+
+// Audio visualizer resources
+type AudioVisualizerResources = {
+  audioContext: AudioContext | null;
+  analyser: AnalyserNode | null;
+  source: MediaStreamAudioSourceNode | null;
+};
+
+// Real-time audio visualizer component using Web Audio API
+function AudioVisualizer({
+  stream,
+  isActive,
+  barCount = 12,
+}: {
+  stream: MediaStream | null;
+  isActive: boolean;
+  barCount?: number;
+}) {
+  const [frequencies, setFrequencies] = useState<number[]>(new Array(barCount).fill(0));
+  const audioRef = useRef<AudioVisualizerResources>({
+    audioContext: null,
+    analyser: null,
+    source: null,
+  });
+  const animationRef = useRef<number | null>(null);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (!stream || !isActive) {
+      // Clean up and reset
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+        animationRef.current = null;
+      }
+      if (audioRef.current.audioContext && audioRef.current.audioContext.state !== "closed") {
+        void audioRef.current.audioContext.close();
+        audioRef.current = { audioContext: null, analyser: null, source: null };
+      }
+      setFrequencies(new Array(barCount).fill(0));
+      return;
+    }
+
+    // Set up Web Audio API
+    const audioContext = new AudioContext();
+    const analyser = audioContext.createAnalyser();
+    analyser.fftSize = 256;
+    analyser.smoothingTimeConstant = 0.7;
+
+    const source = audioContext.createMediaStreamSource(stream);
+    source.connect(analyser);
+
+    audioRef.current = { audioContext, analyser, source };
+
+    const bufferLength = analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+
+    const updateFrequencies = () => {
+      if (!audioRef.current.analyser) return;
+
+      audioRef.current.analyser.getByteFrequencyData(dataArray);
+
+      // Map frequency data to bar count with logarithmic scaling for better low-frequency visibility
+      const bands: number[] = [];
+
+      for (let i = 0; i < barCount; i++) {
+        // Use logarithmic distribution to favor lower frequencies
+        const startIndex = Math.floor(Math.pow(i / barCount, 1.5) * bufferLength);
+        const endIndex = Math.floor(Math.pow((i + 1) / barCount, 1.5) * bufferLength);
+
+        let sum = 0;
+        const count = Math.max(1, endIndex - startIndex);
+        for (let j = startIndex; j < endIndex && j < bufferLength; j++) {
+          sum += dataArray[j] ?? 0;
+        }
+
+        // Normalize to 0-1 range with slight boost
+        const avg = sum / count / 255;
+        bands.push(Math.min(1, avg * 1.5));
+      }
+
+      setFrequencies(bands);
+      animationRef.current = requestAnimationFrame(updateFrequencies);
+    };
+
+    updateFrequencies();
+
+    return () => {
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
+      if (audioContext.state !== "closed") {
+        void audioContext.close();
+      }
+    };
+  }, [stream, isActive, barCount]);
+
+  // Idle animation when not active
+  const idleAnimation = mounted && !isActive;
+
+  return (
+    <div className="flex h-6 items-center gap-0.5">
+      {frequencies.map((freq, i) => {
+        // Create mirrored effect from center
+        const centerDistance = Math.abs(i - (barCount - 1) / 2) / ((barCount - 1) / 2);
+        const idleHeight = idleAnimation ? 4 + Math.sin(Date.now() / 300 + i * 0.5) * 3 : 4;
+        const height = isActive ? Math.max(4, freq * 20) : idleHeight;
+        const opacity = isActive ? 0.4 + freq * 0.6 : 0.3 + (1 - centerDistance) * 0.2;
+
+        return (
+          <div
+            key={i}
+            className="w-0.5 rounded-full bg-foreground transition-all duration-75 ease-out"
+            style={{
+              height: `${height}px`,
+              opacity,
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+}
 
 // Toggle button group component
 function ToggleGroup({
@@ -69,9 +198,10 @@ function ToggleGroup({
 
 export default function TestAgentPage() {
   const [selectedAgentId, setSelectedAgentId] = useState<string>("");
-  const [isConnected, setIsConnected] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("idle");
   const [transcript, setTranscript] = useState<TranscriptItem[]>([]);
   const [callDuration, setCallDuration] = useState(0);
+  const [audioStream, setAudioStream] = useState<MediaStream | null>(null);
 
   // Settings state
   const [voice, setVoice] = useState("alloy");
@@ -183,7 +313,7 @@ export default function TestAgentPage() {
     }
   }, []);
 
-  // Batched addTranscript that groups updates
+  // Batched addTranscript that groups updates (used only for history_updated bulk processing)
   const addTranscriptBatched = useCallback(
     (speaker: "user" | "assistant" | "system", text: string) => {
       pendingTranscriptsRef.current.push({
@@ -193,11 +323,11 @@ export default function TestAgentPage() {
         timestamp: new Date(),
       });
 
-      // Debounce flush - wait 50ms for more items before flushing
+      // Shorter debounce for faster updates
       if (flushTimeoutRef.current) {
         clearTimeout(flushTimeoutRef.current);
       }
-      flushTimeoutRef.current = setTimeout(flushTranscripts, 50);
+      flushTimeoutRef.current = setTimeout(flushTranscripts, 16); // ~1 frame
     },
     [flushTranscripts]
   );
@@ -300,10 +430,11 @@ export default function TestAgentPage() {
   const addTranscript = addTranscriptBatched;
 
   const handleConnect = async () => {
-    if (isConnected) {
+    if (connectionStatus === "connected") {
       // Disconnect
       cleanup();
-      setIsConnected(false);
+      setConnectionStatus("idle");
+      setAudioStream(null);
       setCallDuration(0);
       addTranscript("system", "Session ended");
       return;
@@ -316,6 +447,9 @@ export default function TestAgentPage() {
 
     const selectedAgent = agents.find((a) => a.id === selectedAgentId);
     if (!selectedAgent) return;
+
+    // Set connecting state
+    setConnectionStatus("connecting");
 
     try {
       addTranscriptImmediate("system", `Connecting to ${selectedAgent.name}...`);
@@ -343,9 +477,9 @@ export default function TestAgentPage() {
           const status = (event as { type: string; status?: string }).status;
           console.log("[Connection Change]", status);
           if (status === "connected") {
-            setIsConnected(true);
+            setConnectionStatus("connected");
           } else if (status === "disconnected") {
-            setIsConnected(false);
+            setConnectionStatus("idle");
           }
         } else if (event.type === "error") {
           console.error("[Transport Error]", event);
@@ -416,11 +550,13 @@ export default function TestAgentPage() {
 
       // Manual WebRTC connection since SDK doesn't include required OpenAI-Beta header
       const pc = new RTCPeerConnection();
-      const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const audioTrack = audioStream.getAudioTracks()[0];
+      const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const audioTrack = micStream.getAudioTracks()[0];
       if (audioTrack) {
         pc.addTrack(audioTrack);
       }
+      // Store the audio stream for the visualizer
+      setAudioStream(micStream);
 
       // Create data channel for events
       const dataChannel = pc.createDataChannel("oai-events");
@@ -436,7 +572,7 @@ export default function TestAgentPage() {
       webrtcRef.current = {
         peerConnection: pc,
         dataChannel,
-        audioStream,
+        audioStream: micStream,
         audioElement,
       };
 
@@ -469,7 +605,7 @@ export default function TestAgentPage() {
       // Handle data channel events
       dataChannel.onopen = () => {
         console.log("[WebRTC] Data channel opened!");
-        setIsConnected(true);
+        setConnectionStatus("connected");
 
         // Start call timer
         setCallDuration(0);
@@ -521,11 +657,11 @@ export default function TestAgentPage() {
             console.log("[WebRTC] Session updated - tools configured:", toolsConfigured);
           }
 
-          // Handle transcription
+          // Handle transcription - use immediate updates for real-time feel
           if (data.type === "conversation.item.input_audio_transcription.completed") {
-            addTranscript("user", data.transcript);
+            addTranscriptImmediate("user", data.transcript);
           } else if (data.type === "response.audio_transcript.done") {
-            addTranscript("assistant", data.transcript);
+            addTranscriptImmediate("assistant", data.transcript);
           } else if (data.type === "response.function_call_arguments.done") {
             // Handle function/tool call
             const { call_id, name, arguments: argsJson } = data;
@@ -589,7 +725,8 @@ export default function TestAgentPage() {
 
       dataChannel.onclose = () => {
         console.log("[WebRTC] Data channel closed");
-        setIsConnected(false);
+        setConnectionStatus("idle");
+        setAudioStream(null);
         if (callTimerRef.current) {
           clearInterval(callTimerRef.current);
           callTimerRef.current = null;
@@ -600,7 +737,8 @@ export default function TestAgentPage() {
         console.log("[WebRTC] Connection state:", pc.connectionState);
         if (pc.connectionState === "disconnected" || pc.connectionState === "failed") {
           cleanup();
-          setIsConnected(false);
+          setConnectionStatus("idle");
+          setAudioStream(null);
           setCallDuration(0);
         }
       };
@@ -609,6 +747,8 @@ export default function TestAgentPage() {
       console.error("[WebRTC] Connection error:", err);
       addTranscript("system", `Error: ${err.message}`);
       cleanup();
+      setConnectionStatus("idle");
+      setAudioStream(null);
 
       if (err.name === "NotAllowedError") {
         toast.error(
@@ -631,48 +771,58 @@ export default function TestAgentPage() {
   };
 
   return (
-    <div className="flex h-[calc(100vh-4rem)]">
+    <div className="-m-4 flex min-h-0 flex-1 md:-m-6 lg:-m-8">
       {/* Main Content */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Left - Transcript */}
-        <div className="flex flex-1 flex-col">
-          <ScrollArea className="flex-1 p-6">
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        {/* Left - Transcript with floating controls */}
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          <ScrollArea className="min-h-0 flex-1 p-4 pb-16">
             {transcript.length === 0 ? (
-              <div className="flex h-full items-center justify-center text-muted-foreground">
+              <div className="flex h-[calc(100vh-14rem)] items-center justify-center text-muted-foreground">
                 Start a session to see the conversation
               </div>
             ) : (
-              <div className="space-y-6">
+              <div className="space-y-4">
                 {transcript.map((item) => (
-                  <div key={item.id} className="flex gap-4">
-                    <div className="w-16 shrink-0 pt-0.5 text-xs font-medium text-muted-foreground">
-                      {item.timestamp.toLocaleTimeString([], {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
-                    </div>
-                    <div className="flex-1">
-                      <div
-                        className={`mb-1 text-xs font-semibold uppercase tracking-wide ${
-                          item.speaker === "user"
-                            ? "text-blue-500"
-                            : item.speaker === "assistant"
-                              ? "text-green-500"
-                              : "text-muted-foreground"
-                        }`}
-                      >
-                        {item.speaker === "user"
-                          ? "USER"
-                          : item.speaker === "assistant"
-                            ? "ASSISTANT"
-                            : "SYSTEM"}
+                  <div key={item.id}>
+                    {item.speaker === "system" ? (
+                      <div className="flex justify-center">
+                        <div className="animate-[fadeIn_0.3s_ease-out_forwards] rounded-full bg-muted/50 px-3 py-1 text-xs text-muted-foreground opacity-0">
+                          {item.text}
+                        </div>
                       </div>
+                    ) : (
                       <div
-                        className={`text-sm ${item.speaker === "system" ? "italic text-muted-foreground" : ""}`}
+                        className={`flex ${item.speaker === "user" ? "justify-end" : "justify-start"}`}
                       >
-                        {item.text}
+                        <div
+                          className={`max-w-[80%] space-y-1 ${item.speaker === "user" ? "items-end" : "items-start"}`}
+                        >
+                          <div
+                            className={`flex animate-[fadeIn_0.2s_ease-out_forwards] items-center gap-2 text-[10px] font-medium uppercase tracking-wider opacity-0 ${
+                              item.speaker === "user" ? "justify-end" : "justify-start"
+                            } text-muted-foreground`}
+                          >
+                            <span>{item.speaker === "user" ? "You" : "Assistant"}</span>
+                            <span className="opacity-50">
+                              {item.timestamp.toLocaleTimeString([], {
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}
+                            </span>
+                          </div>
+                          <div
+                            className={`animate-[fadeIn_0.4s_ease-out_0.1s_forwards] rounded-2xl px-4 py-2.5 text-sm leading-relaxed opacity-0 ${
+                              item.speaker === "user"
+                                ? "rounded-br-md bg-primary text-primary-foreground"
+                                : "rounded-bl-md bg-muted"
+                            }`}
+                          >
+                            {item.text}
+                          </div>
+                        </div>
                       </div>
-                    </div>
+                    )}
                   </div>
                 ))}
                 <div ref={transcriptEndRef} />
@@ -680,43 +830,54 @@ export default function TestAgentPage() {
             )}
           </ScrollArea>
 
-          {/* Bottom Control Bar */}
-          <div className="border-t bg-muted/30 px-6 py-4">
-            <div className="flex items-center justify-center gap-4">
+          {/* Floating Control Bar */}
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2">
+            <div className="flex items-center gap-3 rounded-full border bg-background/95 px-4 py-2 shadow-lg backdrop-blur-sm">
               <div className="flex items-center gap-2 font-mono text-sm text-muted-foreground">
                 <span>{formatDuration(callDuration)}</span>
-                {isConnected && (
-                  <div className="flex h-6 items-center gap-0.5">
-                    {[...Array(12)].map((_, i) => (
-                      <div
-                        key={i}
-                        className="w-0.5 animate-pulse bg-foreground/40"
-                        style={{
-                          height: `${Math.random() * 16 + 4}px`,
-                          animationDelay: `${i * 50}ms`,
-                        }}
-                      />
-                    ))}
-                  </div>
-                )}
+                <AudioVisualizer
+                  stream={audioStream}
+                  isActive={connectionStatus === "connected"}
+                  barCount={12}
+                />
               </div>
 
               <Button
                 onClick={handleConnectClick}
-                variant={isConnected ? "secondary" : "default"}
-                className="gap-2"
-                disabled={!selectedAgentId && !isConnected}
+                variant={connectionStatus === "connected" ? "destructive" : "default"}
+                size="sm"
+                className="gap-2 rounded-full"
+                disabled={
+                  (!selectedAgentId && connectionStatus === "idle") ||
+                  connectionStatus === "connecting"
+                }
               >
-                <Play className="h-4 w-4" />
-                {isConnected ? "Stop" : "Start session"}
+                {connectionStatus === "idle" && (
+                  <>
+                    <Play className="h-4 w-4" />
+                    Start session
+                  </>
+                )}
+                {connectionStatus === "connecting" && (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Connecting...
+                  </>
+                )}
+                {connectionStatus === "connected" && (
+                  <>
+                    <Square className="h-3 w-3 fill-current" />
+                    Stop
+                  </>
+                )}
               </Button>
             </div>
           </div>
         </div>
 
         {/* Right - Settings Panel */}
-        <div className="w-[380px] shrink-0 overflow-y-auto border-l bg-muted/20">
-          <div className="space-y-6 p-6">
+        <div className="flex w-[320px] shrink-0 flex-col border-l bg-muted/20">
+          <div className="flex-1 space-y-4 overflow-y-auto p-4">
             {/* Agent Selection */}
             <div className="space-y-2">
               <Label className="text-sm font-medium">Agent</Label>
@@ -759,11 +920,11 @@ export default function TestAgentPage() {
                 <Textarea
                   value={editedSystemPrompt}
                   onChange={(e) => setEditedSystemPrompt(e.target.value)}
-                  className="h-[100px] resize-none text-xs"
+                  className="h-[80px] resize-none text-xs"
                   placeholder="Enter system instructions..."
                 />
               ) : (
-                <div className="flex h-[100px] items-center justify-center rounded-md border bg-muted/50 p-2 text-xs italic text-muted-foreground">
+                <div className="flex h-[80px] items-center justify-center rounded-md border bg-muted/50 p-2 text-xs italic text-muted-foreground">
                   Select an agent to edit system instructions
                 </div>
               )}
@@ -792,7 +953,7 @@ export default function TestAgentPage() {
             <Separator />
 
             {/* Turn Detection */}
-            <div className="space-y-4">
+            <div className="space-y-3">
               <Label className="text-sm font-medium">Automatic turn detection</Label>
               <ToggleGroup
                 options={[
@@ -805,7 +966,7 @@ export default function TestAgentPage() {
               />
 
               {turnDetection !== "disabled" && (
-                <div className="space-y-4 pt-2">
+                <div className="space-y-3">
                   <div className="space-y-2">
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-muted-foreground">Threshold</span>

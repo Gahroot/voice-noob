@@ -1,6 +1,42 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
+import React from "react";
 import { afterAll, afterEach, beforeAll, vi } from "vitest";
+
+// Mock framer-motion to avoid animation issues in tests
+vi.mock("framer-motion", () => {
+  const createMotionComponent = (tag: string) => {
+    return React.forwardRef(function MotionComponent(
+      {
+        children,
+        initial,
+        animate,
+        exit,
+        transition,
+        layoutId,
+        ...props
+      }: React.PropsWithChildren<Record<string, unknown>>,
+      ref: React.Ref<HTMLElement>
+    ) {
+      // Filter out framer-motion specific props that are not valid HTML attributes
+      void initial;
+      void animate;
+      void exit;
+      void transition;
+      void layoutId;
+      return React.createElement(tag, { ...props, ref }, children);
+    });
+  };
+
+  return {
+    motion: {
+      div: createMotionComponent("div"),
+      span: createMotionComponent("span"),
+      button: createMotionComponent("button"),
+    },
+    AnimatePresence: ({ children }: { children: React.ReactNode }) => children,
+  };
+});
 
 // Cleanup after each test
 afterEach(() => {
@@ -21,6 +57,20 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/",
   useSearchParams: () => new URLSearchParams(),
   useParams: () => ({}),
+}));
+
+// Mock useAuth hook
+vi.mock("@/hooks/use-auth", () => ({
+  useAuth: () => ({
+    user: { username: "User", email: "user@example.com", id: "1" },
+    isAuthenticated: true,
+    isLoading: false,
+    login: vi.fn(),
+    logout: vi.fn(),
+    register: vi.fn(),
+    loginWithToken: vi.fn(),
+  }),
+  AuthProvider: ({ children }: { children: React.ReactNode }) => children,
 }));
 
 // Mock localStorage

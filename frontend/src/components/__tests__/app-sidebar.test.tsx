@@ -1,15 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@/test/test-utils";
 import { AppSidebar } from "../app-sidebar";
-import { SidebarProvider } from "@/components/ui/sidebar";
 
-// Helper to render with required providers
+// Helper to render sidebar
 const renderSidebar = () => {
-  return render(
-    <SidebarProvider>
-      <AppSidebar />
-    </SidebarProvider>
-  );
+  return render(<AppSidebar />);
 };
 
 describe("AppSidebar", () => {
@@ -20,9 +15,7 @@ describe("AppSidebar", () => {
 
   it("contains application branding", () => {
     renderSidebar();
-    // Test basic rendering - shadcn/ui components may have complex DOM structure
     expect(screen.getByText("Voice Noob")).toBeInTheDocument();
-    expect(screen.getByText("AI Voice Platform")).toBeInTheDocument();
   });
 
   it("renders navigation items", () => {

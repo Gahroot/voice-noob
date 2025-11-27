@@ -1,5 +1,15 @@
 """Main FastAPI application entry point."""
 
+# Fix passlib bcrypt version detection issue FIRST before any imports
+# passlib tries to access bcrypt.__about__.__version__ which doesn't exist in newer bcrypt
+# This must be done before passlib is imported anywhere
+from types import SimpleNamespace
+
+import bcrypt as _bcrypt_module
+
+if not hasattr(_bcrypt_module, "__about__"):
+    _bcrypt_module.__about__ = SimpleNamespace(__version__=_bcrypt_module.__version__)  # type: ignore[attr-defined]
+
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -16,6 +26,7 @@ from app.api import (
     calls,
     crm,
     health,
+    phone_numbers,
     realtime,
     telephony,
     telephony_ws,
@@ -138,6 +149,7 @@ app.include_router(telephony.router)  # Telephony API (phone numbers, calls)
 app.include_router(telephony.webhook_router)  # Twilio/Telnyx webhooks
 app.include_router(telephony_ws.router)  # Telephony WebSocket for media streams
 app.include_router(calls.router)  # Call history API
+app.include_router(phone_numbers.router)  # Phone numbers API
 app.include_router(auth.router)  # Authentication API
 
 

@@ -10,7 +10,7 @@ import * as z from "zod";
 import Link from "next/link";
 import { getAgent, updateAgent, deleteAgent, type UpdateAgentRequest } from "@/lib/api/agents";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Form,
   FormControl,
@@ -168,49 +168,99 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
   const form = useForm<AgentFormValues>({
     resolver: zodResolver(agentFormSchema),
     defaultValues: {
+      name: "",
+      description: "",
+      language: "en-US",
+      ttsProvider: "elevenlabs",
+      elevenLabsModel: "turbo-v2.5",
+      elevenLabsVoiceId: undefined,
+      ttsSpeed: 1,
+      sttProvider: "deepgram",
+      deepgramModel: "nova-3",
       llmProvider: "openai-realtime",
+      llmModel: "gpt-realtime",
+      systemPrompt: "",
+      temperature: 0.7,
+      maxTokens: 2000,
+      telephonyProvider: "telnyx",
+      phoneNumberId: undefined,
+      enableRecording: true,
+      enableTranscript: true,
+      turnDetectionMode: "server-vad",
+      isActive: true,
+      enabledTools: [],
+      selectedWorkspaces: [],
     },
-    values: agent
-      ? {
-          name: agent.name,
-          description: agent.description ?? "",
-          language: agent.language,
-          ttsProvider: "elevenlabs",
-          elevenLabsModel: "turbo-v2.5",
-          elevenLabsVoiceId: undefined,
-          ttsSpeed: 1,
-          sttProvider: "deepgram",
-          deepgramModel: "nova-3",
-          llmProvider: agent.pricing_tier === "premium" ? "openai-realtime" : "openai",
-          llmModel: agent.pricing_tier === "premium" ? "gpt-realtime" : "gpt-4o",
-          systemPrompt: agent.system_prompt,
-          temperature: 0.7,
-          maxTokens: 2000,
-          telephonyProvider: "telnyx",
-          phoneNumberId: agent.phone_number_id ?? undefined,
-          enableRecording: agent.enable_recording,
-          enableTranscript: agent.enable_transcript,
-          turnDetectionMode: "server-vad",
-          isActive: agent.is_active,
-          enabledTools: agent.enabled_tools,
-          selectedWorkspaces: agentWorkspaces.map((aw) => aw.workspace_id),
-        }
-      : undefined,
   });
+
+  // Track if form has been initialized with agent data
+  const formInitialized = useRef(false);
+
+  // Reset form when agent data loads (only once per agent load)
+  useEffect(() => {
+    // Only initialize once we have the agent data
+    if (agent && !formInitialized.current) {
+      formInitialized.current = true;
+      form.reset({
+        name: agent.name,
+        description: agent.description ?? "",
+        language: agent.language,
+        ttsProvider: "elevenlabs",
+        elevenLabsModel: "turbo-v2.5",
+        elevenLabsVoiceId: undefined,
+        ttsSpeed: 1,
+        sttProvider: "deepgram",
+        deepgramModel: "nova-3",
+        llmProvider: agent.pricing_tier === "premium" ? "openai-realtime" : "openai",
+        llmModel: agent.pricing_tier === "premium" ? "gpt-realtime" : "gpt-4o",
+        systemPrompt: agent.system_prompt,
+        temperature: 0.7,
+        maxTokens: 2000,
+        telephonyProvider: "telnyx",
+        phoneNumberId: agent.phone_number_id ?? undefined,
+        enableRecording: agent.enable_recording,
+        enableTranscript: agent.enable_transcript,
+        turnDetectionMode: "server-vad",
+        isActive: agent.is_active,
+        enabledTools: agent.enabled_tools ?? [],
+        selectedWorkspaces: [],
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agent]);
+
+  // Update workspaces when they load (separate from initial agent load)
+  useEffect(() => {
+    if (formInitialized.current && agentWorkspaces.length > 0) {
+      form.setValue(
+        "selectedWorkspaces",
+        agentWorkspaces.map((aw) => aw.workspace_id)
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentWorkspaces]);
 
   // Watch the LLM provider to conditionally show/hide Voice tab
   const llmProvider = form.watch("llmProvider");
   const isRealtimeProvider = llmProvider === "openai-realtime";
 
-  // Track if this is the initial load to avoid resetting model on first render
-  const isInitialLoad = useRef(true);
+  // Track user-initiated provider changes vs data-loading changes
+  const previousProvider = useRef<string | null>(null);
 
-  // Auto-select appropriate model when provider changes
+  // Auto-select appropriate model when user changes the provider
   useEffect(() => {
-    if (isInitialLoad.current) {
-      isInitialLoad.current = false;
+    // Skip if this is the initial data load or provider hasn't changed
+    if (previousProvider.current === null) {
+      previousProvider.current = llmProvider;
       return;
     }
+
+    // Skip if provider hasn't actually changed
+    if (previousProvider.current === llmProvider) {
+      return;
+    }
+
+    previousProvider.current = llmProvider;
 
     const defaultModels: Record<string, string> = {
       "openai-realtime": "gpt-realtime",
@@ -356,29 +406,26 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" asChild>
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="icon" className="h-8 w-8" asChild>
             <Link href="/dashboard/agents">
               <ArrowLeft className="h-4 w-4" />
             </Link>
           </Button>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-3xl font-bold tracking-tight">Edit Agent</h1>
-              <Badge variant={agent.is_active ? "default" : "secondary"}>
-                {agent.is_active ? "Active" : "Inactive"}
-              </Badge>
-            </div>
-            <p className="text-muted-foreground">Update configuration for {agent.name}</p>
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-semibold">{agent.name}</h1>
+            <Badge variant={agent.is_active ? "default" : "secondary"} className="h-5 text-[10px]">
+              {agent.is_active ? "Active" : "Inactive"}
+            </Badge>
           </div>
         </div>
         <AlertDialog>
           <AlertDialogTrigger asChild>
-            <Button variant="destructive" size="sm">
-              <Trash2 className="mr-2 h-4 w-4" />
-              Delete Agent
+            <Button variant="destructive" size="sm" className="h-8">
+              <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+              Delete
             </Button>
           </AlertDialogTrigger>
           <AlertDialogContent>
@@ -433,40 +480,64 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
           onSubmit={(e) => {
             void form.handleSubmit(onSubmit)(e);
           }}
-          className="space-y-6"
+          className="space-y-4"
         >
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList
-              className={cn("grid w-full", isRealtimeProvider ? "grid-cols-4" : "grid-cols-5")}
-            >
+            <TabsList>
               <TabTriggerWithErrors value="basic" label="Basic" />
-              {!isRealtimeProvider && <TabTriggerWithErrors value="voice" label="Voice & Speech" />}
+              {!isRealtimeProvider && <TabTriggerWithErrors value="voice" label="Voice" />}
               <TabTriggerWithErrors value="llm" label="AI Model" />
               <TabTriggerWithErrors value="tools" label="Tools" />
               <TabTriggerWithErrors value="advanced" label="Advanced" />
             </TabsList>
 
-            <TabsContent value="basic" className="mt-6 space-y-4">
+            <TabsContent value="basic" className="mt-4 space-y-3">
               <Card>
-                <CardHeader>
-                  <CardTitle>Basic Information</CardTitle>
-                  <CardDescription>General settings for your voice agent</CardDescription>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium">Basic Information</CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-4">
-                  <FormField
-                    control={form.control}
-                    name="name"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Agent Name</FormLabel>
-                        <FormControl>
-                          <Input placeholder="Customer Support Agent" {...field} />
-                        </FormControl>
-                        <FormDescription>A friendly name to identify this agent</FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                <CardContent className="space-y-3">
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <FormField
+                      control={form.control}
+                      name="name"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Agent Name</FormLabel>
+                          <FormControl>
+                            <Input placeholder="Customer Support Agent" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={form.control}
+                      name="language"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Language</FormLabel>
+                          <Select onValueChange={field.onChange} value={field.value}>
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select a language" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="en-US">English (US)</SelectItem>
+                              <SelectItem value="en-GB">English (UK)</SelectItem>
+                              <SelectItem value="es-ES">Spanish</SelectItem>
+                              <SelectItem value="fr-FR">French</SelectItem>
+                              <SelectItem value="de-DE">German</SelectItem>
+                              <SelectItem value="ja-JP">Japanese</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
 
                   <FormField
                     control={form.control}
@@ -477,35 +548,10 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
                         <FormControl>
                           <Textarea
                             placeholder="Handles customer inquiries and support"
+                            className="min-h-[80px]"
                             {...field}
                           />
                         </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="language"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Language</FormLabel>
-                        <Select onValueChange={field.onChange} value={field.value}>
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Select a language" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            <SelectItem value="en-US">English (US)</SelectItem>
-                            <SelectItem value="en-GB">English (UK)</SelectItem>
-                            <SelectItem value="es-ES">Spanish</SelectItem>
-                            <SelectItem value="fr-FR">French</SelectItem>
-                            <SelectItem value="de-DE">German</SelectItem>
-                            <SelectItem value="ja-JP">Japanese</SelectItem>
-                          </SelectContent>
-                        </Select>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -600,16 +646,15 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
             </TabsContent>
 
             {!isRealtimeProvider && (
-              <TabsContent value="voice" className="mt-6 space-y-4">
+              <TabsContent value="voice" className="mt-4 space-y-3">
                 <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="flex items-center gap-2 text-sm font-medium">
                       Text-to-Speech (TTS)
                       <InfoTooltip content="TTS converts your agent's text responses into natural-sounding speech. Different providers offer varying quality, latency, and voice options." />
                     </CardTitle>
-                    <CardDescription>Configure how your agent speaks</CardDescription>
                   </CardHeader>
-                  <CardContent className="space-y-4">
+                  <CardContent className="space-y-3">
                     <FormField
                       control={form.control}
                       name="ttsProvider"
@@ -701,14 +746,13 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
                 </Card>
 
                 <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="flex items-center gap-2 text-sm font-medium">
                       Speech-to-Text (STT)
                       <InfoTooltip content="STT converts caller speech into text for the AI to understand. Accuracy is measured by Word Error Rate (WER) - lower is better. Deepgram Nova-3 has 6.84% WER." />
                     </CardTitle>
-                    <CardDescription>Configure how your agent listens</CardDescription>
                   </CardHeader>
-                  <CardContent className="space-y-4">
+                  <CardContent className="space-y-3">
                     <FormField
                       control={form.control}
                       name="sttProvider"
@@ -769,111 +813,100 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
               </TabsContent>
             )}
 
-            <TabsContent value="llm" className="mt-6 space-y-4">
+            <TabsContent value="llm" className="mt-4 space-y-3">
               <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    Language Model Configuration
+                <CardHeader className="pb-3">
+                  <CardTitle className="flex items-center gap-2 text-sm font-medium">
+                    Language Model
                     <InfoTooltip content="The LLM (Large Language Model) is the AI brain that understands user intent and generates responses. Realtime API provides end-to-end voice with lowest latency." />
                   </CardTitle>
-                  <CardDescription>Configure the AI brain of your voice agent</CardDescription>
                 </CardHeader>
-                <CardContent className="space-y-4">
-                  <FormField
-                    control={form.control}
-                    name="llmProvider"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>LLM Provider</FormLabel>
-                        <Select onValueChange={field.onChange} value={field.value}>
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            <SelectItem value="openai-realtime">
-                              OpenAI Realtime (Recommended)
-                            </SelectItem>
-                            <SelectItem value="openai">OpenAI Standard</SelectItem>
-                            <SelectItem value="anthropic">Anthropic Claude</SelectItem>
-                            <SelectItem value="google">Google Gemini</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <FormDescription>
-                          Realtime API: End-to-end speech, SIP support, production-ready
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="llmModel"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Model</FormLabel>
-                        <Select onValueChange={field.onChange} value={field.value}>
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            {llmProvider === "openai-realtime" && (
-                              <SelectItem value="gpt-realtime">
-                                gpt-4o-realtime (Best for Voice)
+                <CardContent className="space-y-3">
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <FormField
+                      control={form.control}
+                      name="llmProvider"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>LLM Provider</FormLabel>
+                          <Select onValueChange={field.onChange} value={field.value}>
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="openai-realtime">
+                                OpenAI Realtime (Recommended)
                               </SelectItem>
-                            )}
-                            {llmProvider === "openai" && (
-                              <>
-                                <SelectItem value="gpt-4o">
-                                  GPT-4o (Multimodal - 232ms latency)
+                              <SelectItem value="openai">OpenAI Standard</SelectItem>
+                              <SelectItem value="anthropic">Anthropic Claude</SelectItem>
+                              <SelectItem value="google">Google Gemini</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={form.control}
+                      name="llmModel"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Model</FormLabel>
+                          <Select onValueChange={field.onChange} value={field.value}>
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {llmProvider === "openai-realtime" && (
+                                <SelectItem value="gpt-realtime">
+                                  gpt-4o-realtime (Best for Voice)
                                 </SelectItem>
-                                <SelectItem value="gpt-4o-mini">
-                                  GPT-4o-mini (25x cheaper, fast)
-                                </SelectItem>
-                              </>
-                            )}
-                            {llmProvider === "anthropic" && (
-                              <>
-                                <SelectItem value="claude-sonnet-4-5">
-                                  Claude Sonnet 4.5 (Best coding/agents)
-                                </SelectItem>
-                                <SelectItem value="claude-opus-4-1">
-                                  Claude Opus 4.1 (Most capable)
-                                </SelectItem>
-                                <SelectItem value="claude-haiku-4-5">
-                                  Claude Haiku 4.5 (Fast & cheap)
-                                </SelectItem>
-                              </>
-                            )}
-                            {llmProvider === "google" && (
-                              <>
-                                <SelectItem value="gemini-2.5-flash">
-                                  Gemini 2.5 Flash (Multimodal)
-                                </SelectItem>
-                                <SelectItem value="gemini-2.5-pro">
-                                  Gemini 2.5 Pro (Most capable)
-                                </SelectItem>
-                              </>
-                            )}
-                          </SelectContent>
-                        </Select>
-                        <FormDescription>
-                          {llmProvider === "openai-realtime" &&
-                            "End-to-end voice model with built-in TTS/STT"}
-                          {llmProvider === "openai" &&
-                            "GPT-4o: Best quality | GPT-4o-mini: Budget-friendly"}
-                          {llmProvider === "anthropic" &&
-                            "Sonnet: Best value | Opus: Most capable | Haiku: Fastest"}
-                          {llmProvider === "google" && "Flash: Fast & cheap | Pro: Most capable"}
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                              )}
+                              {llmProvider === "openai" && (
+                                <>
+                                  <SelectItem value="gpt-4o">
+                                    GPT-4o (Multimodal - 232ms latency)
+                                  </SelectItem>
+                                  <SelectItem value="gpt-4o-mini">
+                                    GPT-4o-mini (25x cheaper, fast)
+                                  </SelectItem>
+                                </>
+                              )}
+                              {llmProvider === "anthropic" && (
+                                <>
+                                  <SelectItem value="claude-sonnet-4-5">
+                                    Claude Sonnet 4.5 (Best coding/agents)
+                                  </SelectItem>
+                                  <SelectItem value="claude-opus-4-1">
+                                    Claude Opus 4.1 (Most capable)
+                                  </SelectItem>
+                                  <SelectItem value="claude-haiku-4-5">
+                                    Claude Haiku 4.5 (Fast & cheap)
+                                  </SelectItem>
+                                </>
+                              )}
+                              {llmProvider === "google" && (
+                                <>
+                                  <SelectItem value="gemini-2.5-flash">
+                                    Gemini 2.5 Flash (Multimodal)
+                                  </SelectItem>
+                                  <SelectItem value="gemini-2.5-pro">
+                                    Gemini 2.5 Pro (Most capable)
+                                  </SelectItem>
+                                </>
+                              )}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
 
                   <FormField
                     control={form.control}
@@ -1005,13 +1038,10 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
               </Card>
             </TabsContent>
 
-            <TabsContent value="tools" className="mt-6 space-y-4">
+            <TabsContent value="tools" className="mt-4 space-y-3">
               <Card>
-                <CardHeader>
-                  <CardTitle>Built-in Tools</CardTitle>
-                  <CardDescription>
-                    Enable CRM and booking capabilities for your agent
-                  </CardDescription>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium">Built-in Tools</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <FormField
@@ -1080,9 +1110,8 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
               </Card>
 
               <Card>
-                <CardHeader>
-                  <CardTitle>External Integrations</CardTitle>
-                  <CardDescription>Connect external services (coming soon)</CardDescription>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium">External Integrations</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <FormField
@@ -1133,13 +1162,12 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
               </Card>
             </TabsContent>
 
-            <TabsContent value="advanced" className="mt-6 space-y-4">
+            <TabsContent value="advanced" className="mt-4 space-y-3">
               <Card>
-                <CardHeader>
-                  <CardTitle>Telephony Settings</CardTitle>
-                  <CardDescription>Phone number and call settings</CardDescription>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium">Telephony Settings</CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-4">
+                <CardContent className="space-y-3">
                   <FormField
                     control={form.control}
                     name="telephonyProvider"
@@ -1279,30 +1307,29 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
               </Card>
 
               <Card>
-                <CardHeader>
-                  <CardTitle>Statistics</CardTitle>
-                  <CardDescription>Agent usage statistics</CardDescription>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium">Statistics</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-                    <div className="rounded-lg border p-4">
-                      <p className="text-sm text-muted-foreground">Total Calls</p>
-                      <p className="text-2xl font-bold">{agent.total_calls}</p>
+                  <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                    <div className="rounded-md border p-3">
+                      <p className="text-xs text-muted-foreground">Total Calls</p>
+                      <p className="text-lg font-semibold">{agent.total_calls}</p>
                     </div>
-                    <div className="rounded-lg border p-4">
-                      <p className="text-sm text-muted-foreground">Total Duration</p>
-                      <p className="text-2xl font-bold">
+                    <div className="rounded-md border p-3">
+                      <p className="text-xs text-muted-foreground">Total Duration</p>
+                      <p className="text-lg font-semibold">
                         {Math.round(agent.total_duration_seconds / 60)}m
                       </p>
                     </div>
-                    <div className="rounded-lg border p-4">
-                      <p className="text-sm text-muted-foreground">Created</p>
+                    <div className="rounded-md border p-3">
+                      <p className="text-xs text-muted-foreground">Created</p>
                       <p className="text-sm font-medium">
                         {new Date(agent.created_at).toLocaleDateString()}
                       </p>
                     </div>
-                    <div className="rounded-lg border p-4">
-                      <p className="text-sm text-muted-foreground">Last Call</p>
+                    <div className="rounded-md border p-3">
+                      <p className="text-xs text-muted-foreground">Last Call</p>
                       <p className="text-sm font-medium">
                         {agent.last_call_at
                           ? new Date(agent.last_call_at).toLocaleDateString()
@@ -1315,16 +1342,17 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
             </TabsContent>
           </Tabs>
 
-          <div className="flex justify-end gap-4">
+          <div className="flex justify-end gap-3">
             <Button
               type="button"
               variant="outline"
+              size="sm"
               asChild
               disabled={updateAgentMutation.isPending}
             >
               <Link href="/dashboard/agents">Cancel</Link>
             </Button>
-            <Button type="submit" disabled={updateAgentMutation.isPending}>
+            <Button type="submit" size="sm" disabled={updateAgentMutation.isPending}>
               {updateAgentMutation.isPending ? "Saving..." : "Save Changes"}
             </Button>
           </div>

@@ -31,7 +31,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Phone, Plus, MoreVertical, Search, Loader2, RefreshCw } from "lucide-react";
+import { Phone, Plus, MoreVertical, Search, Loader2, RefreshCw, FolderOpen } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -56,6 +56,14 @@ import {
   type Provider,
 } from "@/lib/api/telephony";
 import { fetchAgents, updateAgent, type Agent } from "@/lib/api/agents";
+import { api } from "@/lib/api";
+
+interface Workspace {
+  id: string;
+  name: string;
+  description: string | null;
+  is_default: boolean;
+}
 
 type PhoneNumber = {
   id: string;
@@ -63,6 +71,8 @@ type PhoneNumber = {
   provider: string;
   agentId?: string;
   agentName?: string;
+  workspaceId?: string;
+  workspaceName?: string;
   isActive: boolean;
 };
 
@@ -75,6 +85,8 @@ export default function PhoneNumbersPage() {
   // State for phone numbers
   const [phoneNumbers, setPhoneNumbers] = useState<PhoneNumber[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>("all");
   const [isLoading, setIsLoading] = useState(true);
 
   // State for modals
@@ -102,12 +114,20 @@ export default function PhoneNumbersPage() {
   const loadData = async () => {
     setIsLoading(true);
     try {
-      // Load phone numbers from both providers
-      const [telnyxNumbers, twilioNumbers, agentsList] = await Promise.allSettled([
-        listPhoneNumbers("telnyx"),
-        listPhoneNumbers("twilio"),
-        fetchAgents(),
-      ]);
+      // Load phone numbers from both providers and workspaces
+      const [telnyxNumbers, twilioNumbers, agentsList, workspacesResult] = await Promise.allSettled(
+        [
+          listPhoneNumbers("telnyx"),
+          listPhoneNumbers("twilio"),
+          fetchAgents(),
+          api.get("/api/v1/workspaces"),
+        ]
+      );
+
+      // Set workspaces
+      if (workspacesResult.status === "fulfilled") {
+        setWorkspaces(workspacesResult.value.data as Workspace[]);
+      }
 
       const numbers: PhoneNumber[] = [];
 
@@ -287,15 +307,33 @@ export default function PhoneNumbersPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Phone Numbers</h1>
-          <p className="text-muted-foreground">Manage phone numbers for your voice agents</p>
+          <h1 className="text-xl font-semibold">Phone Numbers</h1>
+          <p className="text-sm text-muted-foreground">
+            Manage phone numbers for your voice agents
+          </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => void loadData()} disabled={isLoading}>
+          {workspaces.length > 0 && (
+            <Select value={selectedWorkspaceId} onValueChange={setSelectedWorkspaceId}>
+              <SelectTrigger className="h-8 w-[180px] text-sm">
+                <FolderOpen className="mr-2 h-3.5 w-3.5" />
+                <SelectValue placeholder="All Workspaces" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Workspaces</SelectItem>
+                {workspaces.map((ws) => (
+                  <SelectItem key={ws.id} value={ws.id}>
+                    {ws.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          <Button size="sm" variant="outline" onClick={() => void loadData()} disabled={isLoading}>
             <RefreshCw className={`mr-2 h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
             Refresh
           </Button>
-          <Button onClick={openPurchaseModal}>
+          <Button size="sm" onClick={openPurchaseModal}>
             <Plus className="mr-2 h-4 w-4" />
             Purchase Number
           </Button>
@@ -317,7 +355,7 @@ export default function PhoneNumbersPage() {
               Purchase a phone number from Telnyx or Twilio to start receiving calls. Make sure to
               configure your API credentials in Settings first.
             </p>
-            <Button onClick={openPurchaseModal}>
+            <Button size="sm" onClick={openPurchaseModal}>
               <Plus className="mr-2 h-4 w-4" />
               Purchase Your First Number
             </Button>
@@ -327,7 +365,12 @@ export default function PhoneNumbersPage() {
         <Card>
           <CardHeader>
             <CardTitle>Your Phone Numbers</CardTitle>
-            <CardDescription>{phoneNumbers.length} number(s) available</CardDescription>
+            <CardDescription>
+              {phoneNumbers.length} number(s) available
+              {selectedWorkspaceId !== "all" && (
+                <span className="ml-1 text-muted-foreground">(workspace filter coming soon)</span>
+              )}
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <Table>

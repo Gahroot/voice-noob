@@ -9,7 +9,68 @@
 }
 
 @layer base {
+  /* Dark theme as default - ChatGPT style colors */
   :root {
+    /* Main background: #212121 (ChatGPT main area) */
+    --background: 0 0% 13%;
+    /* Foreground text: light gray/white */
+    --foreground: 0 0% 95%;
+
+    /* Cards: slightly lighter than background #2f2f2f */
+    --card: 0 0% 18%;
+    --card-foreground: 0 0% 95%;
+
+    /* Popovers/dropdowns: slightly lighter for contrast */
+    --popover: 0 0% 22%;
+    --popover-foreground: 0 0% 95%;
+
+    /* Primary: white/light for buttons */
+    --primary: 0 0% 95%;
+    --primary-foreground: 0 0% 9%;
+
+    /* Secondary: darker gray for secondary elements */
+    --secondary: 0 0% 22%;
+    --secondary-foreground: 0 0% 95%;
+
+    /* Muted: subtle backgrounds */
+    --muted: 0 0% 18%;
+    --muted-foreground: 0 0% 60%;
+
+    /* Accent: hover states - lighter for visibility */
+    --accent: 0 0% 28%;
+    --accent-foreground: 0 0% 98%;
+
+    /* Destructive: red for errors - brighter for dark theme visibility */
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+
+    /* Borders: more visible borders for better contrast */
+    --border: 0 0% 28%;
+    --input: 0 0% 28%;
+    --ring: 0 0% 60%;
+
+    /* Chart colors */
+    --chart-1: 220 70% 50%;
+    --chart-2: 160 60% 45%;
+    --chart-3: 30 80% 55%;
+    --chart-4: 280 65% 60%;
+    --chart-5: 340 75% 55%;
+
+    --radius: 0.5rem;
+
+    /* Sidebar: darker than main area #171717 */
+    --sidebar-background: 0 0% 4%;
+    --sidebar-foreground: 0 0% 85%;
+    --sidebar-primary: 0 0% 95%;
+    --sidebar-primary-foreground: 0 0% 9%;
+    --sidebar-accent: 0 0% 12%;
+    --sidebar-accent-foreground: 0 0% 95%;
+    --sidebar-border: 0 0% 12%;
+    --sidebar-ring: 0 0% 60%;
+  }
+
+  /* Light theme (optional, kept for future use) */
+  .light {
     --background: 0 0% 100%;
     --foreground: 0 0% 3.9%;
     --card: 0 0% 100%;
@@ -34,7 +95,6 @@
     --chart-3: 197 37% 24%;
     --chart-4: 43 74% 66%;
     --chart-5: 27 87% 67%;
-    --radius: 0.5rem;
     --sidebar-background: 0 0% 98%;
     --sidebar-foreground: 240 5.3% 26.1%;
     --sidebar-primary: 240 5.9% 10%;
@@ -42,40 +102,6 @@
     --sidebar-accent: 240 4.8% 95.9%;
     --sidebar-accent-foreground: 240 5.9% 10%;
     --sidebar-border: 220 13% 91%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
-  }
-  .dark {
-    --background: 0 0% 3.9%;
-    --foreground: 0 0% 98%;
-    --card: 0 0% 3.9%;
-    --card-foreground: 0 0% 98%;
-    --popover: 0 0% 3.9%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 0 0% 98%;
-    --primary-foreground: 0 0% 9%;
-    --secondary: 0 0% 14.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 0 0% 14.9%;
-    --muted-foreground: 0 0% 63.9%;
-    --accent: 0 0% 14.9%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 0 0% 14.9%;
-    --input: 0 0% 14.9%;
-    --ring: 0 0% 83.1%;
-    --chart-1: 220 70% 50%;
-    --chart-2: 160 60% 45%;
-    --chart-3: 30 80% 55%;
-    --chart-4: 280 65% 60%;
-    --chart-5: 340 75% 55%;
-    --sidebar-background: 240 5.9% 10%;
-    --sidebar-foreground: 240 4.8% 95.9%;
-    --sidebar-primary: 224.3 76.3% 48%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 240 3.7% 15.9%;
-    --sidebar-accent-foreground: 240 4.8% 95.9%;
-    --sidebar-border: 240 3.7% 15.9%;
     --sidebar-ring: 217.2 91.2% 59.8%;
   }
 }
@@ -87,4 +113,81 @@
   body {
     @apply bg-background text-foreground;
   }
+
+  /* Hide scrollbars globally while keeping scroll functionality */
+  * {
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* IE and Edge */
+  }
+  *::-webkit-scrollbar {
+    display: none; /* Chrome, Safari, Opera */
+  }
+}
+
+/* Chat message animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Logo gradient flow animation */
+@keyframes gradient-flow {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 100% 50%;
+  }
+}
+
+.animate-gradient-flow {
+  animation: gradient-flow 3s linear infinite;
+}
+
+/* Rotating border animation for shiny buttons */
+@property --border-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes border-rotate {
+  to {
+    --border-angle: 360deg;
+  }
+}
+
+.shiny-button {
+  --border-angle: 0deg;
+  background:
+    linear-gradient(to right, hsl(0 0% 13%), hsl(0 0% 13%)) padding-box,
+    conic-gradient(
+        from var(--border-angle),
+        hsl(0 0% 28%) 0%,
+        hsl(0 0% 60%) 25%,
+        hsl(0 0% 95%) 50%,
+        hsl(0 0% 60%) 75%,
+        hsl(0 0% 28%) 100%
+      )
+      border-box;
+  border: 1px solid transparent;
+  animation: border-rotate 3s linear infinite;
+}
+
+.shiny-button:hover {
+  background:
+    linear-gradient(to right, hsl(0 0% 18%), hsl(0 0% 18%)) padding-box,
+    conic-gradient(
+        from var(--border-angle),
+        hsl(0 0% 28%) 0%,
+        hsl(0 0% 70%) 25%,
+        hsl(0 0% 100%) 50%,
+        hsl(0 0% 70%) 75%,
+        hsl(0 0% 28%) 100%
+      )
+      border-box;
 }

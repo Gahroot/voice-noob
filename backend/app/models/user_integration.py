@@ -2,12 +2,15 @@
 
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import JSON, DateTime, String, Text, Uuid
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import JSON, DateTime, ForeignKey, String, Text, Uuid
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+
+if TYPE_CHECKING:
+    from app.models.workspace import Workspace
 
 
 class UserIntegration(Base):
@@ -20,6 +23,17 @@ class UserIntegration(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False, index=True)
+
+    # Workspace reference (for data isolation between clients/workspaces)
+    # Different workspaces can have different integration credentials
+    workspace_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+        comment="Workspace this integration belongs to (null = user-level)",
+    )
+
     integration_id: Mapped[str] = mapped_column(
         String(100),
         nullable=False,
@@ -68,6 +82,9 @@ class UserIntegration(Base):
         onupdate=lambda: datetime.now(UTC),
         nullable=False,
     )
+
+    # Relationships
+    workspace: Mapped["Workspace | None"] = relationship("Workspace", lazy="selectin")
 
     def __repr__(self) -> str:
         return (

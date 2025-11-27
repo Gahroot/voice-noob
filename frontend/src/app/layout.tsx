@@ -28,6 +28,11 @@ export default function RootLayout({
 
   return (
     <html lang="en">
+      <head>
+        <title>Voice Noob</title>
+        <meta name="description" content="AI-powered voice agent platform" />
+        <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+      </head>
       <body className="antialiased">
         <ErrorBoundary>
           <QueryClientProvider client={queryClient}>

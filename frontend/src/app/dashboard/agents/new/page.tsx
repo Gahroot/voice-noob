@@ -136,8 +136,8 @@ export default function NewAgentPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">Create Voice Agent</h1>
-        <p className="text-muted-foreground">
+        <h1 className="text-xl font-semibold">Create Voice Agent</h1>
+        <p className="text-sm text-muted-foreground">
           Configure your AI voice agent for inbound and outbound calls
         </p>
       </div>
