@@ -29,6 +29,10 @@ class CreateAgentRequest(BaseModel):
     language: str = Field(default="en-US")
     voice: str = Field(default="shimmer")
     enabled_tools: list[str] = Field(default_factory=list)
+    enabled_tool_ids: dict[str, list[str]] = Field(
+        default_factory=dict,
+        description="Granular tool selection: {integration_id: [tool_id1, tool_id2]}",
+    )
     phone_number_id: str | None = None
     enable_recording: bool = False
     enable_transcript: bool = True
@@ -49,6 +53,10 @@ class UpdateAgentRequest(BaseModel):
     language: str | None = None
     voice: str | None = None
     enabled_tools: list[str] | None = None
+    enabled_tool_ids: dict[str, list[str]] | None = Field(
+        default=None,
+        description="Granular tool selection: {integration_id: [tool_id1, tool_id2]}",
+    )
     phone_number_id: str | None = None
     enable_recording: bool | None = None
     enable_transcript: bool | None = None
@@ -71,6 +79,7 @@ class AgentResponse(BaseModel):
     language: str
     voice: str
     enabled_tools: list[str]
+    enabled_tool_ids: dict[str, list[str]]
     phone_number_id: str | None
     enable_recording: bool
     enable_transcript: bool
@@ -117,6 +126,7 @@ async def create_agent(
         language=request.language,
         voice=request.voice,
         enabled_tools=request.enabled_tools,
+        enabled_tool_ids=request.enabled_tool_ids,
         phone_number_id=request.phone_number_id,
         enable_recording=request.enable_recording,
         enable_transcript=request.enable_transcript,
@@ -310,6 +320,7 @@ def _apply_agent_updates(agent: Agent, request: UpdateAgentRequest) -> None:
         "language",
         "voice",
         "enabled_tools",
+        "enabled_tool_ids",
         "phone_number_id",
         "enable_recording",
         "enable_transcript",
@@ -388,6 +399,7 @@ def _agent_to_response(agent: Agent) -> AgentResponse:
         language=agent.language,
         voice=agent.voice,
         enabled_tools=agent.enabled_tools,
+        enabled_tool_ids=agent.enabled_tool_ids,
         phone_number_id=agent.phone_number_id,
         enable_recording=agent.enable_recording,
         enable_transcript=agent.enable_transcript,

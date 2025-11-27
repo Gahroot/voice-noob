@@ -53,6 +53,7 @@ export interface Agent {
   language: string;
   voice: string;
   enabled_tools: string[];
+  enabled_tool_ids: Record<string, string[]>; // {integration_id: [tool_id1, tool_id2]}
   phone_number_id: string | null;
   enable_recording: boolean;
   enable_transcript: boolean;
@@ -78,6 +79,7 @@ export interface CreateAgentRequest {
   language: string;
   voice?: string;
   enabled_tools: string[];
+  enabled_tool_ids?: Record<string, string[]>; // {integration_id: [tool_id1, tool_id2]}
   phone_number_id?: string;
   enable_recording: boolean;
   enable_transcript: boolean;
@@ -133,6 +135,7 @@ export interface UpdateAgentRequest {
   language?: string;
   voice?: string;
   enabled_tools?: string[];
+  enabled_tool_ids?: Record<string, string[]>; // {integration_id: [tool_id1, tool_id2]}
   phone_number_id?: string | null;
   enable_recording?: boolean;
   enable_transcript?: boolean;

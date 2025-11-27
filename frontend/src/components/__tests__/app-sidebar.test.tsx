@@ -21,12 +21,12 @@ describe("AppSidebar", () => {
   it("renders navigation items", () => {
     renderSidebar();
 
-    // Check for key navigation items
+    // Check for key navigation items (Settings is in dropdown menu, not main nav)
     expect(screen.getByText("Dashboard")).toBeInTheDocument();
     expect(screen.getByText("Voice Agents")).toBeInTheDocument();
     expect(screen.getByText("CRM")).toBeInTheDocument();
     expect(screen.getByText("Integrations")).toBeInTheDocument();
-    expect(screen.getByText("Settings")).toBeInTheDocument();
+    expect(screen.getByText("Appointments")).toBeInTheDocument();
   });
 
   it("renders user profile information", () => {

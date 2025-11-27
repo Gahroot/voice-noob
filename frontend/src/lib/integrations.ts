@@ -18,9 +18,12 @@ export interface Integration {
   icon: string;
   enabled: boolean;
   isPopular?: boolean;
+  isBuiltIn?: boolean; // Voice Noob built-in integration
+  badge?: string; // Custom badge text (e.g., "Voice Noob", "Popular")
   fields?: IntegrationField[];
   scopes?: string[];
   documentationUrl?: string;
+  tools?: IntegrationTool[]; // Available tools for this integration
 }
 
 export interface IntegrationField {
@@ -32,19 +35,46 @@ export interface IntegrationField {
   description?: string;
 }
 
+export type ToolRiskLevel = "safe" | "moderate" | "high";
+
+export interface IntegrationTool {
+  id: string;
+  name: string;
+  description: string;
+  riskLevel: ToolRiskLevel;
+  defaultEnabled?: boolean; // Whether this tool should be enabled by default
+}
+
 export const AVAILABLE_INTEGRATIONS: Integration[] = [
-  // Internal Tools (No external API needed)
+  // Built-in Voice Noob Tools (No external API needed)
   {
     id: "crm",
-    name: "Internal CRM",
+    name: "Contact Management",
     slug: "crm",
     description: "Search customers, view contact details, manage customer data",
     category: "crm",
     authType: "none",
-    icon: "https://cdn.simpleicons.org/database",
+    icon: "https://cdn.simpleicons.org/contactlessPayment",
     enabled: true,
-    isPopular: true,
+    isBuiltIn: true,
+    badge: "Voice Noob",
     documentationUrl: "/docs/crm-tools",
+    tools: [
+      {
+        id: "search_customer",
+        name: "Search Customer",
+        description: "Search for a customer by phone number, email, or name",
+        riskLevel: "safe",
+        defaultEnabled: true,
+      },
+      {
+        id: "create_contact",
+        name: "Create Contact",
+        description: "Create a new contact/customer in the CRM",
+        riskLevel: "moderate",
+        defaultEnabled: true,
+      },
+    ],
   },
   {
     id: "bookings",
@@ -53,10 +83,48 @@ export const AVAILABLE_INTEGRATIONS: Integration[] = [
     description: "Check availability, book appointments, cancel/reschedule bookings",
     category: "calendar",
     authType: "none",
-    icon: "https://cdn.simpleicons.org/googlecalendar",
+    icon: "https://cdn.simpleicons.org/calendly",
     enabled: true,
-    isPopular: true,
+    isBuiltIn: true,
+    badge: "Voice Noob",
     documentationUrl: "/docs/booking-tools",
+    tools: [
+      {
+        id: "check_availability",
+        name: "Check Availability",
+        description: "Check available appointment time slots for a specific date",
+        riskLevel: "safe",
+        defaultEnabled: true,
+      },
+      {
+        id: "book_appointment",
+        name: "Book Appointment",
+        description: "Book an appointment for a customer",
+        riskLevel: "moderate",
+        defaultEnabled: true,
+      },
+      {
+        id: "list_appointments",
+        name: "List Appointments",
+        description: "List upcoming appointments, optionally filtered by date or contact",
+        riskLevel: "safe",
+        defaultEnabled: true,
+      },
+      {
+        id: "cancel_appointment",
+        name: "Cancel Appointment",
+        description: "Cancel an existing appointment",
+        riskLevel: "high",
+        defaultEnabled: false,
+      },
+      {
+        id: "reschedule_appointment",
+        name: "Reschedule Appointment",
+        description: "Reschedule an existing appointment to a new time",
+        riskLevel: "moderate",
+        defaultEnabled: true,
+      },
+    ],
   },
 
   // External CRM
@@ -172,6 +240,121 @@ export const AVAILABLE_INTEGRATIONS: Integration[] = [
       },
     ],
     documentationUrl: "https://www.zoho.com/crm/developer/docs/api/v2/auth-request.html",
+  },
+  {
+    id: "gohighlevel",
+    name: "GoHighLevel",
+    slug: "gohighlevel",
+    description: "CRM contacts, calendar booking, opportunities, conversations",
+    category: "crm",
+    authType: "api_key",
+    icon: "https://cdn.simpleicons.org/g2",
+    enabled: true,
+    isPopular: true,
+    fields: [
+      {
+        name: "access_token",
+        label: "API Key / Access Token",
+        type: "password",
+        required: true,
+        description: "Location API Key or Private Integration Token",
+      },
+      {
+        name: "location_id",
+        label: "Location ID",
+        type: "text",
+        required: true,
+        placeholder: "ve9EPM428h8vShlRW1KT",
+        description: "Your GHL sub-account/location ID",
+      },
+    ],
+    documentationUrl: "https://marketplace.gohighlevel.com/docs/",
+    tools: [
+      {
+        id: "ghl_search_contact",
+        name: "Search Contact",
+        description: "Search for a contact by phone, email, or name",
+        riskLevel: "safe",
+        defaultEnabled: true,
+      },
+      {
+        id: "ghl_get_contact",
+        name: "Get Contact",
+        description: "Get full details of a contact by their ID",
+        riskLevel: "safe",
+        defaultEnabled: true,
+      },
+      {
+        id: "ghl_create_contact",
+        name: "Create Contact",
+        description: "Create a new contact in GoHighLevel",
+        riskLevel: "moderate",
+        defaultEnabled: true,
+      },
+      {
+        id: "ghl_update_contact",
+        name: "Update Contact",
+        description: "Update an existing contact's information",
+        riskLevel: "moderate",
+        defaultEnabled: true,
+      },
+      {
+        id: "ghl_add_contact_tags",
+        name: "Add Contact Tags",
+        description: "Add tags to a contact",
+        riskLevel: "moderate",
+        defaultEnabled: true,
+      },
+      {
+        id: "ghl_get_calendars",
+        name: "Get Calendars",
+        description: "Get list of available calendars",
+        riskLevel: "safe",
+        defaultEnabled: true,
+      },
+      {
+        id: "ghl_get_calendar_slots",
+        name: "Get Calendar Slots",
+        description: "Get available appointment slots for a calendar",
+        riskLevel: "safe",
+        defaultEnabled: true,
+      },
+      {
+        id: "ghl_book_appointment",
+        name: "Book Appointment",
+        description: "Book an appointment in GoHighLevel",
+        riskLevel: "moderate",
+        defaultEnabled: true,
+      },
+      {
+        id: "ghl_get_appointments",
+        name: "Get Appointments",
+        description: "Get appointments for a contact",
+        riskLevel: "safe",
+        defaultEnabled: true,
+      },
+      {
+        id: "ghl_cancel_appointment",
+        name: "Cancel Appointment",
+        description: "Cancel an appointment in GoHighLevel",
+        riskLevel: "high",
+        defaultEnabled: false,
+      },
+      {
+        id: "ghl_get_pipelines",
+        name: "Get Pipelines",
+        description: "Get list of sales pipelines",
+        riskLevel: "safe",
+        defaultEnabled: true,
+      },
+      {
+        id: "ghl_create_opportunity",
+        name: "Create Opportunity",
+        description: "Create a new opportunity/deal",
+        riskLevel: "moderate",
+        defaultEnabled: true,
+      },
+    ],
   },
 
   // Calendar
@@ -544,6 +727,265 @@ export const AVAILABLE_INTEGRATIONS: Integration[] = [
     ],
     documentationUrl:
       "https://developers.intercom.com/docs/build-an-integration/learn-more/authentication/",
+  },
+
+  // Scheduling
+  {
+    id: "calendly",
+    name: "Calendly",
+    slug: "calendly",
+    description: "Check availability, schedule meetings, manage event types",
+    category: "calendar",
+    authType: "api_key",
+    icon: "https://cdn.simpleicons.org/calendly",
+    enabled: true,
+    isPopular: true,
+    fields: [
+      {
+        name: "access_token",
+        label: "Personal Access Token",
+        type: "password",
+        required: true,
+        placeholder: "eyJra...",
+        description: "Create token at calendly.com/integrations/api_webhooks",
+      },
+    ],
+    documentationUrl: "https://developer.calendly.com/api-docs/",
+    tools: [
+      {
+        id: "calendly_get_event_types",
+        name: "Get Event Types",
+        description: "Get available event types (meeting types) that can be scheduled",
+        riskLevel: "safe",
+        defaultEnabled: true,
+      },
+      {
+        id: "calendly_get_availability",
+        name: "Get Availability",
+        description: "Get available time slots for a specific event type",
+        riskLevel: "safe",
+        defaultEnabled: true,
+      },
+      {
+        id: "calendly_create_scheduling_link",
+        name: "Create Scheduling Link",
+        description: "Generate a one-time booking link to send to a customer",
+        riskLevel: "moderate",
+        defaultEnabled: true,
+      },
+      {
+        id: "calendly_list_events",
+        name: "List Events",
+        description: "List scheduled events/appointments",
+        riskLevel: "safe",
+        defaultEnabled: true,
+      },
+      {
+        id: "calendly_get_event",
+        name: "Get Event",
+        description: "Get details of a specific scheduled event",
+        riskLevel: "safe",
+        defaultEnabled: true,
+      },
+      {
+        id: "calendly_cancel_event",
+        name: "Cancel Event",
+        description: "Cancel a scheduled event",
+        riskLevel: "high",
+        defaultEnabled: false,
+      },
+    ],
+  },
+
+  // E-commerce
+  {
+    id: "shopify",
+    name: "Shopify",
+    slug: "shopify",
+    description: "Look up orders, check product inventory, manage customers",
+    category: "other",
+    authType: "api_key",
+    icon: "https://cdn.simpleicons.org/shopify",
+    enabled: true,
+    isPopular: true,
+    fields: [
+      {
+        name: "access_token",
+        label: "Admin API Access Token",
+        type: "password",
+        required: true,
+        placeholder: "shpat_...",
+        description: "Create Custom App in Shopify Admin > Apps > Develop apps",
+      },
+      {
+        name: "shop_domain",
+        label: "Shop Domain",
+        type: "text",
+        required: true,
+        placeholder: "your-store.myshopify.com",
+        description: "Your Shopify store domain",
+      },
+    ],
+    documentationUrl: "https://shopify.dev/docs/api/admin-rest",
+    tools: [
+      {
+        id: "shopify_search_orders",
+        name: "Search Orders",
+        description: "Search for orders by order number, email, or name",
+        riskLevel: "safe",
+        defaultEnabled: true,
+      },
+      {
+        id: "shopify_get_order",
+        name: "Get Order",
+        description: "Get full details of a specific order",
+        riskLevel: "safe",
+        defaultEnabled: true,
+      },
+      {
+        id: "shopify_get_order_tracking",
+        name: "Get Order Tracking",
+        description: "Get shipping/tracking information for an order",
+        riskLevel: "safe",
+        defaultEnabled: true,
+      },
+      {
+        id: "shopify_search_products",
+        name: "Search Products",
+        description: "Search for products by title, vendor, or type",
+        riskLevel: "safe",
+        defaultEnabled: true,
+      },
+      {
+        id: "shopify_check_inventory",
+        name: "Check Inventory",
+        description: "Check product inventory levels at locations",
+        riskLevel: "safe",
+        defaultEnabled: true,
+      },
+      {
+        id: "shopify_search_customers",
+        name: "Search Customers",
+        description: "Search for customers by email, phone, or name",
+        riskLevel: "safe",
+        defaultEnabled: true,
+      },
+      {
+        id: "shopify_get_customer_orders",
+        name: "Get Customer Orders",
+        description: "Get order history for a specific customer",
+        riskLevel: "safe",
+        defaultEnabled: true,
+      },
+    ],
+  },
+
+  // SMS Providers
+  {
+    id: "twilio-sms",
+    name: "Twilio SMS",
+    slug: "twilio-sms",
+    description: "Send SMS messages, check delivery status, receive replies",
+    category: "communication",
+    authType: "api_key",
+    icon: "https://cdn.simpleicons.org/twilio",
+    enabled: true,
+    isPopular: true,
+    fields: [
+      {
+        name: "account_sid",
+        label: "Account SID",
+        type: "text",
+        required: true,
+        placeholder: "AC...",
+        description: "Found in Twilio Console dashboard",
+      },
+      {
+        name: "auth_token",
+        label: "Auth Token",
+        type: "password",
+        required: true,
+        description: "Found in Twilio Console dashboard",
+      },
+      {
+        name: "from_number",
+        label: "From Phone Number",
+        type: "text",
+        required: true,
+        placeholder: "+1234567890",
+        description: "Your Twilio phone number (E.164 format)",
+      },
+    ],
+    documentationUrl: "https://www.twilio.com/docs/sms/api",
+    tools: [
+      {
+        id: "twilio_send_sms",
+        name: "Send SMS",
+        description: "Send an SMS message to a phone number",
+        riskLevel: "moderate",
+        defaultEnabled: true,
+      },
+      {
+        id: "twilio_get_message_status",
+        name: "Get Message Status",
+        description: "Get the delivery status of a sent SMS message",
+        riskLevel: "safe",
+        defaultEnabled: true,
+      },
+    ],
+  },
+  {
+    id: "telnyx-sms",
+    name: "Telnyx SMS",
+    slug: "telnyx-sms",
+    description: "Send SMS messages, check delivery status, receive replies",
+    category: "communication",
+    authType: "api_key",
+    icon: "https://cdn.simpleicons.org/t",
+    enabled: true,
+    fields: [
+      {
+        name: "api_key",
+        label: "API Key",
+        type: "password",
+        required: true,
+        placeholder: "KEY...",
+        description: "Found in Telnyx Mission Control Portal > API Keys",
+      },
+      {
+        name: "from_number",
+        label: "From Phone Number",
+        type: "text",
+        required: true,
+        placeholder: "+1234567890",
+        description: "Your Telnyx phone number (E.164 format)",
+      },
+      {
+        name: "messaging_profile_id",
+        label: "Messaging Profile ID",
+        type: "text",
+        required: false,
+        placeholder: "uuid",
+        description: "Optional: Messaging profile for advanced routing",
+      },
+    ],
+    documentationUrl: "https://developers.telnyx.com/docs/messaging/messages",
+    tools: [
+      {
+        id: "telnyx_send_sms",
+        name: "Send SMS",
+        description: "Send an SMS message to a phone number via Telnyx",
+        riskLevel: "moderate",
+        defaultEnabled: true,
+      },
+      {
+        id: "telnyx_get_message_status",
+        name: "Get Message Status",
+        description: "Get the delivery status of a sent SMS message via Telnyx",
+        riskLevel: "safe",
+        defaultEnabled: true,
+      },
+    ],
   },
 ];
 

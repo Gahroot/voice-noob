@@ -79,7 +79,7 @@ describe("CRM Integrations", () => {
     const salesforce = crmIntegrations.find((i) => i.id === "salesforce");
     expect(salesforce).toBeDefined();
     expect(salesforce?.name).toBe("Salesforce");
-    expect(salesforce?.authType).toBe("oauth");
+    expect(salesforce?.authType).toBe("api_key");
     expect(salesforce?.isPopular).toBe(true);
   });
 
@@ -87,7 +87,7 @@ describe("CRM Integrations", () => {
     const hubspot = crmIntegrations.find((i) => i.id === "hubspot");
     expect(hubspot).toBeDefined();
     expect(hubspot?.name).toBe("HubSpot");
-    expect(hubspot?.authType).toBe("oauth");
+    expect(hubspot?.authType).toBe("api_key");
     expect(hubspot?.isPopular).toBe(true);
   });
 
@@ -115,15 +115,14 @@ describe("Calendar Integrations", () => {
   it("includes Google Calendar", () => {
     const googleCalendar = calendarIntegrations.find((i) => i.id === "google-calendar");
     expect(googleCalendar).toBeDefined();
-    expect(googleCalendar?.authType).toBe("oauth");
+    expect(googleCalendar?.authType).toBe("api_key");
     expect(googleCalendar?.isPopular).toBe(true);
-    expect(googleCalendar?.scopes).toBeDefined();
   });
 
   it("includes Microsoft Calendar", () => {
     const msCalendar = calendarIntegrations.find((i) => i.id === "microsoft-calendar");
     expect(msCalendar).toBeDefined();
-    expect(msCalendar?.authType).toBe("oauth");
+    expect(msCalendar?.authType).toBe("api_key");
     expect(msCalendar?.isPopular).toBe(true);
   });
 
@@ -145,20 +144,20 @@ describe("Database Integrations", () => {
   it("includes Airtable", () => {
     const airtable = databaseIntegrations.find((i) => i.id === "airtable");
     expect(airtable).toBeDefined();
-    expect(airtable?.authType).toBe("oauth");
+    expect(airtable?.authType).toBe("api_key");
   });
 
   it("includes Notion", () => {
     const notion = databaseIntegrations.find((i) => i.id === "notion");
     expect(notion).toBeDefined();
-    expect(notion?.authType).toBe("oauth");
+    expect(notion?.authType).toBe("api_key");
     expect(notion?.isPopular).toBe(true);
   });
 
   it("includes Google Sheets", () => {
     const sheets = databaseIntegrations.find((i) => i.id === "google-sheets");
     expect(sheets).toBeDefined();
-    expect(sheets?.authType).toBe("oauth");
+    expect(sheets?.authType).toBe("api_key");
     expect(sheets?.isPopular).toBe(true);
   });
 });
@@ -175,14 +174,14 @@ describe("Communication Integrations", () => {
   it("includes Slack", () => {
     const slack = communicationIntegrations.find((i) => i.id === "slack");
     expect(slack).toBeDefined();
-    expect(slack?.authType).toBe("oauth");
+    expect(slack?.authType).toBe("api_key");
     expect(slack?.isPopular).toBe(true);
   });
 
   it("includes Gmail", () => {
     const gmail = communicationIntegrations.find((i) => i.id === "gmail");
     expect(gmail).toBeDefined();
-    expect(gmail?.authType).toBe("oauth");
+    expect(gmail?.authType).toBe("api_key");
     expect(gmail?.isPopular).toBe(true);
   });
 
@@ -196,10 +195,7 @@ describe("Communication Integrations", () => {
 describe("OAuth Integrations", () => {
   const oauthIntegrations = AVAILABLE_INTEGRATIONS.filter((i) => i.authType === "oauth");
 
-  it("contains OAuth integrations", () => {
-    expect(oauthIntegrations.length).toBeGreaterThan(0);
-  });
-
+  // Note: Currently all integrations use api_key auth type
   it("OAuth integrations have scopes when applicable", () => {
     oauthIntegrations.forEach((integration) => {
       // Not all OAuth integrations require scopes in config
@@ -208,18 +204,6 @@ describe("OAuth Integrations", () => {
         expect(integration.scopes.length).toBeGreaterThan(0);
       }
     });
-  });
-
-  it("Salesforce has OAuth scopes", () => {
-    const salesforce = oauthIntegrations.find((i) => i.id === "salesforce");
-    expect(salesforce?.scopes).toBeDefined();
-    expect(salesforce?.scopes).toContain("api");
-  });
-
-  it("Google Calendar has OAuth scopes", () => {
-    const googleCalendar = oauthIntegrations.find((i) => i.id === "google-calendar");
-    expect(googleCalendar?.scopes).toBeDefined();
-    expect(googleCalendar?.scopes?.length).toBeGreaterThan(0);
   });
 });
 

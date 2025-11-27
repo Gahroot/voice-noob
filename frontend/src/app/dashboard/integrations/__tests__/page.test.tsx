@@ -20,7 +20,8 @@ describe("IntegrationsPage", () => {
   it("displays connection statistics", () => {
     render(<IntegrationsPage />);
 
-    expect(screen.getByText("0 Connected")).toBeInTheDocument();
+    // Internal tools (crm, bookings) are always connected
+    expect(screen.getByText("2 Connected")).toBeInTheDocument();
     expect(screen.getByText(/\d+ Available/)).toBeInTheDocument();
   });
 
@@ -136,7 +137,7 @@ describe("IntegrationsPage", () => {
       screen.getByText("Access customer data, create leads, update opportunities")
     ).toBeInTheDocument();
     expect(
-      screen.getByText("Manage contacts, deals, and customer interactions")
+      screen.getByText("Manage contacts, deals, and customer interactions (free MCP)")
     ).toBeInTheDocument();
   });
 
@@ -263,12 +264,12 @@ describe("IntegrationCard", () => {
   });
 });
 
-describe("IntegrationConfigForm - OAuth", () => {
-  it("shows OAuth connect button for OAuth integrations", async () => {
+describe("IntegrationConfigForm - API Key Auth", () => {
+  it("shows API key form for Salesforce integration", async () => {
     const user = userEvent.setup();
     render(<IntegrationsPage />);
 
-    // Find Salesforce (OAuth) and click Connect
+    // Find Salesforce and click Connect
     const salesforceCard = screen.getByText("Salesforce").closest("div")?.parentElement;
     const connectButton = salesforceCard?.querySelector('button[class*="flex-1"]');
 
@@ -276,23 +277,24 @@ describe("IntegrationConfigForm - OAuth", () => {
       await user.click(connectButton);
 
       await waitFor(() => {
-        expect(screen.getByText(/Connect with Salesforce/)).toBeInTheDocument();
+        // Should show API key input form
+        expect(screen.getByRole("dialog")).toBeInTheDocument();
       });
     }
   });
 
-  it("displays scopes for OAuth integrations", async () => {
+  it("opens dialog when Connect is clicked on any integration", async () => {
     const user = userEvent.setup();
     render(<IntegrationsPage />);
 
-    // Find Salesforce and click Connect
+    // Find and click the first Connect button
     const connectButtons = screen.getAllByRole("button", { name: "Connect" });
     const firstButton = connectButtons[0];
     if (!firstButton) throw new Error("No connect button found");
     await user.click(firstButton);
 
     await waitFor(() => {
-      expect(screen.getByText("This integration will access:")).toBeInTheDocument();
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
     });
   });
 });

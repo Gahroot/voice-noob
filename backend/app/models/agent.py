@@ -90,7 +90,13 @@ class Agent(Base):
         ARRAY(String),
         nullable=False,
         default=list,
-        comment="List of enabled integration IDs",
+        comment="List of enabled integration IDs (legacy, for backward compatibility)",
+    )
+    enabled_tool_ids: Mapped[dict[str, list[str]]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=dict,
+        comment="Granular tool selection: {integration_id: [tool_id1, tool_id2]}",
     )
 
     # Phone settings
