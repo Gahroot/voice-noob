@@ -120,7 +120,7 @@ export default function IntegrationsPage() {
 
   // Build set of connected integration IDs
   const connectedIntegrations = useMemo(() => {
-    const internalTools = new Set<string>(["crm", "bookings"]);
+    const internalTools = new Set<string>(["call_control", "crm", "bookings"]);
     const connected = connectedIntegrationsData?.integrations ?? [];
     const connectedIds = new Set(connected.map((i) => i.integration_id));
     return new Set([...internalTools, ...connectedIds]);

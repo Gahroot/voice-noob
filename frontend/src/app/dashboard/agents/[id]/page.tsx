@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useState, useEffect, useRef } from "react";
+import { use, useState, useEffect, useRef, useMemo } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { useRouter } from "next/navigation";
@@ -33,8 +33,21 @@ import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
-import { AlertCircle, ArrowLeft, Loader2, Trash2, FolderOpen } from "lucide-react";
+import {
+  AlertCircle,
+  ArrowLeft,
+  Loader2,
+  Trash2,
+  FolderOpen,
+  ChevronDown,
+  Shield,
+  AlertTriangle,
+  ShieldAlert,
+} from "lucide-react";
 import { api } from "@/lib/api";
+import { getLanguagesForTier } from "@/lib/languages";
+import { AVAILABLE_INTEGRATIONS } from "@/lib/integrations";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 
 import {
   AlertDialog,
@@ -51,6 +64,30 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 import { InfoTooltip } from "@/components/ui/info-tooltip";
+
+// Get integrations that have tools defined
+const INTEGRATIONS_WITH_TOOLS = AVAILABLE_INTEGRATIONS.filter((i) => i.tools && i.tools.length > 0);
+
+// Helper to get risk level badge variant and icon
+function getRiskLevelBadge(level: "safe" | "moderate" | "high") {
+  switch (level) {
+    case "safe":
+      return {
+        variant: "safe" as const,
+        icon: Shield,
+      };
+    case "moderate":
+      return {
+        variant: "moderate" as const,
+        icon: AlertTriangle,
+      };
+    case "high":
+      return {
+        variant: "high" as const,
+        icon: ShieldAlert,
+      };
+  }
+}
 
 interface Workspace {
   id: string;
@@ -98,6 +135,7 @@ const agentFormSchema = z.object({
 
   // Tools & Integrations
   enabledTools: z.array(z.string()).default([]),
+  enabledToolIds: z.record(z.string(), z.array(z.string())).default({}),
 
   // Workspaces
   selectedWorkspaces: z.array(z.string()).default([]),
@@ -117,7 +155,7 @@ const TAB_FIELDS: Record<string, (keyof AgentFormValues)[]> = {
     "deepgramModel",
   ],
   llm: ["llmProvider", "llmModel", "systemPrompt", "temperature", "maxTokens"],
-  tools: ["enabledTools"],
+  tools: ["enabledTools", "enabledToolIds"],
   advanced: [
     "telephonyProvider",
     "phoneNumberId",
@@ -189,6 +227,7 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
       turnDetectionMode: "server-vad",
       isActive: true,
       enabledTools: [],
+      enabledToolIds: {},
       selectedWorkspaces: [],
     },
   });
@@ -223,6 +262,7 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
         turnDetectionMode: "server-vad",
         isActive: agent.is_active,
         enabledTools: agent.enabled_tools ?? [],
+        enabledToolIds: agent.enabled_tool_ids ?? {},
         selectedWorkspaces: [],
       });
     }
@@ -243,6 +283,12 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
   // Watch the LLM provider to conditionally show/hide Voice tab
   const llmProvider = form.watch("llmProvider");
   const isRealtimeProvider = llmProvider === "openai-realtime";
+
+  // Get available languages based on agent's pricing tier
+  const availableLanguages = useMemo(() => {
+    const tier = (agent?.pricing_tier ?? "balanced") as "budget" | "balanced" | "premium";
+    return getLanguagesForTier(tier);
+  }, [agent?.pricing_tier]);
 
   // Track user-initiated provider changes vs data-loading changes
   const previousProvider = useRef<string | null>(null);
@@ -346,13 +392,20 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
       pricingTier = "budget";
     }
 
+    // Derive enabled_tools (integration IDs) from enabledToolIds
+    // An integration is enabled if it has at least one tool selected
+    const enabledIntegrations = Object.entries(data.enabledToolIds)
+      .filter(([, toolIds]) => toolIds.length > 0)
+      .map(([integrationId]) => integrationId);
+
     const request: UpdateAgentRequest = {
       name: data.name,
       description: data.description,
       pricing_tier: pricingTier,
       system_prompt: data.systemPrompt,
       language: data.language,
-      enabled_tools: data.enabledTools,
+      enabled_tools: enabledIntegrations,
+      enabled_tool_ids: data.enabledToolIds,
       phone_number_id: data.phoneNumberId,
       enable_recording: data.enableRecording,
       enable_transcript: data.enableTranscript,
@@ -517,20 +570,19 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
                       name="language"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Language</FormLabel>
+                          <FormLabel>Language ({availableLanguages.length} available)</FormLabel>
                           <Select onValueChange={field.onChange} value={field.value}>
                             <FormControl>
                               <SelectTrigger>
                                 <SelectValue placeholder="Select a language" />
                               </SelectTrigger>
                             </FormControl>
-                            <SelectContent>
-                              <SelectItem value="en-US">English (US)</SelectItem>
-                              <SelectItem value="en-GB">English (UK)</SelectItem>
-                              <SelectItem value="es-ES">Spanish</SelectItem>
-                              <SelectItem value="fr-FR">French</SelectItem>
-                              <SelectItem value="de-DE">German</SelectItem>
-                              <SelectItem value="ja-JP">Japanese</SelectItem>
+                            <SelectContent className="max-h-[300px]">
+                              {availableLanguages.map((lang) => (
+                                <SelectItem key={lang.code} value={lang.code}>
+                                  {lang.name}
+                                </SelectItem>
+                              ))}
                             </SelectContent>
                           </Select>
                           <FormMessage />
@@ -1041,123 +1093,212 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
             <TabsContent value="tools" className="mt-4 space-y-3">
               <Card>
                 <CardHeader className="pb-3">
-                  <CardTitle className="text-sm font-medium">Built-in Tools</CardTitle>
+                  <CardTitle className="text-sm font-medium">Integrations & Tools</CardTitle>
+                  <p className="text-sm text-muted-foreground">
+                    Enable integrations and select which tools your agent can access. High-risk
+                    tools (like cancellations) are disabled by default for security.
+                  </p>
                 </CardHeader>
-                <CardContent>
-                  <FormField
-                    control={form.control}
-                    name="enabledTools"
-                    render={() => (
-                      <FormItem>
-                        <div className="mb-4">
-                          <FormLabel className="text-base">CRM & Booking Tools</FormLabel>
-                          <FormDescription>
-                            These tools allow your agent to search customers, create contacts, check
-                            availability, and book appointments.
-                          </FormDescription>
-                        </div>
-                        <div className="space-y-2">
-                          {[
-                            {
-                              id: "crm",
-                              name: "CRM Tools",
-                              desc: "Search customers, create contacts, manage customer data",
-                            },
-                            {
-                              id: "bookings",
-                              name: "Booking Tools",
-                              desc: "Check availability, book/cancel/reschedule appointments",
-                            },
-                          ].map((tool) => (
-                            <FormField
-                              key={tool.id}
-                              control={form.control}
-                              name="enabledTools"
-                              render={({ field }) => (
-                                <FormItem className="flex flex-row items-start space-x-3 space-y-0 rounded-md border p-4">
-                                  <FormControl>
-                                    <input
-                                      type="checkbox"
-                                      className="mt-0.5 h-4 w-4"
-                                      checked={field.value?.includes(tool.id)}
-                                      onChange={(e) => {
-                                        const checked = e.target.checked;
-                                        const current = field.value || [];
-                                        field.onChange(
-                                          checked
-                                            ? [...current, tool.id]
-                                            : current.filter((v) => v !== tool.id)
-                                        );
-                                      }}
-                                    />
-                                  </FormControl>
-                                  <div className="space-y-1 leading-none">
-                                    <FormLabel className="cursor-pointer font-medium">
-                                      {tool.name}
-                                    </FormLabel>
-                                    <FormDescription>{tool.desc}</FormDescription>
+                <CardContent className="space-y-3">
+                  {INTEGRATIONS_WITH_TOOLS.map((integration) => (
+                    <FormField
+                      key={integration.id}
+                      control={form.control}
+                      name="enabledTools"
+                      render={({ field }) => {
+                        const isEnabled = field.value?.includes(integration.id);
+                        return (
+                          <Collapsible>
+                            <div className="rounded-lg border">
+                              <div className="flex items-center justify-between p-4">
+                                <div className="flex items-center space-x-3">
+                                  <Checkbox
+                                    checked={isEnabled}
+                                    onCheckedChange={(checked) => {
+                                      const current = field.value ?? [];
+                                      if (checked) {
+                                        field.onChange([...current, integration.id]);
+                                        // Auto-enable default tools when integration is enabled
+                                        const defaultTools =
+                                          integration.tools
+                                            ?.filter((t) => t.defaultEnabled)
+                                            .map((t) => t.id) ?? [];
+                                        if (defaultTools.length > 0) {
+                                          const currentToolIds =
+                                            form.getValues("enabledToolIds") ?? {};
+                                          form.setValue(
+                                            "enabledToolIds",
+                                            {
+                                              ...currentToolIds,
+                                              [integration.id]: defaultTools,
+                                            },
+                                            { shouldDirty: true }
+                                          );
+                                        }
+                                      } else {
+                                        field.onChange(current.filter((v) => v !== integration.id));
+                                        // Clear tool selection when integration is disabled
+                                        const currentToolIds =
+                                          form.getValues("enabledToolIds") ?? {};
+                                        const { [integration.id]: _removed, ...rest } =
+                                          currentToolIds;
+                                        form.setValue("enabledToolIds", rest, {
+                                          shouldDirty: true,
+                                        });
+                                      }
+                                    }}
+                                  />
+                                  <div>
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-medium">{integration.name}</span>
+                                      {integration.isBuiltIn && (
+                                        <Badge variant="secondary" className="text-xs">
+                                          Built-in
+                                        </Badge>
+                                      )}
+                                    </div>
+                                    <p className="text-sm text-muted-foreground">
+                                      {integration.description}
+                                    </p>
                                   </div>
-                                </FormItem>
-                              )}
-                            />
-                          ))}
-                        </div>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </CardContent>
-              </Card>
+                                </div>
+                                {isEnabled && integration.tools && integration.tools.length > 0 && (
+                                  <CollapsibleTrigger asChild>
+                                    <Button variant="ghost" size="sm">
+                                      <ChevronDown className="h-4 w-4" />
+                                      <span className="ml-1">
+                                        {form.watch("enabledToolIds")?.[integration.id]?.length ??
+                                          0}{" "}
+                                        / {integration.tools.length} tools
+                                      </span>
+                                    </Button>
+                                  </CollapsibleTrigger>
+                                )}
+                              </div>
 
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm font-medium">External Integrations</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <FormField
-                    control={form.control}
-                    name="enabledTools"
-                    render={() => (
-                      <FormItem>
-                        <div className="space-y-2">
-                          {[
-                            {
-                              id: "google-calendar",
-                              name: "Google Calendar",
-                              desc: "Schedule meetings",
-                            },
-                            { id: "salesforce", name: "Salesforce", desc: "Access CRM data" },
-                            { id: "hubspot", name: "HubSpot", desc: "Manage contacts" },
-                          ].map((tool) => (
-                            <FormField
-                              key={tool.id}
-                              control={form.control}
-                              name="enabledTools"
-                              render={() => (
-                                <FormItem className="flex flex-row items-start space-x-3 space-y-0 rounded-md border p-4 opacity-50">
-                                  <FormControl>
-                                    <input type="checkbox" className="mt-0.5 h-4 w-4" disabled />
-                                  </FormControl>
-                                  <div className="space-y-1 leading-none">
-                                    <FormLabel className="cursor-not-allowed font-medium">
-                                      {tool.name}
-                                    </FormLabel>
-                                    <FormDescription>{tool.desc} (Coming soon)</FormDescription>
+                              {isEnabled && integration.tools && integration.tools.length > 0 && (
+                                <CollapsibleContent>
+                                  <div className="border-t bg-muted/30 p-4">
+                                    <div className="mb-3 flex items-center justify-between">
+                                      <span className="text-sm font-medium">Available Tools</span>
+                                      <div className="flex gap-2">
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          size="sm"
+                                          onClick={() => {
+                                            const allToolIds =
+                                              integration.tools?.map((t) => t.id) ?? [];
+                                            const currentToolIds =
+                                              form.getValues("enabledToolIds") ?? {};
+                                            form.setValue(
+                                              "enabledToolIds",
+                                              {
+                                                ...currentToolIds,
+                                                [integration.id]: allToolIds,
+                                              },
+                                              { shouldDirty: true }
+                                            );
+                                          }}
+                                        >
+                                          Select All
+                                        </Button>
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          size="sm"
+                                          onClick={() => {
+                                            const currentToolIds =
+                                              form.getValues("enabledToolIds") ?? {};
+                                            form.setValue(
+                                              "enabledToolIds",
+                                              {
+                                                ...currentToolIds,
+                                                [integration.id]: [],
+                                              },
+                                              { shouldDirty: true }
+                                            );
+                                          }}
+                                        >
+                                          Clear All
+                                        </Button>
+                                      </div>
+                                    </div>
+                                    <div className="space-y-2">
+                                      {integration.tools.map((tool) => {
+                                        const riskBadge = getRiskLevelBadge(tool.riskLevel);
+                                        const RiskIcon = riskBadge.icon;
+                                        const currentTools =
+                                          form.watch("enabledToolIds")?.[integration.id] ?? [];
+                                        const isToolEnabled = currentTools.includes(tool.id);
+                                        return (
+                                          <div
+                                            key={tool.id}
+                                            className="flex items-center justify-between rounded-md border bg-background p-3"
+                                          >
+                                            <div className="flex items-center space-x-3">
+                                              <Checkbox
+                                                checked={isToolEnabled}
+                                                onCheckedChange={(checked) => {
+                                                  const enabledToolIds =
+                                                    form.getValues("enabledToolIds") ?? {};
+                                                  const toolsForIntegration =
+                                                    enabledToolIds[integration.id] ?? [];
+                                                  const newTools = checked
+                                                    ? [...toolsForIntegration, tool.id]
+                                                    : toolsForIntegration.filter(
+                                                        (t) => t !== tool.id
+                                                      );
+                                                  form.setValue(
+                                                    "enabledToolIds",
+                                                    {
+                                                      ...enabledToolIds,
+                                                      [integration.id]: newTools,
+                                                    },
+                                                    { shouldDirty: true }
+                                                  );
+                                                }}
+                                              />
+                                              <div>
+                                                <span className="text-sm font-medium">
+                                                  {tool.name}
+                                                </span>
+                                                <p className="text-xs text-muted-foreground">
+                                                  {tool.description}
+                                                </p>
+                                              </div>
+                                            </div>
+                                            <Badge variant={riskBadge.variant}>
+                                              <RiskIcon className="mr-1 h-3 w-3" />
+                                              {tool.riskLevel}
+                                            </Badge>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
                                   </div>
-                                </FormItem>
+                                </CollapsibleContent>
                               )}
-                            />
-                          ))}
-                          <div className="pt-4">
-                            <Button type="button" variant="outline" size="sm" asChild>
-                              <Link href="/dashboard/integrations">Manage Integrations</Link>
-                            </Button>
-                          </div>
-                        </div>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                            </div>
+                          </Collapsible>
+                        );
+                      }}
+                    />
+                  ))}
+
+                  <div className="rounded-lg border border-dashed p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium">Need more integrations?</p>
+                        <p className="text-xs text-muted-foreground">
+                          Connect Google Calendar, Salesforce, HubSpot and more
+                        </p>
+                      </div>
+                      <Button type="button" variant="outline" size="sm" asChild>
+                        <Link href="/dashboard/integrations">Manage Integrations</Link>
+                      </Button>
+                    </div>
+                  </div>
                 </CardContent>
               </Card>
             </TabsContent>

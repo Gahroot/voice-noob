@@ -336,7 +336,7 @@ async def create_webrtc_session(
 
     # Build tool definitions (user_id int for Contact queries)
     tool_registry = ToolRegistry(db, user_id)
-    tools = tool_registry.get_all_tool_definitions(agent.enabled_tools)
+    tools = tool_registry.get_all_tool_definitions(agent.enabled_tools, agent.enabled_tool_ids)
 
     # Build instructions with language directive
     system_prompt = agent.system_prompt or "You are a helpful voice assistant."
@@ -511,12 +511,16 @@ async def get_ephemeral_token(
 
             # Build tool definitions for the agent
             tool_registry = ToolRegistry(db, user_id)
-            tools = tool_registry.get_all_tool_definitions(agent.enabled_tools)
+            tools = tool_registry.get_all_tool_definitions(
+                agent.enabled_tools, agent.enabled_tool_ids
+            )
 
             token_logger.info(
                 "tools_prepared",
                 tool_count=len(tools),
                 enabled_tools=agent.enabled_tools,
+                enabled_tool_ids=agent.enabled_tool_ids,
+                tool_names=[t.get("name") for t in tools],
             )
 
             # Build instructions with language for the frontend to use

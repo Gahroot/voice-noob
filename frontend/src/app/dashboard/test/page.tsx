@@ -6,6 +6,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { fetchAgents, updateAgent } from "@/lib/api/agents";
+import { getWhisperCode, getLanguagesForTier } from "@/lib/languages";
 import { Button } from "@/components/ui/button";
 import { Play, Square, Loader2, Save } from "lucide-react";
 import {
@@ -205,10 +206,11 @@ export default function TestAgentPage() {
 
   // Settings state
   const [voice, setVoice] = useState("alloy");
+  const [language, setLanguage] = useState("en-US");
   const [turnDetection, setTurnDetection] = useState("normal");
   const [threshold, setThreshold] = useState(0.5);
   const [prefixPadding, setPrefixPadding] = useState(300);
-  const [silenceDuration, setSilenceDuration] = useState(500);
+  const [silenceDuration, setSilenceDuration] = useState(200);
   const [idleTimeout, setIdleTimeout] = useState(true);
   const [editedSystemPrompt, setEditedSystemPrompt] = useState("");
 
@@ -247,17 +249,19 @@ export default function TestAgentPage() {
     if (agent) {
       setEditedSystemPrompt(agent.system_prompt || "");
       setVoice(agent.voice || "alloy");
+      setLanguage(agent.language || "en-US");
       setTurnDetection(agent.turn_detection_mode || "normal");
       setThreshold(agent.turn_detection_threshold ?? 0.5);
       setPrefixPadding(agent.turn_detection_prefix_padding_ms ?? 300);
-      setSilenceDuration(agent.turn_detection_silence_duration_ms ?? 500);
+      setSilenceDuration(agent.turn_detection_silence_duration_ms ?? 200);
     } else {
       setEditedSystemPrompt("");
       setVoice("alloy");
+      setLanguage("en-US");
       setTurnDetection("normal");
       setThreshold(0.5);
       setPrefixPadding(300);
-      setSilenceDuration(500);
+      setSilenceDuration(200);
     }
   }, [selectedAgentId, agents]);
 
@@ -268,6 +272,7 @@ export default function TestAgentPage() {
       return updateAgent(selectedAgentId, {
         system_prompt: editedSystemPrompt,
         voice: voice,
+        language: language,
         turn_detection_mode: turnDetection as "normal" | "semantic" | "disabled",
         turn_detection_threshold: threshold,
         turn_detection_prefix_padding_ms: prefixPadding,
@@ -287,11 +292,17 @@ export default function TestAgentPage() {
   const hasUnsavedChanges = selectedAgent
     ? selectedAgent.system_prompt !== editedSystemPrompt ||
       selectedAgent.voice !== voice ||
+      selectedAgent.language !== language ||
       selectedAgent.turn_detection_mode !== turnDetection ||
       selectedAgent.turn_detection_threshold !== threshold ||
       selectedAgent.turn_detection_prefix_padding_ms !== prefixPadding ||
       selectedAgent.turn_detection_silence_duration_ms !== silenceDuration
     : false;
+
+  // Get available languages for the agent's pricing tier (premium = GPT Realtime)
+  const availableLanguages = selectedAgent
+    ? getLanguagesForTier(selectedAgent.pricing_tier as "budget" | "balanced" | "premium")
+    : getLanguagesForTier("premium");
 
   const handleSaveSettings = () => {
     saveSettingsMutation.mutate();
@@ -625,7 +636,10 @@ export default function TestAgentPage() {
           session: {
             instructions: instructions,
             voice: voice,
-            input_audio_transcription: { model: "whisper-1" },
+            input_audio_transcription: {
+              model: "whisper-1",
+              language: getWhisperCode(language) ?? undefined,
+            },
             turn_detection:
               turnDetection === "disabled"
                 ? null
@@ -671,7 +685,10 @@ export default function TestAgentPage() {
               // Execute tool via backend API
               const toolResponse = await fetch(`${apiBase}/api/v1/tools/execute`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: {
+                  "Content-Type": "application/json",
+                  ...(authToken && { Authorization: `Bearer ${authToken}` }),
+                },
                 body: JSON.stringify({
                   tool_name: name,
                   arguments: JSON.parse(argsJson),
@@ -696,6 +713,16 @@ export default function TestAgentPage() {
               // Trigger response generation
               const responseCreate = { type: "response.create" };
               dataChannel.send(JSON.stringify(responseCreate));
+
+              // Handle call control actions
+              if (toolResult.action === "end_call") {
+                console.log("[WebRTC] End call action received, scheduling cleanup");
+                // Wait a bit for the AI to finish its farewell, then end the session
+                setTimeout(() => {
+                  console.log("[WebRTC] Executing end_call cleanup");
+                  cleanup();
+                }, 3000); // 3 second delay for farewell
+              }
             } catch (toolError) {
               console.error("[WebRTC] Tool execution error:", toolError);
               // Send error output
@@ -946,6 +973,24 @@ export default function TestAgentPage() {
                   <SelectItem value="onyx">Onyx</SelectItem>
                   <SelectItem value="nova">Nova</SelectItem>
                   <SelectItem value="shimmer">Shimmer</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">
+                Language ({availableLanguages.length} available)
+              </Label>
+              <Select value={language} onValueChange={setLanguage}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="max-h-[300px]">
+                  {availableLanguages.map((lang) => (
+                    <SelectItem key={lang.code} value={lang.code}>
+                      {lang.name}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>

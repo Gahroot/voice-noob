@@ -48,6 +48,42 @@ export interface IntegrationTool {
 export const AVAILABLE_INTEGRATIONS: Integration[] = [
   // Built-in Voice Noob Tools (No external API needed)
   {
+    id: "call_control",
+    name: "Call Control",
+    slug: "call-control",
+    description: "End calls, transfer to agents, send DTMF tones for IVR navigation",
+    category: "communication",
+    authType: "none",
+    icon: "https://cdn.simpleicons.org/phone",
+    enabled: true,
+    isBuiltIn: true,
+    badge: "Voice Noob",
+    documentationUrl: "/docs/call-control-tools",
+    tools: [
+      {
+        id: "end_call",
+        name: "End Call",
+        description: "Hang up and end the current phone call gracefully",
+        riskLevel: "moderate",
+        defaultEnabled: true,
+      },
+      {
+        id: "transfer_call",
+        name: "Transfer Call",
+        description: "Transfer the caller to another phone number or human agent",
+        riskLevel: "high",
+        defaultEnabled: true,
+      },
+      {
+        id: "send_dtmf",
+        name: "Send DTMF",
+        description: "Send touch-tone digits for IVR navigation or entering codes",
+        riskLevel: "safe",
+        defaultEnabled: true,
+      },
+    ],
+  },
+  {
     id: "crm",
     name: "Contact Management",
     slug: "crm",
@@ -212,6 +248,7 @@ export const AVAILABLE_INTEGRATIONS: Integration[] = [
         required: true,
       },
     ],
+    documentationUrl: "https://developers.pipedrive.com/docs/api/v1",
   },
   {
     id: "zoho-crm",
@@ -268,7 +305,8 @@ export const AVAILABLE_INTEGRATIONS: Integration[] = [
         description: "Your GHL sub-account/location ID",
       },
     ],
-    documentationUrl: "https://marketplace.gohighlevel.com/docs/",
+    documentationUrl:
+      "https://help.gohighlevel.com/support/solutions/articles/48001060529-highlevel-api",
     tools: [
       {
         id: "ghl_search_contact",
@@ -431,6 +469,7 @@ export const AVAILABLE_INTEGRATIONS: Integration[] = [
         required: true,
       },
     ],
+    documentationUrl: "https://cal.com/docs/api-reference/v2/introduction",
   },
 
   // Database & Storage
@@ -590,6 +629,8 @@ export const AVAILABLE_INTEGRATIONS: Integration[] = [
         required: true,
       },
     ],
+    documentationUrl:
+      "https://www.twilio.com/docs/sendgrid/api-reference/how-to-use-the-sendgrid-v3-api/authentication",
   },
 
   // Other Tools
@@ -612,6 +653,7 @@ export const AVAILABLE_INTEGRATIONS: Integration[] = [
         placeholder: "sk_...",
       },
     ],
+    documentationUrl: "https://docs.stripe.com/api",
   },
   {
     id: "github",

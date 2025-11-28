@@ -1,7 +1,8 @@
 "use client";
 
+import { useMemo, useEffect } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { useRouter } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -9,6 +10,7 @@ import * as z from "zod";
 import Link from "next/link";
 import { createAgent, type CreateAgentRequest } from "@/lib/api/agents";
 import { AVAILABLE_INTEGRATIONS } from "@/lib/integrations";
+import { getLanguagesForTier, getFallbackLanguage } from "@/lib/languages";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -130,6 +132,29 @@ export default function NewAgentPage() {
     defaultValues,
   });
 
+  // Watch llmProvider and llmModel to derive pricing tier for language filtering
+  const llmProvider = useWatch({ control: form.control, name: "llmProvider" });
+  const llmModel = useWatch({ control: form.control, name: "llmModel" });
+  const currentLanguage = useWatch({ control: form.control, name: "language" });
+
+  // Derive pricing tier from LLM provider selection
+  const derivedTier = useMemo((): "budget" | "balanced" | "premium" => {
+    if (llmProvider === "openai-realtime") return "premium";
+    if (llmModel === "gpt-4o-mini" || llmModel === "claude-haiku-4-5") return "budget";
+    return "balanced";
+  }, [llmProvider, llmModel]);
+
+  // Get available languages for the derived tier
+  const availableLanguages = useMemo(() => getLanguagesForTier(derivedTier), [derivedTier]);
+
+  // Reset language to fallback if current selection is not valid for new tier
+  useEffect(() => {
+    const fallback = getFallbackLanguage(currentLanguage, derivedTier);
+    if (fallback !== currentLanguage) {
+      form.setValue("language", fallback);
+    }
+  }, [derivedTier, currentLanguage, form]);
+
   const createAgentMutation = useMutation({
     mutationFn: createAgent,
     onSuccess: () => {
@@ -152,13 +177,19 @@ export default function NewAgentPage() {
       pricingTier = "budget";
     }
 
+    // Derive enabled_tools (integration IDs) from enabledToolIds
+    // An integration is enabled if it has at least one tool selected
+    const enabledIntegrations = Object.entries(data.enabledToolIds)
+      .filter(([, toolIds]) => toolIds.length > 0)
+      .map(([integrationId]) => integrationId);
+
     const request: CreateAgentRequest = {
       name: data.name,
       description: data.description,
       pricing_tier: pricingTier,
       system_prompt: data.systemPrompt,
       language: data.language,
-      enabled_tools: data.enabledTools,
+      enabled_tools: enabledIntegrations,
       enabled_tool_ids: data.enabledToolIds,
       phone_number_id: data.phoneNumberId,
       enable_recording: data.enableRecording,
@@ -237,20 +268,19 @@ export default function NewAgentPage() {
                     name="language"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Language</FormLabel>
-                        <Select onValueChange={field.onChange} defaultValue={field.value}>
+                        <FormLabel>Language ({availableLanguages.length} available)</FormLabel>
+                        <Select onValueChange={field.onChange} value={field.value}>
                           <FormControl>
                             <SelectTrigger>
                               <SelectValue placeholder="Select a language" />
                             </SelectTrigger>
                           </FormControl>
-                          <SelectContent>
-                            <SelectItem value="en-US">English (US)</SelectItem>
-                            <SelectItem value="en-GB">English (UK)</SelectItem>
-                            <SelectItem value="es-ES">Spanish</SelectItem>
-                            <SelectItem value="fr-FR">French</SelectItem>
-                            <SelectItem value="de-DE">German</SelectItem>
-                            <SelectItem value="ja-JP">Japanese</SelectItem>
+                          <SelectContent className="max-h-[300px]">
+                            {availableLanguages.map((lang) => (
+                              <SelectItem key={lang.code} value={lang.code}>
+                                {lang.name}
+                              </SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                         <FormMessage />

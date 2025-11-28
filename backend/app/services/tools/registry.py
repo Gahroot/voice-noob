@@ -5,6 +5,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.tools.calendly_tools import CalendlyTools
+from app.services.tools.call_control_tools import CallControlTools
 from app.services.tools.crm_tools import CRMTools
 from app.services.tools.gohighlevel_tools import GoHighLevelTools
 from app.services.tools.shopify_tools import ShopifyTools
@@ -158,6 +159,11 @@ class ToolRegistry:
                 or tool.get("function", {}).get("name") in allowed_tool_ids
             ]
 
+        # Call Control tools - always available if "call_control" is enabled
+        if "call_control" in enabled_tools:
+            call_control_tools = CallControlTools.get_tool_definitions()
+            tools.extend(filter_tools("call_control", call_control_tools))
+
         # Internal CRM tools - always available if "crm" is enabled
         if "crm" in enabled_tools:
             crm_tools = CRMTools.get_tool_definitions()
@@ -207,6 +213,16 @@ class ToolRegistry:
         Returns:
             Tool execution result
         """
+        # Call Control tools
+        call_control_tool_names = {
+            "end_call",
+            "transfer_call",
+            "send_dtmf",
+        }
+
+        if tool_name in call_control_tool_names:
+            return await CallControlTools.execute_tool(tool_name, arguments)
+
         # CRM tools
         crm_tool_names = {
             "search_customer",

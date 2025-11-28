@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, Fragment } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm, useWatch } from "react-hook-form";
 import * as z from "zod";
@@ -10,6 +10,7 @@ import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { createAgent, type CreateAgentRequest } from "@/lib/api/agents";
 import { AVAILABLE_INTEGRATIONS } from "@/lib/integrations";
+import { getLanguagesForTier, getFallbackLanguage } from "@/lib/languages";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -137,11 +138,23 @@ export default function CreateAgentPage() {
   const enabledTools = useWatch({ control: form.control, name: "enabledTools" });
   const agentName = useWatch({ control: form.control, name: "name" });
   const systemPrompt = useWatch({ control: form.control, name: "systemPrompt" });
+  const currentLanguage = useWatch({ control: form.control, name: "language" });
 
   const selectedTier = useMemo(
     () => PRICING_TIERS.find((t) => t.id === pricingTier),
     [pricingTier]
   );
+
+  // Get available languages for the current pricing tier
+  const availableLanguages = useMemo(() => getLanguagesForTier(pricingTier), [pricingTier]);
+
+  // Reset language to fallback if current selection is not valid for new tier
+  useEffect(() => {
+    const fallback = getFallbackLanguage(currentLanguage, pricingTier);
+    if (fallback !== currentLanguage) {
+      form.setValue("language", fallback);
+    }
+  }, [pricingTier, currentLanguage, form]);
 
   const createAgentMutation = useMutation({
     mutationFn: createAgent,
@@ -155,6 +168,12 @@ export default function CreateAgentPage() {
   });
 
   function onSubmit(data: AgentFormValues) {
+    // Derive enabled_tools (integration IDs) from enabledToolIds
+    // An integration is enabled if it has at least one tool selected
+    const enabledIntegrations = Object.entries(data.enabledToolIds)
+      .filter(([, toolIds]) => toolIds.length > 0)
+      .map(([integrationId]) => integrationId);
+
     const request: CreateAgentRequest = {
       name: data.name,
       description: data.description,
@@ -162,7 +181,7 @@ export default function CreateAgentPage() {
       system_prompt: data.systemPrompt,
       language: data.language,
       voice: data.pricingTier === "premium" ? data.voice : undefined,
-      enabled_tools: data.enabledTools,
+      enabled_tools: enabledIntegrations,
       enabled_tool_ids: data.enabledToolIds,
       phone_number_id: data.phoneNumberId,
       enable_recording: data.enableRecording,
@@ -239,10 +258,9 @@ export default function CreateAgentPage() {
           const prevCompleted = idx > 0 && step > idx;
 
           return (
-            <>
+            <Fragment key={s.id}>
               {/* Step card */}
               <button
-                key={s.id}
                 type="button"
                 onClick={() => s.id < step && setStep(s.id)}
                 disabled={s.id > step}
@@ -312,7 +330,7 @@ export default function CreateAgentPage() {
 
               {/* Connector line between steps */}
               {idx < WIZARD_STEPS.length - 1 && (
-                <div key={`connector-${idx}`} className="relative -mx-1 h-1 overflow-hidden">
+                <div className="relative -mx-1 h-1 overflow-hidden">
                   {/* Base track */}
                   <div className="absolute inset-0 bg-border/50" />
                   {/* Completed glow line */}
@@ -328,7 +346,7 @@ export default function CreateAgentPage() {
                   )}
                 </div>
               )}
-            </>
+            </Fragment>
           );
         })}
       </div>
@@ -460,20 +478,19 @@ export default function CreateAgentPage() {
                     name="language"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Language</FormLabel>
+                        <FormLabel>Language ({availableLanguages.length} available)</FormLabel>
                         <Select onValueChange={field.onChange} value={field.value}>
                           <FormControl>
                             <SelectTrigger>
                               <SelectValue />
                             </SelectTrigger>
                           </FormControl>
-                          <SelectContent>
-                            <SelectItem value="en-US">English (US)</SelectItem>
-                            <SelectItem value="en-GB">English (UK)</SelectItem>
-                            <SelectItem value="es-ES">Spanish</SelectItem>
-                            <SelectItem value="fr-FR">French</SelectItem>
-                            <SelectItem value="de-DE">German</SelectItem>
-                            <SelectItem value="ja-JP">Japanese</SelectItem>
+                          <SelectContent className="max-h-[300px]">
+                            {availableLanguages.map((lang) => (
+                              <SelectItem key={lang.code} value={lang.code}>
+                                {lang.name}
+                              </SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                         <FormMessage />

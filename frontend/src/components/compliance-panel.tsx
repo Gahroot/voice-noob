@@ -85,7 +85,7 @@ function ProgressBar({ percentage }: { percentage: number }) {
 
 function ChecklistItem({ item, onAction }: { item: ComplianceCheckItem; onAction?: () => void }) {
   return (
-    <div className="flex items-start gap-3 rounded-lg border border-border/50 bg-card/50 p-3">
+    <div className="flex items-start gap-3 rounded-lg border bg-card p-3">
       <StatusIcon status={item.status} />
       <div className="flex-1 space-y-1">
         <div className="flex items-center justify-between">
@@ -334,7 +334,7 @@ export function CompliancePanel({ open, onOpenChange, initialTab = "gdpr" }: Com
             </ComplianceSection>
 
             {/* Privacy Policy Input */}
-            <div className="space-y-3 rounded-lg border border-border/50 bg-card/50 p-4">
+            <div className="space-y-3 rounded-lg border bg-card p-4">
               <div className="flex items-center gap-2">
                 <FileText className="h-4 w-4 text-muted-foreground" />
                 <span className="text-sm font-medium">Privacy Policy URL</span>
@@ -357,7 +357,7 @@ export function CompliancePanel({ open, onOpenChange, initialTab = "gdpr" }: Com
             </div>
 
             {/* DPA Toggles */}
-            <div className="space-y-3 rounded-lg border border-border/50 bg-card/50 p-4">
+            <div className="space-y-3 rounded-lg border bg-card p-4">
               <span className="text-sm font-medium">Data Processing Agreements</span>
               <p className="text-xs text-muted-foreground">
                 Mark as signed after completing each DPA with your vendors
@@ -411,7 +411,7 @@ export function CompliancePanel({ open, onOpenChange, initialTab = "gdpr" }: Com
             </div>
 
             {/* Data Export */}
-            <div className="space-y-3 rounded-lg border border-border/50 bg-card/50 p-4">
+            <div className="space-y-3 rounded-lg border bg-card p-4">
               <div className="flex items-center gap-2">
                 <Download className="h-4 w-4 text-muted-foreground" />
                 <span className="text-sm font-medium">Data Export</span>
@@ -437,7 +437,7 @@ export function CompliancePanel({ open, onOpenChange, initialTab = "gdpr" }: Com
             </div>
 
             {/* Consent Withdrawal */}
-            <div className="space-y-3 rounded-lg border border-border/50 bg-card/50 p-4">
+            <div className="space-y-3 rounded-lg border bg-card p-4">
               <div className="flex items-center gap-2">
                 <XCircle className="h-4 w-4 text-muted-foreground" />
                 <span className="text-sm font-medium">Withdraw Consent</span>
@@ -466,15 +466,15 @@ export function CompliancePanel({ open, onOpenChange, initialTab = "gdpr" }: Com
             </div>
 
             {/* Danger Zone - Data Deletion */}
-            <div className="space-y-3 rounded-lg border border-red-500/30 bg-red-500/5 p-4">
+            <div className="space-y-3 rounded-lg border border-destructive/50 bg-card p-4">
               <div className="flex items-center gap-2">
-                <Trash2 className="h-4 w-4 text-red-500" />
-                <span className="text-sm font-medium text-red-500">Danger Zone</span>
+                <Trash2 className="h-4 w-4 text-destructive" />
+                <span className="text-sm font-medium text-destructive">Danger Zone</span>
               </div>
               <p className="text-xs text-muted-foreground">
                 Delete all your data permanently (GDPR Article 17 - Right to Erasure)
               </p>
-              <p className="text-xs text-red-400">
+              <p className="text-xs text-destructive/80">
                 This will delete all agents, workspaces, contacts, appointments, call records, and
                 settings. This action cannot be undone.
               </p>
@@ -509,7 +509,7 @@ export function CompliancePanel({ open, onOpenChange, initialTab = "gdpr" }: Com
             </ComplianceSection>
 
             {/* CCPA Opt-Out */}
-            <div className="space-y-3 rounded-lg border border-border/50 bg-card/50 p-4">
+            <div className="space-y-3 rounded-lg border bg-card p-4">
               <span className="text-sm font-medium">Do Not Sell My Personal Information</span>
               <p className="text-xs text-muted-foreground">
                 Exercise your CCPA right to opt out of the sale or sharing of your personal
@@ -541,7 +541,7 @@ export function CompliancePanel({ open, onOpenChange, initialTab = "gdpr" }: Com
             </div>
 
             {/* Data Export (also in CCPA) */}
-            <div className="space-y-3 rounded-lg border border-border/50 bg-card/50 p-4">
+            <div className="space-y-3 rounded-lg border bg-card p-4">
               <div className="flex items-center gap-2">
                 <Download className="h-4 w-4 text-muted-foreground" />
                 <span className="text-sm font-medium">Request My Data</span>
