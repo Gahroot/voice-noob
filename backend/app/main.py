@@ -19,6 +19,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from sqlalchemy import func, select
 
 from app.api import (
     agents,
@@ -37,12 +38,14 @@ from app.api import (
     workspaces,
 )
 from app.api import settings as settings_api
+from app.api.auth import get_password_hash
 from app.core.config import settings
 from app.core.limiter import limiter
 from app.db.redis import close_redis, get_redis
-from app.db.session import engine
+from app.db.session import AsyncSessionLocal, engine
 from app.middleware.request_tracing import RequestTracingMiddleware
 from app.middleware.security import SecurityHeadersMiddleware
+from app.models.user import User
 
 # Configure structured logging with async processors
 structlog.configure(
@@ -78,6 +81,32 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception:
         logger.exception("Failed to initialize Redis - application cannot start")
         raise  # Re-raise to prevent app startup
+
+    # Create default admin user if no users exist
+    try:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(select(func.count(User.id)))
+            user_count = result.scalar() or 0
+
+            if user_count == 0:
+                admin_user = User(
+                    email=settings.ADMIN_EMAIL,
+                    hashed_password=get_password_hash(settings.ADMIN_PASSWORD),
+                    full_name=settings.ADMIN_NAME,
+                    is_active=True,
+                    is_superuser=True,
+                )
+                db.add(admin_user)
+                await db.commit()
+                logger.info(
+                    "Created default admin user",
+                    email=settings.ADMIN_EMAIL,
+                    name=settings.ADMIN_NAME,
+                )
+            else:
+                logger.debug("Users already exist, skipping admin user creation")
+    except Exception:
+        logger.exception("Failed to check/create admin user - continuing anyway")
 
     # Initialize Sentry if configured (non-fatal)
     if settings.SENTRY_DSN:

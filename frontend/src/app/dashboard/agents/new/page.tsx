@@ -655,7 +655,7 @@ export default function NewAgentPage() {
                                     <Checkbox
                                       checked={isEnabled}
                                       onCheckedChange={(checked) => {
-                                        const current = field.value || [];
+                                        const current = field.value ?? [];
                                         if (checked) {
                                           field.onChange([...current, integration.id]);
                                           // Auto-enable default tools when integration is enabled

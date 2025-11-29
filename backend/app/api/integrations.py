@@ -57,6 +57,8 @@ class UpdateIntegrationRequest(BaseModel):
 class IntegrationResponse(BaseModel):
     """Integration response (credentials masked)."""
 
+    model_config = {"from_attributes": True}
+
     id: str
     integration_id: str
     integration_name: str
@@ -67,9 +69,6 @@ class IntegrationResponse(BaseModel):
     last_used_at: datetime | None
     has_credentials: bool
     credential_fields: list[str]  # List of field names that are set
-
-    class Config:
-        from_attributes = True
 
 
 class IntegrationListResponse(BaseModel):

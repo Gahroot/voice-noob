@@ -1,7 +1,7 @@
 [project]
-name = "voice-agent-api"
+name = "voicenoob-api"
 version = "0.1.0"
-description = "Voice Agent API - FastAPI backend for voice agent platform"
+description = "Voice Noob API - FastAPI backend for voice agent platform"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

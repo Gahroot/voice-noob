@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     )
 
     # Application
-    APP_NAME: str = "Voice Agent API"
+    APP_NAME: str = "Voice Noob API"
     APP_VERSION: str = "0.1.0"
     DEBUG: bool = False
     API_V1_PREFIX: str = "/api/v1"
@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     POSTGRES_PORT: int = 5432
     POSTGRES_USER: str = "postgres"
     POSTGRES_PASSWORD: str = "postgres"
-    POSTGRES_DB: str = "voice_agent"
+    POSTGRES_DB: str = "voicenoob"
     DATABASE_URL: PostgresDsn | None = None
 
     @field_validator("DATABASE_URL", mode="before")
@@ -87,6 +87,11 @@ class Settings(BaseSettings):
     # Rate Limiting
     RATE_LIMIT_PER_MINUTE: int = 60
 
+    # Default Admin User (created on first startup if no users exist)
+    ADMIN_EMAIL: str = "admin@voicenoob.com"
+    ADMIN_PASSWORD: str = "admin"
+    ADMIN_NAME: str = "Admin"
+
     # Voice & AI Services
     OPENAI_API_KEY: str | None = None
     DEEPGRAM_API_KEY: str | None = None
@@ -119,7 +124,7 @@ class Settings(BaseSettings):
 
     # OpenTelemetry
     OTEL_ENABLED: bool = False
-    OTEL_SERVICE_NAME: str = "voice-agent-api"
+    OTEL_SERVICE_NAME: str = "voicenoob-api"
     OTEL_EXPORTER_OTLP_ENDPOINT: str | None = None
 
 

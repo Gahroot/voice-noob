@@ -816,7 +816,7 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
                                       <Checkbox
                                         checked={field.value?.includes(workspace.id)}
                                         onCheckedChange={(checked: boolean) => {
-                                          const current = field.value || [];
+                                          const current = field.value ?? [];
                                           field.onChange(
                                             checked
                                               ? [...current, workspace.id]

@@ -19,7 +19,7 @@ class TestBasicHealthCheck:
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "healthy"
-        assert data["app"] == "Voice Agent API"
+        assert data["app"] == "Voice Noob API"
         assert "version" in data
 
 
@@ -61,7 +61,8 @@ class TestDatabaseHealthCheck:
             # Clean up override
             app.dependency_overrides.clear()
 
-            assert response.status_code == 200
+            # Service returns 503 when database is unhealthy
+            assert response.status_code == 503
             data = response.json()
             assert data["status"] == "unhealthy"
             assert "database" in data
@@ -99,7 +100,8 @@ class TestRedisHealthCheck:
             # Clean up override
             app.dependency_overrides.clear()
 
-            assert response.status_code == 200
+            # Service returns 503 when Redis is unhealthy
+            assert response.status_code == 503
             data = response.json()
             assert data["status"] == "unhealthy"
             assert "redis" in data

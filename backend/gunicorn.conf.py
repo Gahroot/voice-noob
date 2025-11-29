@@ -25,7 +25,7 @@ graceful_timeout = 30  # Time to finish requests on shutdown
 keepalive = 5  # Keep connections alive for reuse
 
 # Process naming
-proc_name = "voice-agent-api"
+proc_name = "voicenoob-api"
 
 # Logging
 accesslog = "-"  # stdout

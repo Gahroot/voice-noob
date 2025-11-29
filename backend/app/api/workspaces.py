@@ -42,6 +42,8 @@ class WorkspaceSettingsSchema(BaseModel):
 class WorkspaceResponse(BaseModel):
     """Workspace response schema."""
 
+    model_config = {"from_attributes": True}
+
     id: str
     user_id: int
     name: str
@@ -50,11 +52,6 @@ class WorkspaceResponse(BaseModel):
     is_default: bool
     agent_count: int = 0
     contact_count: int = 0
-
-    class Config:
-        """Pydantic config."""
-
-        from_attributes = True
 
 
 class WorkspaceCreate(BaseModel):

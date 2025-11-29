@@ -1,4 +1,4 @@
-# Voice Agent Platform
+# Voice Noob
 
 AI-powered voice agent platform for configuring and deploying custom voice agents with tool calling, multi-provider support, and transparent pricing tiers.
 
@@ -8,24 +8,19 @@ AI-powered voice agent platform for configuring and deploying custom voice agent
 voice-noob/
 ├── backend/                    # FastAPI Python backend
 │   ├── app/
-│   │   ├── api/               # API routes (agents, crm, realtime, workspaces, tools)
-│   │   ├── core/              # Config, security, logging
+│   │   ├── api/               # API routes (agents, auth, crm, realtime, telephony, workspaces)
+│   │   ├── core/              # Config, security, auth, rate limiting
 │   │   ├── db/                # Database session, Redis client
-│   │   ├── middleware/        # Request/response middleware
+│   │   ├── middleware/        # Request tracing, security headers
 │   │   ├── models/            # SQLAlchemy models (user, agent, contact, appointment, workspace)
-│   │   └── services/          # Business logic
-│   │       └── tools/         # Tool integrations (crm_tools, registry)
+│   │   └── services/          # Business logic & integrations
+│   │       └── tools/         # Voice agent tools (CRM, SMS, calendars)
 │   ├── migrations/versions/   # Alembic database migrations
-│   └── tests/                 # Backend tests (unit, integration, api, models)
+│   └── tests/                 # Backend tests (unit, integration, api)
 ├── frontend/                   # Next.js 15 React frontend
 │   ├── src/
-│   │   ├── app/dashboard/     # Dashboard pages
-│   │   │   ├── agents/        # Agent CRUD & config
-│   │   │   ├── crm/           # Contact management
-│   │   │   ├── appointments/  # Appointment scheduling
-│   │   │   ├── calls/         # Call history & transcripts
-│   │   │   ├── workspaces/    # Workspace management
-│   │   │   └── settings/      # User settings
+│   │   ├── app/dashboard/     # Dashboard pages (agents, crm, calls, settings, workspaces)
+│   │   ├── app/embed/         # Embeddable voice widget
 │   │   ├── components/ui/     # shadcn/ui components
 │   │   ├── hooks/             # Custom React hooks
 │   │   └── lib/api/           # API client functions
@@ -39,12 +34,12 @@ voice-noob/
 - API routes → `app/api/`, one file per resource
 - Business logic → `app/services/`, organized by domain
 - Models → `app/models/`, one model per file
-- Tools/integrations → `app/services/tools/`, one class per integration
+- Tools → `app/services/tools/`, one class per integration
 
 **Frontend:**
 - Pages → `src/app/dashboard/`, using Next.js App Router
 - Components → `src/components/`, reusable UI elements
-- Lib → `src/lib/`, utilities, types, config
+- Lib → `src/lib/`, utilities, types, API clients
 - One component per file, co-locate related files
 
 ## Code Quality - Zero Tolerance
@@ -80,7 +75,7 @@ cd frontend && npm run dev                            # Check compilation warnin
 
 ## Tech Stack
 
-**Voice & AI**: Pipecat, Deepgram, ElevenLabs, OpenAI, Claude, Gemini
+**Voice & AI**: Pipecat, Deepgram, ElevenLabs, OpenAI GPT-4o Realtime
 **Backend**: FastAPI, PostgreSQL 17, Redis 7, SQLAlchemy 2.0, Python 3.12+, uv
 **Frontend**: Next.js 15, React 19, TypeScript 5.7, Tailwind, shadcn/ui
 **Telephony**: Telnyx (primary), Twilio (optional)

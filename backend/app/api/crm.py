@@ -41,6 +41,8 @@ MAX_DURATION_MINUTES = 480  # Maximum appointment duration (8 hours)
 class ContactResponse(BaseModel):
     """Contact response schema."""
 
+    model_config = {"from_attributes": True}
+
     id: int
     user_id: int
     workspace_id: str | None
@@ -52,11 +54,6 @@ class ContactResponse(BaseModel):
     status: str
     tags: str | None
     notes: str | None
-
-    class Config:
-        """Pydantic config."""
-
-        from_attributes = True
 
 
 class ContactCreate(BaseModel):
@@ -808,6 +805,8 @@ async def get_crm_stats(
 class AppointmentResponse(BaseModel):
     """Appointment response schema."""
 
+    model_config = {"from_attributes": True}
+
     id: int
     contact_id: int
     workspace_id: str | None = None
@@ -820,11 +819,6 @@ class AppointmentResponse(BaseModel):
     created_by_agent: str | None
     contact_name: str | None = None
     contact_phone: str | None = None
-
-    class Config:
-        """Pydantic config."""
-
-        from_attributes = True
 
 
 class AppointmentCreate(BaseModel):

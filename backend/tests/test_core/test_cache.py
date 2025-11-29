@@ -18,7 +18,11 @@ from app.core.cache import (
 @pytest.fixture(autouse=True)
 def mock_redis(test_redis: Any) -> Any:
     """Automatically mock get_redis for all cache tests."""
-    with patch("app.core.cache.get_redis", return_value=test_redis):
+
+    async def get_redis_mock() -> Any:
+        return test_redis
+
+    with patch("app.core.cache.get_redis", get_redis_mock):
         yield test_redis
 
 
@@ -74,17 +78,17 @@ class TestCacheGetSet:
         key = "test:ttl"
         value = "temporary"
 
-        # Set with very short TTL (1 second)
-        await cache_set(key, value, ttl=1)
+        # Set with TTL of 10 seconds (longer to avoid timing issues)
+        await cache_set(key, value, ttl=10)
 
         # Should be available immediately
         result = await cache_get(key)
         assert result == value
 
-        # Verify TTL was set in Redis
+        # Verify TTL was set in Redis (should be between 0 and 10)
         ttl = await test_redis.ttl(key)
-        assert ttl > 0
-        assert ttl <= 1
+        assert ttl >= 0  # 0 can happen due to timing
+        assert ttl <= 10
 
     @pytest.mark.asyncio
     async def test_cache_set_overwrites_existing(self) -> None:

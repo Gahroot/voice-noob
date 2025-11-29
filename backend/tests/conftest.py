@@ -98,15 +98,15 @@ async def test_session(test_engine: Any) -> AsyncGenerator[AsyncSession, None]:
         await session.rollback()
 
 
-@pytest.fixture
-def test_redis() -> Any:
-    """Create fake Redis client for testing.
+@pytest_asyncio.fixture
+async def test_redis() -> Any:
+    """Create fake async Redis client for testing.
 
-    Note: Returns a factory function that creates a new fakeredis instance
-    each time get_redis is called, to avoid event loop issues.
+    Note: Returns an async fakeredis instance for cache tests.
     """
-    # Return a sync version that will be called to create fresh instances
-    return fakeredis.FakeRedis(decode_responses=True)
+    redis = fakeredis.FakeAsyncRedis(decode_responses=True)
+    yield redis
+    await redis.aclose()
 
 
 @pytest_asyncio.fixture(scope="function")
