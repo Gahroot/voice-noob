@@ -108,7 +108,7 @@ Pick based on your budget and quality needs:
 
 ```bash
 # Clone the repo
-git clone https://github.com/yourusername/voice-noob.git
+git clone https://github.com/KenKaiii/voice-noob.git
 cd voice-noob
 
 # Copy environment files
