@@ -471,14 +471,18 @@ export default function EmbedPage() {
         };
         dataChannel.send(JSON.stringify(sessionUpdate));
 
-        // Trigger initial greeting from the agent
-        const responseCreateEvent: Record<string, unknown> = { type: "response.create" };
+        // Only trigger initial greeting if one is configured
+        // Without this, the agent waits for the user to speak first
         if (tokenData.agent.initial_greeting) {
-          responseCreateEvent.response = {
-            instructions: `Say exactly this greeting to start the conversation: "${tokenData.agent.initial_greeting}"`,
-          };
+          dataChannel.send(
+            JSON.stringify({
+              type: "response.create",
+              response: {
+                instructions: `Start the conversation by saying exactly this (do not add anything else): "${tokenData.agent.initial_greeting}"`,
+              },
+            })
+          );
         }
-        dataChannel.send(JSON.stringify(responseCreateEvent));
       };
 
       // Helper to execute tool calls via backend
