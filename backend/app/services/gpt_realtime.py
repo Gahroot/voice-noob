@@ -243,7 +243,6 @@ class GPTRealtimeSession:
                 "threshold": 0.5,
                 "prefix_padding_ms": 200,
                 "silence_duration_ms": 200,
-                "eagerness": "high",
             },
             "tools": tools,
             "tool_choice": "auto",

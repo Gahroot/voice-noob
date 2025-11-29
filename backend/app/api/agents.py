@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import CurrentUser, user_id_to_uuid
 from app.core.limiter import limiter
+from app.core.public_id import generate_public_id
 from app.db.session import get_db
 from app.models.agent import Agent
 
@@ -45,6 +46,11 @@ class CreateAgentRequest(BaseModel):
     # LLM settings
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     max_tokens: int = Field(default=2000, ge=100, le=16000)
+    # Initial greeting (optional)
+    initial_greeting: str | None = Field(
+        default=None,
+        description="Optional initial greeting the agent speaks when call starts",
+    )
 
 
 class UpdateAgentRequest(BaseModel):
@@ -73,6 +79,11 @@ class UpdateAgentRequest(BaseModel):
     # LLM settings
     temperature: float | None = Field(None, ge=0.0, le=2.0)
     max_tokens: int | None = Field(None, ge=100, le=16000)
+    # Initial greeting (optional)
+    initial_greeting: str | None = Field(
+        default=None,
+        description="Optional initial greeting the agent speaks when call starts",
+    )
 
 
 class AgentResponse(BaseModel):
@@ -97,6 +108,7 @@ class AgentResponse(BaseModel):
     turn_detection_silence_duration_ms: int
     temperature: float
     max_tokens: int
+    initial_greeting: str | None
     is_active: bool
     is_published: bool
     total_calls: int
@@ -148,6 +160,7 @@ async def create_agent(
         turn_detection_silence_duration_ms=agent_request.turn_detection_silence_duration_ms,
         temperature=agent_request.temperature,
         max_tokens=agent_request.max_tokens,
+        initial_greeting=agent_request.initial_greeting,
         provider_config=provider_config,
         is_active=True,
         is_published=False,
@@ -351,6 +364,7 @@ def _apply_agent_updates(agent: Agent, request: UpdateAgentRequest) -> None:
         "turn_detection_silence_duration_ms",
         "temperature",
         "max_tokens",
+        "initial_greeting",
     ]
 
     for field in simple_fields:
@@ -444,6 +458,7 @@ def _agent_to_response(agent: Agent) -> AgentResponse:
         turn_detection_silence_duration_ms=agent.turn_detection_silence_duration_ms,
         temperature=agent.temperature,
         max_tokens=agent.max_tokens,
+        initial_greeting=agent.initial_greeting,
         is_active=agent.is_active,
         is_published=agent.is_published,
         total_calls=agent.total_calls,
@@ -452,3 +467,203 @@ def _agent_to_response(agent: Agent) -> AgentResponse:
         updated_at=agent.updated_at.isoformat(),
         last_call_at=agent.last_call_at.isoformat() if agent.last_call_at else None,
     )
+
+
+# ============================================================================
+# Embed Settings Endpoints
+# ============================================================================
+
+
+class EmbedSettingsResponse(BaseModel):
+    """Response for agent embed settings."""
+
+    public_id: str
+    embed_enabled: bool
+    allowed_domains: list[str]
+    embed_settings: dict[str, Any]
+    script_tag: str
+    iframe_code: str
+
+
+class UpdateEmbedSettingsRequest(BaseModel):
+    """Request to update embed settings."""
+
+    embed_enabled: bool | None = None
+    allowed_domains: list[str] | None = None
+    embed_settings: dict[str, Any] | None = None
+
+
+@router.get("/{agent_id}/embed", response_model=EmbedSettingsResponse)
+async def get_embed_settings(
+    agent_id: str,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> EmbedSettingsResponse:
+    """Get embed settings for an agent.
+
+    If the agent doesn't have a public_id yet, one will be generated.
+
+    Args:
+        agent_id: Agent UUID
+        current_user: Authenticated user
+        db: Database session
+
+    Returns:
+        Embed settings including embed code snippets
+    """
+    user_uuid = user_id_to_uuid(current_user.id)
+    result = await db.execute(
+        select(Agent).where(
+            Agent.id == uuid.UUID(agent_id),
+            Agent.user_id == user_uuid,
+        )
+    )
+    agent = result.scalar_one_or_none()
+
+    if not agent:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Agent not found",
+        )
+
+    # Generate public_id if not exists
+    if not agent.public_id:
+        # Generate unique public_id
+        while True:
+            new_public_id = generate_public_id()
+            # Check for collision
+            existing = await db.execute(select(Agent).where(Agent.public_id == new_public_id))
+            if not existing.scalar_one_or_none():
+                agent.public_id = new_public_id
+                await db.commit()
+                await db.refresh(agent)
+                break
+
+    # Build embed code snippets
+    # In production, replace with actual domain
+    base_url = "https://yourplatform.com"  # TODO: Get from config
+    script_tag = f"""<script src="{base_url}/widget/v1/widget.js" defer></script>
+<voice-agent agent-id="{agent.public_id}"></voice-agent>"""
+
+    iframe_code = f"""<iframe
+  src="{base_url}/embed/{agent.public_id}"
+  allow="microphone"
+  style="border: none; position: fixed; bottom: 20px; right: 20px; width: 400px; height: 600px; z-index: 9999;"
+></iframe>"""
+
+    return EmbedSettingsResponse(
+        public_id=agent.public_id,
+        embed_enabled=agent.embed_enabled,
+        allowed_domains=agent.allowed_domains,
+        embed_settings=agent.embed_settings,
+        script_tag=script_tag,
+        iframe_code=iframe_code,
+    )
+
+
+@router.patch("/{agent_id}/embed", response_model=EmbedSettingsResponse)
+@limiter.limit("30/minute")
+async def update_embed_settings(
+    agent_id: str,
+    update_request: UpdateEmbedSettingsRequest,
+    request: Request,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> EmbedSettingsResponse:
+    """Update embed settings for an agent.
+
+    Args:
+        agent_id: Agent UUID
+        update_request: Settings to update
+        request: HTTP request (for rate limiting)
+        current_user: Authenticated user
+        db: Database session
+
+    Returns:
+        Updated embed settings
+    """
+    user_uuid = user_id_to_uuid(current_user.id)
+    result = await db.execute(
+        select(Agent).where(
+            Agent.id == uuid.UUID(agent_id),
+            Agent.user_id == user_uuid,
+        )
+    )
+    agent = result.scalar_one_or_none()
+
+    if not agent:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Agent not found",
+        )
+
+    # Apply updates
+    if update_request.embed_enabled is not None:
+        agent.embed_enabled = update_request.embed_enabled
+
+    if update_request.allowed_domains is not None:
+        agent.allowed_domains = update_request.allowed_domains
+
+    if update_request.embed_settings is not None:
+        # Merge with existing settings - create new dict to ensure SQLAlchemy detects change
+        current_settings = dict(agent.embed_settings or {})
+        current_settings.update(update_request.embed_settings)
+        agent.embed_settings = current_settings
+
+    await db.commit()
+    await db.refresh(agent)
+
+    # Return via get_embed_settings to ensure consistency
+    return await get_embed_settings(agent_id, current_user, db)
+
+
+@router.post("/{agent_id}/embed/regenerate-id", response_model=EmbedSettingsResponse)
+@limiter.limit("5/minute")
+async def regenerate_public_id(
+    agent_id: str,
+    request: Request,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> EmbedSettingsResponse:
+    """Regenerate the public ID for an agent.
+
+    WARNING: This will invalidate all existing embed codes using the old ID.
+
+    Args:
+        agent_id: Agent UUID
+        request: HTTP request (for rate limiting)
+        current_user: Authenticated user
+        db: Database session
+
+    Returns:
+        Updated embed settings with new public_id
+    """
+    user_uuid = user_id_to_uuid(current_user.id)
+    result = await db.execute(
+        select(Agent).where(
+            Agent.id == uuid.UUID(agent_id),
+            Agent.user_id == user_uuid,
+        )
+    )
+    agent = result.scalar_one_or_none()
+
+    if not agent:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Agent not found",
+        )
+
+    # Generate new unique public_id
+    while True:
+        new_public_id = generate_public_id()
+        # Check for collision
+        existing = await db.execute(select(Agent).where(Agent.public_id == new_public_id))
+        if not existing.scalar_one_or_none():
+            agent.public_id = new_public_id
+            break
+
+    await db.commit()
+    await db.refresh(agent)
+
+    # Return via get_embed_settings to ensure consistency
+    return await get_embed_settings(agent_id, current_user, db)

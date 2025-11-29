@@ -8,7 +8,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import * as z from "zod";
 import Link from "next/link";
-import { getAgent, updateAgent, deleteAgent, type UpdateAgentRequest } from "@/lib/api/agents";
+import {
+  getAgent,
+  updateAgent,
+  deleteAgent,
+  getEmbedSettings,
+  updateEmbedSettings,
+  type UpdateAgentRequest,
+} from "@/lib/api/agents";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -43,6 +50,7 @@ import {
   Shield,
   AlertTriangle,
   ShieldAlert,
+  Wand2,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { getLanguagesForTier } from "@/lib/languages";
@@ -64,6 +72,47 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 import { InfoTooltip } from "@/components/ui/info-tooltip";
+
+// Best practices system prompt template based on OpenAI's 2025 GPT Realtime guidelines
+const BEST_PRACTICES_PROMPT = `# Role & Identity
+You are a helpful phone assistant for [COMPANY_NAME]. You help customers with questions, support requests, and general inquiries.
+
+# Personality & Tone
+- Warm, concise, and confident—never fawning or overly enthusiastic
+- Keep responses to 2-3 sentences maximum
+- Speak at a steady, unhurried pace
+- Use occasional natural fillers like "let me check that" for conversational flow
+
+# Language Rules
+- ALWAYS respond in the same language the customer uses
+- If audio is unclear, say: "Sorry, I didn't catch that. Could you repeat?"
+- Never switch languages mid-conversation unless asked
+
+# Turn-Taking
+- Wait for the customer to finish speaking before responding
+- Use brief acknowledgments: "Got it," "I understand," "Let me help with that"
+- Vary your responses—never repeat the same phrase twice in a row
+
+# Alphanumeric Handling
+- When reading back phone numbers, spell digit by digit: "4-1-5-5-5-5-1-2-3-4"
+- For confirmation codes, say each character separately
+- Always confirm: "Just to verify, that's [X]. Is that correct?"
+
+# Tool Usage
+- For lookups: Call immediately, say "Let me check that for you"
+- For changes: Confirm first: "I'll update that now. Is that correct?"
+
+# Escalation
+Transfer to a human when:
+- Customer explicitly requests it
+- Customer expresses frustration
+- You cannot resolve their issue after 2 attempts
+- Request is outside your capabilities
+
+# Boundaries
+- Stay focused on [COMPANY_NAME] services
+- If unsure, say: "Let me transfer you to someone who can help with that"
+- Be honest when you don't know something`;
 
 // Get integrations that have tools defined
 const INTEGRATIONS_WITH_TOOLS = AVAILABLE_INTEGRATIONS.filter((i) => i.tools && i.tools.length > 0);
@@ -119,7 +168,9 @@ const agentFormSchema = z.object({
   // LLM Settings
   llmProvider: z.enum(["openai", "openai-realtime", "anthropic", "google"]),
   llmModel: z.string().default("gpt-4o"),
+  voice: z.string().default("marin"),
   systemPrompt: z.string().min(10, "System prompt is required"),
+  initialGreeting: z.string().optional(),
   temperature: z.number().min(0).max(2).default(0.7),
   maxTokens: z.number().min(100).max(16000).default(2000),
 
@@ -139,6 +190,12 @@ const agentFormSchema = z.object({
 
   // Workspaces
   selectedWorkspaces: z.array(z.string()).default([]),
+
+  // Widget Settings
+  widgetButtonText: z
+    .string()
+    .max(20, "Button text must be 20 characters or less")
+    .default("Talk to us"),
 });
 
 type AgentFormValues = z.infer<typeof agentFormSchema>;
@@ -154,7 +211,7 @@ const TAB_FIELDS: Record<string, (keyof AgentFormValues)[]> = {
     "sttProvider",
     "deepgramModel",
   ],
-  llm: ["llmProvider", "llmModel", "systemPrompt", "temperature", "maxTokens"],
+  llm: ["llmProvider", "llmModel", "voice", "systemPrompt", "temperature", "maxTokens"],
   tools: ["enabledTools", "enabledToolIds"],
   advanced: [
     "telephonyProvider",
@@ -162,6 +219,7 @@ const TAB_FIELDS: Record<string, (keyof AgentFormValues)[]> = {
     "enableRecording",
     "enableTranscript",
     "turnDetectionMode",
+    "widgetButtonText",
   ],
 };
 
@@ -250,6 +308,13 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
     },
   });
 
+  // Fetch embed settings
+  const { data: embedSettings } = useQuery({
+    queryKey: ["embed-settings", agentId],
+    queryFn: () => getEmbedSettings(agentId),
+    enabled: !!agentId && !!agent && !isDeleting,
+  });
+
   const form = useForm<AgentFormValues>({
     resolver: zodResolver(agentFormSchema),
     defaultValues: {
@@ -265,6 +330,7 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
       llmProvider: "openai-realtime",
       llmModel: "gpt-realtime-2025-08-28",
       systemPrompt: "",
+      initialGreeting: "",
       temperature: 0.7,
       maxTokens: 2000,
       telephonyProvider: "telnyx",
@@ -276,6 +342,7 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
       enabledTools: [],
       enabledToolIds: {},
       selectedWorkspaces: [],
+      widgetButtonText: "Talk to us",
     },
   });
 
@@ -299,7 +366,9 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
         deepgramModel: "nova-3",
         llmProvider: agent.pricing_tier === "premium" ? "openai-realtime" : "openai",
         llmModel: agent.pricing_tier === "premium" ? "gpt-realtime-2025-08-28" : "gpt-4o",
+        voice: agent.voice ?? "marin",
         systemPrompt: agent.system_prompt,
+        initialGreeting: agent.initial_greeting ?? "",
         temperature: agent.temperature,
         maxTokens: agent.max_tokens,
         telephonyProvider: "telnyx",
@@ -326,6 +395,14 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentWorkspaces]);
+
+  // Update widget button text when embed settings load
+  useEffect(() => {
+    if (formInitialized.current && embedSettings?.embed_settings?.button_text) {
+      form.setValue("widgetButtonText", embedSettings.embed_settings.button_text);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [embedSettings]);
 
   // Watch the LLM provider to conditionally show/hide Voice tab
   const llmProvider = form.watch("llmProvider");
@@ -471,7 +548,9 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
       description: data.description,
       pricing_tier: pricingTier,
       system_prompt: data.systemPrompt,
+      initial_greeting: data.initialGreeting?.trim() ? data.initialGreeting.trim() : null,
       language: data.language,
+      voice: data.voice,
       enabled_tools: enabledIntegrations,
       enabled_tool_ids: data.enabledToolIds,
       phone_number_id: data.phoneNumberId,
@@ -482,11 +561,16 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
       max_tokens: data.maxTokens,
     };
 
-    // Update agent and workspaces
+    // Update agent, workspaces, and embed settings
     try {
       await Promise.all([
         updateAgentMutation.mutateAsync(request),
         assignWorkspacesMutation.mutateAsync(data.selectedWorkspaces),
+        updateEmbedSettings(agentId, {
+          embed_settings: {
+            button_text: data.widgetButtonText,
+          },
+        }),
       ]);
     } catch {
       // Error handling is done in individual mutations
@@ -1052,6 +1136,60 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
                     />
                   </div>
 
+                  {isRealtimeProvider && (
+                    <FormField
+                      control={form.control}
+                      name="voice"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Voice</FormLabel>
+                          <Select onValueChange={field.onChange} value={field.value}>
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select a voice" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="marin">Marin (Conversational)</SelectItem>
+                              <SelectItem value="cedar">Cedar (Friendly)</SelectItem>
+                              <SelectItem value="coral">Coral (Expressive)</SelectItem>
+                              <SelectItem value="sage">Sage (Calm)</SelectItem>
+                              <SelectItem value="alloy">Alloy (Neutral)</SelectItem>
+                              <SelectItem value="ash">Ash (Professional)</SelectItem>
+                              <SelectItem value="ballad">Ballad (Warm)</SelectItem>
+                              <SelectItem value="shimmer">Shimmer (Bright)</SelectItem>
+                              <SelectItem value="echo">Echo (Clear)</SelectItem>
+                              <SelectItem value="verse">Verse (Melodic)</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <FormDescription>
+                            The voice your agent will use for speech synthesis
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
+
+                  <div className="flex items-center justify-between rounded-lg border border-dashed bg-muted/50 p-3">
+                    <div>
+                      <p className="text-sm font-medium">Need help writing a prompt?</p>
+                      <p className="text-xs text-muted-foreground">
+                        Start with our best practices template based on OpenAI guidelines
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => form.setValue("systemPrompt", BEST_PRACTICES_PROMPT)}
+                      className="shrink-0"
+                    >
+                      <Wand2 className="mr-1.5 h-3.5 w-3.5" />
+                      Use Best Practices
+                    </Button>
+                  </div>
+
                   <FormField
                     control={form.control}
                     name="systemPrompt"
@@ -1092,6 +1230,27 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
                         </FormItem>
                       );
                     }}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="initialGreeting"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Initial Greeting (Optional)</FormLabel>
+                        <FormControl>
+                          <Textarea
+                            placeholder="Hello! Thank you for calling. How can I help you today?"
+                            className="min-h-[80px]"
+                            {...field}
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          What the agent says when the call starts. Leave empty for a natural start.
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
                   />
 
                   <div className="grid grid-cols-2 gap-4">
@@ -1535,6 +1694,44 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
                         <FormMessage />
                       </FormItem>
                     )}
+                  />
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium">Widget Settings</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <FormField
+                    control={form.control}
+                    name="widgetButtonText"
+                    render={({ field }) => {
+                      const charCount = field.value?.length ?? 0;
+                      const isOverLimit = charCount > 20;
+                      return (
+                        <FormItem>
+                          <div className="flex items-center justify-between">
+                            <FormLabel>Button Text</FormLabel>
+                            <span
+                              className={cn(
+                                "text-xs",
+                                isOverLimit ? "text-destructive" : "text-muted-foreground"
+                              )}
+                            >
+                              {charCount}/20 characters
+                            </span>
+                          </div>
+                          <FormControl>
+                            <Input placeholder="Talk to us" maxLength={20} {...field} />
+                          </FormControl>
+                          <FormDescription>
+                            Text displayed on the widget button (max 20 characters)
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      );
+                    }}
                   />
                 </CardContent>
               </Card>

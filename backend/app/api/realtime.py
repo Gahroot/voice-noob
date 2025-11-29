@@ -472,7 +472,6 @@ async def create_webrtc_session(
             "threshold": agent.turn_detection_threshold or 0.5,
             "prefix_padding_ms": agent.turn_detection_prefix_padding_ms or 200,
             "silence_duration_ms": agent.turn_detection_silence_duration_ms or 200,
-            "eagerness": "high",
         },
     }
 

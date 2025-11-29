@@ -64,6 +64,7 @@ export interface Agent {
   turn_detection_silence_duration_ms: number;
   temperature: number;
   max_tokens: number;
+  initial_greeting: string | null;
   is_active: boolean;
   is_published: boolean;
   total_calls: number;
@@ -85,6 +86,7 @@ export interface CreateAgentRequest {
   phone_number_id?: string;
   enable_recording: boolean;
   enable_transcript: boolean;
+  initial_greeting?: string;
 }
 
 /**
@@ -149,6 +151,7 @@ export interface UpdateAgentRequest {
   turn_detection_silence_duration_ms?: number;
   temperature?: number;
   max_tokens?: number;
+  initial_greeting?: string | null;
 }
 
 /**
@@ -183,4 +186,62 @@ export async function deleteAgent(agentId: string): Promise<void> {
     const error = await response.json().catch(() => ({ detail: response.statusText }));
     throw new Error(error.detail ?? "Failed to delete agent");
   }
+}
+
+// Embed Settings Types
+export interface EmbedSettings {
+  theme: "light" | "dark" | "auto";
+  position: "bottom-right" | "bottom-left" | "top-right" | "top-left";
+  primary_color: string;
+  greeting_message: string;
+  button_text: string;
+}
+
+export interface EmbedSettingsResponse {
+  public_id: string;
+  embed_enabled: boolean;
+  allowed_domains: string[];
+  embed_settings: EmbedSettings;
+  script_tag: string;
+  iframe_code: string;
+}
+
+export interface UpdateEmbedSettingsRequest {
+  embed_enabled?: boolean;
+  allowed_domains?: string[];
+  embed_settings?: Partial<EmbedSettings>;
+}
+
+/**
+ * Get embed settings for an agent
+ */
+export async function getEmbedSettings(agentId: string): Promise<EmbedSettingsResponse> {
+  const response = await fetchWithTimeout(`${API_BASE}/api/v1/agents/${agentId}/embed`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch embed settings: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Update embed settings for an agent
+ */
+export async function updateEmbedSettings(
+  agentId: string,
+  request: UpdateEmbedSettingsRequest
+): Promise<EmbedSettingsResponse> {
+  const response = await fetchWithTimeout(`${API_BASE}/api/v1/agents/${agentId}/embed`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: response.statusText }));
+    throw new Error(error.detail ?? "Failed to update embed settings");
+  }
+
+  return response.json();
 }

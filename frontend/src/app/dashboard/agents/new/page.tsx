@@ -58,6 +58,7 @@ const agentFormSchema = z.object({
   llmProvider: z.enum(["openai", "openai-realtime", "anthropic", "google"]),
   llmModel: z.string().default("gpt-4o"),
   systemPrompt: z.string().min(10, "System prompt is required"),
+  initialGreeting: z.string().optional(),
   temperature: z.number().min(0).max(2).default(0.7),
   maxTokens: z.number().min(100).max(16000).default(2000),
 
@@ -194,6 +195,7 @@ export default function NewAgentPage() {
       phone_number_id: data.phoneNumberId,
       enable_recording: data.enableRecording,
       enable_transcript: data.enableTranscript,
+      initial_greeting: data.initialGreeting?.trim() ? data.initialGreeting.trim() : undefined,
     };
 
     createAgentMutation.mutate(request);
@@ -551,6 +553,27 @@ export default function NewAgentPage() {
                         </FormControl>
                         <FormDescription>
                           Instructions that define your agent&apos;s personality and behavior
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="initialGreeting"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Initial Greeting (Optional)</FormLabel>
+                        <FormControl>
+                          <Textarea
+                            placeholder="Hello! Thank you for calling. How can I help you today?"
+                            className="min-h-[80px]"
+                            {...field}
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          What the agent says when the call starts. Leave empty for a natural start.
                         </FormDescription>
                         <FormMessage />
                       </FormItem>

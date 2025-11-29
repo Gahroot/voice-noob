@@ -23,7 +23,6 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
-import { RealtimeAgent, RealtimeSession, type RealtimeItem } from "@openai/agents/realtime";
 import Link from "next/link";
 
 interface Workspace {
@@ -270,7 +269,6 @@ export default function TestAgentPage() {
           .map((a) => ({ agent_id: a.id, agent_name: a.name, is_default: false }))
       : workspaceAgents;
 
-  const sessionRef = useRef<RealtimeSession | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
   const callTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -464,16 +462,6 @@ export default function TestAgentPage() {
       audioStream: null,
       audioElement: null,
     };
-
-    // Clean up session ref
-    if (sessionRef.current) {
-      try {
-        sessionRef.current.close();
-      } catch (e) {
-        console.error("[Cleanup] Error closing session:", e);
-      }
-      sessionRef.current = null;
-    }
   }, [flushTranscripts]);
 
   // Cleanup on unmount
@@ -536,79 +524,6 @@ export default function TestAgentPage() {
 
     try {
       addTranscriptImmediate("system", `Connecting to ${selectedAgent.name}...`);
-
-      const agentSystemPrompt = editedSystemPrompt || "You are a helpful voice assistant.";
-
-      // Create a RealtimeAgent with the agent's configuration
-      const realtimeAgent = new RealtimeAgent({
-        name: selectedAgent.name,
-        instructions: agentSystemPrompt,
-      });
-
-      // Create a RealtimeSession with WebRTC transport
-      const session = new RealtimeSession(realtimeAgent, {
-        transport: "webrtc",
-      });
-
-      sessionRef.current = session;
-
-      // Set up event listeners
-      session.on("transport_event", (event) => {
-        console.log("[Transport Event]", event.type, event);
-
-        if (event.type === "connection_change") {
-          const status = (event as { type: string; status?: string }).status;
-          console.log("[Connection Change]", status);
-          if (status === "connected") {
-            setConnectionStatus("connected");
-          } else if (status === "disconnected") {
-            setConnectionStatus("idle");
-          }
-        } else if (event.type === "error") {
-          console.error("[Transport Error]", event);
-          const errorEvent = event as { type: string; error?: unknown };
-          addTranscript("system", `Error: ${String(errorEvent.error)}`);
-        }
-      });
-
-      session.on("error", (error) => {
-        console.error("[Session Error]", error);
-        addTranscript("system", `Session Error: ${String(error.error)}`);
-      });
-
-      session.on("history_updated", (history: RealtimeItem[]) => {
-        console.log("[History Updated]", history.length, "items");
-
-        // Process history to extract transcripts - use batched updates
-        for (const item of history) {
-          if (item.type === "message") {
-            const messageItem = item as RealtimeItem & {
-              role?: string;
-              content?: Array<{ type: string; text?: string; transcript?: string }>;
-            };
-            const role = messageItem.role;
-            const content = messageItem.content;
-
-            if (content && Array.isArray(content)) {
-              for (const part of content) {
-                if (part.type === "input_text" && part.text) {
-                  addTranscriptBatched("user", part.text);
-                } else if (part.type === "text" && part.text && role === "assistant") {
-                  addTranscriptBatched("assistant", part.text);
-                } else if (part.type === "input_audio" && part.transcript) {
-                  addTranscriptBatched("user", part.transcript);
-                } else if (part.type === "audio" && part.transcript && role === "assistant") {
-                  addTranscriptBatched("assistant", part.transcript);
-                }
-              }
-            }
-          }
-        }
-      });
-
-      session.on("agent_start", (_context, agent) => {
-        console.log("[Agent Start]", agent.name);
-      });
 
       // Fetch ephemeral token from our backend
       // - For specific workspace: include workspace_id to use workspace API keys

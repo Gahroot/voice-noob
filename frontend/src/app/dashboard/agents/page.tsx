@@ -37,6 +37,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { MakeCallDialog } from "@/components/make-call-dialog";
+import { EmbedAgentDialog } from "@/components/embed-agent-dialog";
 import {
   Select,
   SelectContent,
@@ -69,6 +70,7 @@ export default function AgentsPage() {
   const queryClient = useQueryClient();
   const router = useRouter();
   const [callDialogOpen, setCallDialogOpen] = useState(false);
+  const [embedDialogOpen, setEmbedDialogOpen] = useState(false);
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [agentToDelete, setAgentToDelete] = useState<Agent | null>(null);
@@ -222,6 +224,11 @@ export default function AgentsPage() {
     setCallDialogOpen(true);
   };
 
+  const handleEmbed = (agent: Agent) => {
+    setSelectedAgent(agent);
+    setEmbedDialogOpen(true);
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -349,6 +356,9 @@ export default function AgentsPage() {
                         <DropdownMenuItem onSelect={() => handleDuplicate(agent.id)}>
                           Duplicate
                         </DropdownMenuItem>
+                        <DropdownMenuItem onSelect={() => handleEmbed(agent)}>
+                          Embed
+                        </DropdownMenuItem>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem
                           className="text-destructive"
@@ -401,6 +411,15 @@ export default function AgentsPage() {
         <MakeCallDialog
           open={callDialogOpen}
           onOpenChange={setCallDialogOpen}
+          agent={selectedAgent}
+        />
+      )}
+
+      {/* Embed Dialog */}
+      {selectedAgent && (
+        <EmbedAgentDialog
+          open={embedDialogOpen}
+          onOpenChange={setEmbedDialogOpen}
           agent={selectedAgent}
         />
       )}

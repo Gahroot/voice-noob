@@ -99,6 +99,13 @@ class Agent(Base):
         comment="Maximum response tokens",
     )
 
+    # Initial greeting (optional spoken greeting when call starts)
+    initial_greeting: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        comment="Optional initial greeting the agent speaks when call starts",
+    )
+
     # Integrations/tools
     enabled_tools: Mapped[list[str]] = mapped_column(
         JSON,
@@ -146,6 +153,39 @@ class Agent(Base):
     )
     total_duration_seconds: Mapped[int] = mapped_column(
         default=0, nullable=False, comment="Total call duration in seconds"
+    )
+
+    # Embed settings for public widget
+    public_id: Mapped[str | None] = mapped_column(
+        String(32),
+        nullable=True,
+        unique=True,
+        index=True,
+        comment="Short URL-safe ID for public embed access (e.g., ag_xK9mN2pQ)",
+    )
+    embed_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        comment="Whether widget embedding is enabled for this agent",
+    )
+    allowed_domains: Mapped[list[str]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
+        comment="List of domains allowed to embed this agent (supports wildcards)",
+    )
+    embed_settings: Mapped[dict[str, Any]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=lambda: {
+            "theme": "auto",
+            "position": "bottom-right",
+            "primary_color": "#6366f1",
+            "greeting_message": "Hi! How can I help you today?",
+            "button_text": "Talk to us",
+        },
+        comment="Widget customization settings (theme, position, colors, etc.)",
     )
 
     # Timestamps
