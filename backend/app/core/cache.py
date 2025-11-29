@@ -126,7 +126,7 @@ async def cache_invalidate(pattern: str) -> int:
             keys.append(key)
 
         if keys:
-            deleted = await redis.delete(*keys)
+            deleted: int = await redis.delete(*keys)
             logger.info("Cache invalidated: %s keys matching '%s'", deleted, pattern)
             return deleted
 

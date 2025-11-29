@@ -31,13 +31,13 @@ async def get_redis() -> "Redis":
     async with _redis_lock:
         if redis_client is None:
             try:
-                # Create connection pool with optimized settings
+                # Create connection pool with production settings
                 redis_pool = ConnectionPool.from_url(
                     str(settings.REDIS_URL),
                     encoding="utf-8",
                     decode_responses=True,
-                    max_connections=50,  # Maximum connections in pool
-                    socket_timeout=5.0,  # Socket timeout in seconds
+                    max_connections=100,  # Production: increased from 50 for concurrent agents
+                    socket_timeout=10.0,  # Production: increased from 5s for slow networks
                     socket_connect_timeout=5.0,  # Connection timeout
                     socket_keepalive=True,  # Enable TCP keepalive
                     retry_on_timeout=True,  # Retry on timeout
