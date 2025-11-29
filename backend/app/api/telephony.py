@@ -21,6 +21,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.settings import get_user_api_keys
 from app.core.auth import CurrentUser, user_id_to_uuid
+from app.core.limiter import limiter
+from app.core.webhook_security import verify_telnyx_webhook, verify_twilio_webhook
 from app.db.session import get_db
 from app.models.agent import Agent
 from app.models.call_record import CallDirection, CallRecord, CallStatus
@@ -295,8 +297,10 @@ async def search_phone_numbers(
 
 
 @router.post("/phone-numbers/purchase", response_model=PhoneNumberResponse)
+@limiter.limit("5/minute")  # Strict rate limit for phone number purchases (costs money!)
 async def purchase_phone_number(
     request: PurchasePhoneNumberRequest,
+    http_request: Request,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
     workspace_id: str = Query(..., description="Workspace ID for API key isolation"),
@@ -417,6 +421,7 @@ async def release_phone_number(
 
 
 @router.post("/calls", response_model=CallResponse)
+@limiter.limit("30/minute")  # Rate limit outbound call initiation (costs money!)
 async def initiate_call(
     request: InitiateCallRequest,
     http_request: Request,
@@ -585,6 +590,9 @@ async def twilio_voice_webhook(
     This webhook is called when a call comes in to a Twilio phone number.
     It returns TwiML to connect the call to our WebSocket for AI handling.
     """
+    # Validate Twilio signature
+    await verify_twilio_webhook(request)
+
     log = logger.bind(
         webhook="twilio_voice",
         call_sid=call_sid,
@@ -641,6 +649,7 @@ async def twilio_voice_webhook(
 
 @webhook_router.post("/twilio/status")
 async def twilio_status_callback(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     call_sid: str = Form(default="", alias="CallSid"),
     call_status: str = Form(default="", alias="CallStatus"),
@@ -652,6 +661,9 @@ async def twilio_status_callback(
 
     Called when call status changes (initiated, ringing, answered, completed).
     """
+    # Validate Twilio signature
+    await verify_twilio_webhook(request)
+
     log = logger.bind(
         webhook="twilio_status",
         call_sid=call_sid,
@@ -706,6 +718,9 @@ async def twilio_answer_webhook(
     Called when an outbound call is answered by the recipient.
     Returns TwiML to connect to our WebSocket.
     """
+    # Validate Twilio signature
+    await verify_twilio_webhook(request)
+
     log = logger.bind(webhook="twilio_answer", agent_id=agent_id)
     log.info("twilio_outbound_answered")
 
@@ -735,6 +750,9 @@ async def telnyx_voice_webhook(
     This webhook is called when a call comes in to a Telnyx phone number.
     It returns TeXML to connect the call to our WebSocket for AI handling.
     """
+    # Validate Telnyx signature
+    await verify_telnyx_webhook(request)
+
     body = await request.json()
     data = body.get("data", {})
     payload = data.get("payload", {})
@@ -806,6 +824,9 @@ async def telnyx_answer_webhook(
     Called when an outbound call is answered by the recipient.
     Returns TeXML to connect to our WebSocket.
     """
+    # Validate Telnyx signature
+    await verify_telnyx_webhook(request)
+
     log = logger.bind(webhook="telnyx_answer", agent_id=agent_id)
     log.info("telnyx_outbound_answered")
 
@@ -829,6 +850,9 @@ async def telnyx_status_callback(
 
     Called when call events occur (call.initiated, call.answered, call.hangup, etc).
     """
+    # Validate Telnyx signature
+    await verify_telnyx_webhook(request)
+
     body = await request.json()
     data = body.get("data", {})
     event_type = data.get("event_type", "")

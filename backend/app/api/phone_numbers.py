@@ -4,12 +4,13 @@ import uuid
 from datetime import datetime
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import CurrentUser, user_id_to_uuid
+from app.core.limiter import limiter
 from app.db.session import get_db
 from app.models.phone_number import PhoneNumber
 
@@ -245,8 +246,10 @@ async def get_phone_number(
 
 
 @router.post("", response_model=PhoneNumberResponse, status_code=201)
+@limiter.limit("10/minute")  # Rate limit phone number creation
 async def create_phone_number(
     request: CreatePhoneNumberRequest,
+    http_request: Request,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> PhoneNumberResponse:
@@ -305,9 +308,11 @@ async def create_phone_number(
 
 
 @router.put("/{phone_number_id}", response_model=PhoneNumberResponse)
+@limiter.limit("30/minute")  # Rate limit phone number updates
 async def update_phone_number(
     phone_number_id: str,
     request: UpdatePhoneNumberRequest,
+    http_request: Request,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> PhoneNumberResponse:
@@ -388,8 +393,10 @@ async def update_phone_number(
 
 
 @router.delete("/{phone_number_id}", status_code=204)
+@limiter.limit("10/minute")  # Rate limit phone number deletion
 async def delete_phone_number(
     phone_number_id: str,
+    http_request: Request,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> None:

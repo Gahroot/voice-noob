@@ -3,12 +3,13 @@
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import CurrentUser, user_id_to_uuid
+from app.core.limiter import limiter
 from app.db.session import get_db
 from app.models.agent import Agent
 
@@ -106,8 +107,10 @@ class AgentResponse(BaseModel):
 
 
 @router.post("", response_model=AgentResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("20/minute")  # Rate limit agent creation
 async def create_agent(
     request: CreateAgentRequest,
+    http_request: Request,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> AgentResponse:
@@ -236,8 +239,10 @@ async def get_agent(
 
 
 @router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("30/minute")  # Rate limit agent deletion
 async def delete_agent(
     agent_id: str,
+    http_request: Request,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> None:
@@ -271,9 +276,11 @@ async def delete_agent(
 
 
 @router.put("/{agent_id}", response_model=AgentResponse)
+@limiter.limit("60/minute")  # Rate limit agent updates
 async def update_agent(
     agent_id: str,
     request: UpdateAgentRequest,
+    http_request: Request,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> AgentResponse:

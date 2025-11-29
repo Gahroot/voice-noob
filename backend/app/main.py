@@ -40,6 +40,7 @@ from app.core.config import settings
 from app.core.limiter import limiter
 from app.db.redis import close_redis, get_redis
 from app.db.session import engine
+from app.middleware.request_tracing import RequestTracingMiddleware
 from app.middleware.security import SecurityHeadersMiddleware
 
 # Configure structured logging with async processors
@@ -125,6 +126,9 @@ app = FastAPI(
 # Add rate limiting
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
+
+# Add request tracing middleware (runs first, wraps everything)
+app.add_middleware(RequestTracingMiddleware)
 
 # Add security headers middleware
 app.add_middleware(SecurityHeadersMiddleware)
