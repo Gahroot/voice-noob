@@ -4,6 +4,12 @@
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
+function getAuthHeaders(): HeadersInit {
+  if (typeof window === "undefined") return {};
+  const token = localStorage.getItem("access_token");
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 /**
  * Fetch with timeout to prevent hanging requests
  */
@@ -15,9 +21,16 @@ async function fetchWithTimeout(
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
+  // Merge auth headers with any provided headers
+  const headers = {
+    ...getAuthHeaders(),
+    ...(options.headers ?? {}),
+  };
+
   try {
     const response = await fetch(url, {
       ...options,
+      headers,
       signal: controller.signal,
     });
     return response;
@@ -37,6 +50,7 @@ export interface SettingsResponse {
   elevenlabs_api_key_set: boolean;
   telnyx_api_key_set: boolean;
   twilio_account_sid_set: boolean;
+  workspace_id: string | null;
 }
 
 export interface UpdateSettingsRequest {
@@ -49,16 +63,21 @@ export interface UpdateSettingsRequest {
   twilio_auth_token?: string;
 }
 
-export async function fetchSettings(): Promise<SettingsResponse> {
-  const response = await fetchWithTimeout(`${API_BASE}/api/v1/settings`);
+export async function fetchSettings(workspaceId?: string): Promise<SettingsResponse> {
+  const params = workspaceId ? `?workspace_id=${workspaceId}` : "";
+  const response = await fetchWithTimeout(`${API_BASE}/api/v1/settings${params}`);
   if (!response.ok) {
     throw new Error(`Failed to fetch settings: ${response.statusText}`);
   }
   return response.json();
 }
 
-export async function updateSettings(request: UpdateSettingsRequest): Promise<{ message: string }> {
-  const response = await fetchWithTimeout(`${API_BASE}/api/v1/settings`, {
+export async function updateSettings(
+  request: UpdateSettingsRequest,
+  workspaceId?: string
+): Promise<{ message: string }> {
+  const params = workspaceId ? `?workspace_id=${workspaceId}` : "";
+  const response = await fetchWithTimeout(`${API_BASE}/api/v1/settings${params}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

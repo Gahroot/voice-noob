@@ -212,6 +212,11 @@ export default function CallHistoryPage() {
               onValueChange={(value) => {
                 setSelectedWorkspaceId(value);
                 setPage(1);
+                const wsName =
+                  value === "all"
+                    ? "All Workspaces"
+                    : workspaces.find((ws) => ws.id === value)?.name;
+                toast.info(`Switched to ${wsName}`);
               }}
             >
               <SelectTrigger className="h-8 w-[180px] text-sm">

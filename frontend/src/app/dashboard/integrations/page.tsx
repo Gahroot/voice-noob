@@ -172,7 +172,14 @@ export default function IntegrationsPage() {
           {workspaces.length > 0 && (
             <Select
               value={selectedWorkspaceId}
-              onValueChange={(value) => setSelectedWorkspaceId(value)}
+              onValueChange={(value) => {
+                setSelectedWorkspaceId(value);
+                const wsName =
+                  value === "all"
+                    ? "All Workspaces"
+                    : workspaces.find((ws) => ws.id === value)?.name;
+                toast.info(`Switched to ${wsName}`);
+              }}
             >
               <SelectTrigger className="h-8 w-[180px] text-sm">
                 <FolderOpen className="mr-2 h-3.5 w-3.5" />

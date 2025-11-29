@@ -27,10 +27,62 @@ webrtc_router = APIRouter(prefix="/api/v1/realtime", tags=["realtime-webrtc"])
 logger = structlog.get_logger()
 
 
+async def get_openai_api_key_for_workspace(
+    user_uuid: uuid.UUID,
+    workspace_uuid: uuid.UUID,
+    db: AsyncSession,
+    log: structlog.BoundLogger,
+) -> str:
+    """Get OpenAI API key for a workspace.
+
+    Args:
+        user_uuid: User UUID
+        workspace_uuid: Workspace UUID
+        db: Database session
+        log: Logger instance
+
+    Returns:
+        OpenAI API key
+
+    Raises:
+        HTTPException: If no API key is configured
+    """
+    user_settings = await get_user_api_keys(user_uuid, db, workspace_id=workspace_uuid)
+    if user_settings and user_settings.openai_api_key:
+        log.info("using_workspace_openai_key", workspace_id=str(workspace_uuid))
+        return user_settings.openai_api_key
+    if settings.OPENAI_API_KEY:
+        # Global platform key as fallback (for platform-owned agents only)
+        log.info("using_global_openai_key")
+        return settings.OPENAI_API_KEY
+    raise HTTPException(
+        status_code=400,
+        detail="OpenAI API key not configured for this workspace. Please add it in Settings.",
+    )
+
+
+def get_realtime_model_for_tier(pricing_tier: str) -> str:
+    """Get the appropriate Realtime model based on pricing tier.
+
+    Args:
+        pricing_tier: Agent pricing tier
+
+    Returns:
+        OpenAI Realtime model name
+    """
+    # Using latest production gpt-realtime models (released Aug 2025)
+    return (
+        "gpt-4o-mini-realtime-preview-2024-12-17"
+        if pricing_tier == "premium-mini"
+        else "gpt-realtime-2025-08-28"
+    )
+
+
 @router.websocket("/realtime/{agent_id}")
 async def realtime_websocket(
     websocket: WebSocket,
     agent_id: str,
+    workspace_id: str,
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """WebSocket endpoint for GPT Realtime voice calls.
@@ -45,6 +97,7 @@ async def realtime_websocket(
     Args:
         websocket: WebSocket connection
         agent_id: Agent UUID
+        workspace_id: Workspace UUID (required for API key isolation)
         db: Database session
     """
     session_id = str(uuid.uuid4())
@@ -126,6 +179,7 @@ async def realtime_websocket(
             user_id=user_id_int,
             agent_config=agent_config,
             session_id=session_id,
+            workspace_id=uuid.UUID(workspace_id),
         ) as realtime_session:
             # Send ready signal to client
             await websocket.send_json(
@@ -261,6 +315,7 @@ async def _bridge_audio_streams(
 @webrtc_router.post("/session/{agent_id}")
 async def create_webrtc_session(
     agent_id: str,
+    workspace_id: str,
     request: Request,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
@@ -275,6 +330,7 @@ async def create_webrtc_session(
 
     Args:
         agent_id: Agent UUID
+        workspace_id: Workspace UUID (required for API key isolation)
         request: HTTP request containing SDP offer
         current_user: Authenticated user
         db: Database session
@@ -313,12 +369,7 @@ async def create_webrtc_session(
         )
 
     # Determine which model to use based on tier
-    # Using latest production gpt-realtime models (released Aug 2025)
-    realtime_model = (
-        "gpt-4o-mini-realtime-preview-2024-12-17"
-        if agent.pricing_tier == "premium-mini"
-        else "gpt-realtime-2025-08-28"
-    )
+    realtime_model = get_realtime_model_for_tier(agent.pricing_tier)
 
     session_logger.info(
         "agent_loaded",
@@ -329,19 +380,8 @@ async def create_webrtc_session(
     )
 
     # Get OpenAI API key (user_uuid for UserSettings lookup)
-    user_settings = await get_user_api_keys(user_uuid, db)
-    api_key = None
-    if user_settings and user_settings.openai_api_key:
-        api_key = user_settings.openai_api_key
-        session_logger.info("using_user_openai_key")
-    elif settings.OPENAI_API_KEY:
-        api_key = settings.OPENAI_API_KEY
-        session_logger.info("using_global_openai_key")
-    else:
-        raise HTTPException(
-            status_code=400,
-            detail="OpenAI API key not configured. Please add it in Settings.",
-        )
+    workspace_uuid = uuid.UUID(workspace_id)
+    api_key = await get_openai_api_key_for_workspace(user_uuid, workspace_uuid, db, session_logger)
 
     # Build tool definitions (user_id int for Contact queries)
     tool_registry = ToolRegistry(db, user_id)
@@ -424,6 +464,7 @@ async def create_webrtc_session(
 @webrtc_router.get("/token/{agent_id}")
 async def get_ephemeral_token(
     agent_id: str,
+    workspace_id: str,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
@@ -434,6 +475,7 @@ async def get_ephemeral_token(
 
     Args:
         agent_id: Agent UUID
+        workspace_id: Workspace UUID (required for API key isolation)
         current_user: Authenticated user
         db: Database session
 
@@ -466,27 +508,11 @@ async def get_ephemeral_token(
         )
 
     # Determine which model to use based on tier
-    # Using latest production gpt-realtime models (released Aug 2025)
-    realtime_model = (
-        "gpt-4o-mini-realtime-preview-2024-12-17"
-        if agent.pricing_tier == "premium-mini"
-        else "gpt-realtime-2025-08-28"
-    )
+    realtime_model = get_realtime_model_for_tier(agent.pricing_tier)
 
     # Get OpenAI API key (user_uuid for UserSettings lookup)
-    user_settings = await get_user_api_keys(user_uuid, db)
-    api_key = None
-    if user_settings and user_settings.openai_api_key:
-        api_key = user_settings.openai_api_key
-        token_logger.info("using_user_openai_key")
-    elif settings.OPENAI_API_KEY:
-        api_key = settings.OPENAI_API_KEY
-        token_logger.info("using_global_openai_key")
-    else:
-        raise HTTPException(
-            status_code=400,
-            detail="OpenAI API key not configured. Please add it in Settings.",
-        )
+    workspace_uuid = uuid.UUID(workspace_id)
+    api_key = await get_openai_api_key_for_workspace(user_uuid, workspace_uuid, db, token_logger)
 
     # Build minimal session configuration for ephemeral token request
     # The SDK will configure instructions, voice, tools etc. after connection via data channel

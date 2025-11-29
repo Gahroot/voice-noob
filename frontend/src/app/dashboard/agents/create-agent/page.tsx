@@ -49,6 +49,7 @@ import {
   Wrench,
   Settings,
   Play,
+  Wand2,
 } from "lucide-react";
 import { InfoTooltip } from "@/components/ui/info-tooltip";
 import { cn } from "@/lib/utils";
@@ -80,6 +81,47 @@ const REALTIME_VOICES = [
 
 // Get integrations that have tools defined
 const INTEGRATIONS_WITH_TOOLS = AVAILABLE_INTEGRATIONS.filter((i) => i.tools && i.tools.length > 0);
+
+// Best practices system prompt template based on OpenAI's 2025 GPT Realtime guidelines
+const BEST_PRACTICES_PROMPT = `# Role & Identity
+You are a helpful phone assistant for [COMPANY_NAME]. You help customers with questions, support requests, and general inquiries.
+
+# Personality & Tone
+- Warm, concise, and confident—never fawning or overly enthusiastic
+- Keep responses to 2-3 sentences maximum
+- Speak at a steady, unhurried pace
+- Use occasional natural fillers like "let me check that" for conversational flow
+
+# Language Rules
+- ALWAYS respond in the same language the customer uses
+- If audio is unclear, say: "Sorry, I didn't catch that. Could you repeat?"
+- Never switch languages mid-conversation unless asked
+
+# Turn-Taking
+- Wait for the customer to finish speaking before responding
+- Use brief acknowledgments: "Got it," "I understand," "Let me help with that"
+- Vary your responses—never repeat the same phrase twice in a row
+
+# Alphanumeric Handling
+- When reading back phone numbers, spell digit by digit: "4-1-5-5-5-5-1-2-3-4"
+- For confirmation codes, say each character separately
+- Always confirm: "Just to verify, that's [X]. Is that correct?"
+
+# Tool Usage
+- For lookups: Call immediately, say "Let me check that for you"
+- For changes: Confirm first: "I'll update that now. Is that correct?"
+
+# Escalation
+Transfer to a human when:
+- Customer explicitly requests it
+- Customer expresses frustration
+- You cannot resolve their issue after 2 attempts
+- Request is outside your capabilities
+
+# Boundaries
+- Stay focused on [COMPANY_NAME] services
+- If unsure, say: "Let me transfer you to someone who can help with that"
+- Be honest when you don't know something`;
 
 // Helper to get risk level badge variant and icon
 function getRiskLevelBadge(level: "safe" | "moderate" | "high") {
@@ -554,14 +596,26 @@ export default function CreateAgentPage() {
           {step === 3 && (
             <Card>
               <CardContent className="space-y-4 p-6">
-                <div className="mb-2">
-                  <h2 className="flex items-center gap-2 text-lg font-medium">
-                    System Prompt
-                    <InfoTooltip content="The system prompt defines how your agent behaves. Include its role, personality, guidelines, and any rules it should follow. This is the most important setting." />
-                  </h2>
-                  <p className="text-sm text-muted-foreground">
-                    Define your agent&apos;s personality and behavior
-                  </p>
+                <div className="flex items-start justify-between">
+                  <div className="mb-2">
+                    <h2 className="flex items-center gap-2 text-lg font-medium">
+                      System Prompt
+                      <InfoTooltip content="The system prompt defines how your agent behaves. Include its role, personality, guidelines, and any rules it should follow. This is the most important setting." />
+                    </h2>
+                    <p className="text-sm text-muted-foreground">
+                      Define your agent&apos;s personality and behavior
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => form.setValue("systemPrompt", BEST_PRACTICES_PROMPT)}
+                    className="shrink-0"
+                  >
+                    <Wand2 className="mr-1.5 h-3.5 w-3.5" />
+                    Use Best Practices
+                  </Button>
                 </div>
 
                 <FormField
@@ -600,12 +654,13 @@ Guidelines:
 - Keep responses brief and to the point
 - If you don't know something, say so honestly
 - Always offer to escalate to a human if needed`}
-                            className="min-h-[240px] font-mono text-sm"
+                            className="min-h-[300px] font-mono text-sm"
                             {...field}
                           />
                         </FormControl>
                         <FormDescription>
-                          Tell your agent who they are, how to behave, and what rules to follow
+                          Tell your agent who they are, how to behave, and what rules to follow.
+                          Replace [COMPANY_NAME] with your company name.
                         </FormDescription>
                         <FormMessage />
                       </FormItem>

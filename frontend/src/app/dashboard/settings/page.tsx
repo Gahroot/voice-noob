@@ -1,287 +1,313 @@
 "use client";
 
-import { useEffect } from "react";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { useForm } from "react-hook-form";
-import * as z from "zod";
+import { useState, useCallback, memo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { fetchSettings, updateSettings, type UpdateSettingsRequest } from "@/lib/api/settings";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
-  Form,
-  FormControl,
-  FormDescription,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from "@/components/ui/form";
+  fetchSettings,
+  updateSettings,
+  type SettingsResponse,
+  type UpdateSettingsRequest,
+} from "@/lib/api/settings";
+import { api } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Separator } from "@/components/ui/separator";
-import { InfoTooltip } from "@/components/ui/info-tooltip";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  FolderOpen,
+  Check,
+  Settings as SettingsIcon,
+  Loader2,
+  Trash2,
+  Eye,
+  EyeOff,
+  ExternalLink,
+  Brain,
+  Mic,
+  Volume2,
+  Phone,
+} from "lucide-react";
 
-const apiKeysSchema = z.object({
-  openaiApiKey: z.string().optional(),
-  deepgramApiKey: z.string().optional(),
-  elevenLabsApiKey: z.string().optional(),
-  telnyxApiKey: z.string().optional(),
-  twilioAccountSid: z.string().optional(),
-  twilioAuthToken: z.string().optional(),
-});
+interface Workspace {
+  id: string;
+  name: string;
+  description: string | null;
+  is_default: boolean;
+}
 
-type ApiKeysFormValues = z.infer<typeof apiKeysSchema>;
+// Define API key providers with their configuration
+interface ApiKeyProvider {
+  id: string;
+  name: string;
+  description: string;
+  category: "voice-ai" | "telephony";
+  icon: React.ComponentType<{ className?: string }>;
+  documentationUrl: string;
+  fields: {
+    name: keyof UpdateSettingsRequest;
+    label: string;
+    placeholder: string;
+    settingsKey: keyof SettingsResponse;
+  }[];
+}
+
+const API_KEY_PROVIDERS: ApiKeyProvider[] = [
+  {
+    id: "openai",
+    name: "OpenAI",
+    description:
+      "Powers the AI brain of your voice agents with GPT-4o for language understanding and responses.",
+    category: "voice-ai",
+    icon: Brain,
+    documentationUrl: "https://platform.openai.com/api-keys",
+    fields: [
+      {
+        name: "openai_api_key",
+        label: "API Key",
+        placeholder: "sk-...",
+        settingsKey: "openai_api_key_set",
+      },
+    ],
+  },
+  {
+    id: "deepgram",
+    name: "Deepgram",
+    description: "Fast and accurate speech-to-text transcription for real-time voice recognition.",
+    category: "voice-ai",
+    icon: Mic,
+    documentationUrl: "https://console.deepgram.com/",
+    fields: [
+      {
+        name: "deepgram_api_key",
+        label: "API Key",
+        placeholder: "Enter your Deepgram API key",
+        settingsKey: "deepgram_api_key_set",
+      },
+    ],
+  },
+  {
+    id: "elevenlabs",
+    name: "ElevenLabs",
+    description: "Premium text-to-speech synthesis for natural-sounding voice output.",
+    category: "voice-ai",
+    icon: Volume2,
+    documentationUrl: "https://elevenlabs.io/app/settings/api-keys",
+    fields: [
+      {
+        name: "elevenlabs_api_key",
+        label: "API Key",
+        placeholder: "Enter your ElevenLabs API key",
+        settingsKey: "elevenlabs_api_key_set",
+      },
+    ],
+  },
+  {
+    id: "telnyx",
+    name: "Telnyx",
+    description: "Primary telephony provider for phone numbers and call routing.",
+    category: "telephony",
+    icon: Phone,
+    documentationUrl: "https://portal.telnyx.com/#/app/api-keys",
+    fields: [
+      {
+        name: "telnyx_api_key",
+        label: "API Key",
+        placeholder: "KEY...",
+        settingsKey: "telnyx_api_key_set",
+      },
+    ],
+  },
+  {
+    id: "twilio",
+    name: "Twilio",
+    description: "Alternative telephony provider for phone numbers and messaging.",
+    category: "telephony",
+    icon: Phone,
+    documentationUrl: "https://console.twilio.com/",
+    fields: [
+      {
+        name: "twilio_account_sid",
+        label: "Account SID",
+        placeholder: "AC...",
+        settingsKey: "twilio_account_sid_set",
+      },
+      {
+        name: "twilio_auth_token",
+        label: "Auth Token",
+        placeholder: "Enter your Auth Token",
+        settingsKey: "twilio_account_sid_set", // Using same key since both are required
+      },
+    ],
+  },
+];
 
 export default function SettingsPage() {
-  const queryClient = useQueryClient();
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>("user");
 
-  // Fetch existing settings
+  // Fetch workspaces
+  const { data: workspaces = [] } = useQuery<Workspace[]>({
+    queryKey: ["workspaces"],
+    queryFn: async () => {
+      const response = await api.get("/api/v1/workspaces");
+      return response.data;
+    },
+  });
+
+  // Fetch existing settings for selected workspace
   const { data: settings } = useQuery({
-    queryKey: ["settings"],
-    queryFn: fetchSettings,
+    queryKey: ["settings", selectedWorkspaceId],
+    queryFn: () => fetchSettings(selectedWorkspaceId === "user" ? undefined : selectedWorkspaceId),
   });
 
-  const form = useForm<ApiKeysFormValues>({
-    resolver: zodResolver(apiKeysSchema),
-    defaultValues: {
-      openaiApiKey: "",
-      deepgramApiKey: "",
-      elevenLabsApiKey: "",
-      telnyxApiKey: "",
-      twilioAccountSid: "",
-      twilioAuthToken: "",
-    },
-  });
+  const voiceAiProviders = API_KEY_PROVIDERS.filter((p) => p.category === "voice-ai");
+  const telephonyProviders = API_KEY_PROVIDERS.filter((p) => p.category === "telephony");
 
-  // Show placeholders for keys that are set (we don't receive actual values for security)
-  useEffect(() => {
-    if (settings) {
-      // Reset form to show placeholder text for already-set keys
-      form.reset({
-        openaiApiKey: settings.openai_api_key_set ? "••••••••" : "",
-        deepgramApiKey: settings.deepgram_api_key_set ? "••••••••" : "",
-        elevenLabsApiKey: settings.elevenlabs_api_key_set ? "••••••••" : "",
-        telnyxApiKey: settings.telnyx_api_key_set ? "••••••••" : "",
-        twilioAccountSid: settings.twilio_account_sid_set ? "••••••••" : "",
-        twilioAuthToken: "",
-      });
-    }
-  }, [settings, form]);
-
-  const updateMutation = useMutation({
-    mutationFn: updateSettings,
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["settings"] });
-      toast.success("Settings saved successfully!");
-    },
-    onError: (error: Error) => {
-      toast.error(`Failed to save settings: ${error.message}`);
-    },
-  });
-
-  const handleSubmit = (data: ApiKeysFormValues) => {
-    // Filter out placeholder values (don't send "••••••••" back to the server)
-    const request: UpdateSettingsRequest = {
-      openai_api_key: data.openaiApiKey === "••••••••" ? undefined : data.openaiApiKey,
-      deepgram_api_key: data.deepgramApiKey === "••••••••" ? undefined : data.deepgramApiKey,
-      elevenlabs_api_key: data.elevenLabsApiKey === "••••••••" ? undefined : data.elevenLabsApiKey,
-      telnyx_api_key: data.telnyxApiKey === "••••••••" ? undefined : data.telnyxApiKey,
-      twilio_account_sid: data.twilioAccountSid === "••••••••" ? undefined : data.twilioAccountSid,
-      twilio_auth_token: data.twilioAuthToken,
-    };
-    updateMutation.mutate(request);
-  };
+  const connectedCount = API_KEY_PROVIDERS.filter((provider) =>
+    provider.fields.some((field) => settings?.[field.settingsKey])
+  ).length;
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-semibold">Settings</h1>
-        <p className="text-sm text-muted-foreground">
-          Configure your platform settings and API keys
-        </p>
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-semibold">Settings</h1>
+          <p className="text-sm text-muted-foreground">
+            Configure your platform settings and API keys
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Select
+            value={selectedWorkspaceId}
+            onValueChange={(value) => {
+              setSelectedWorkspaceId(value);
+              const wsName =
+                value === "user" ? "User Default" : workspaces.find((ws) => ws.id === value)?.name;
+              toast.info(`Switched to ${wsName}`);
+            }}
+          >
+            <SelectTrigger className="h-8 w-[200px] text-sm">
+              <FolderOpen className="mr-2 h-3.5 w-3.5" />
+              <SelectValue placeholder="User Default" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="user">User Default</SelectItem>
+              {workspaces.map((ws) => (
+                <SelectItem key={ws.id} value={ws.id}>
+                  {ws.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       <Tabs defaultValue="api-keys" className="w-full">
-        <TabsList>
-          <TabsTrigger value="api-keys">API Keys</TabsTrigger>
-          <TabsTrigger value="profile">Profile</TabsTrigger>
-          <TabsTrigger value="billing">Billing</TabsTrigger>
-        </TabsList>
+        <div className="flex items-center justify-between">
+          <TabsList>
+            <TabsTrigger value="api-keys">API Keys</TabsTrigger>
+            <TabsTrigger value="profile">Profile</TabsTrigger>
+            <TabsTrigger value="billing">Billing</TabsTrigger>
+          </TabsList>
+          <div className="flex items-center gap-2">
+            <Badge variant="secondary" className="font-normal">
+              {connectedCount} Connected
+            </Badge>
+            <Badge variant="outline" className="font-normal">
+              {API_KEY_PROVIDERS.length} Available
+            </Badge>
+          </div>
+        </div>
 
-        <TabsContent value="api-keys" className="mt-6 space-y-4">
-          <Form {...form}>
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                void form.handleSubmit(handleSubmit)();
-              }}
-              className="space-y-6"
-            >
-              <Card>
-                <CardHeader>
-                  <CardTitle>Voice & AI Services</CardTitle>
-                  <CardDescription>Configure API keys for voice and AI providers</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <FormField
-                    control={form.control}
-                    name="openaiApiKey"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="flex items-center gap-1">
-                          OpenAI API Key
-                          <InfoTooltip content="Powers the AI brain of your voice agents. Get your key from platform.openai.com. Required for GPT-4o and language understanding." />
-                        </FormLabel>
-                        <FormControl>
-                          <Input type="password" placeholder="sk-..." {...field} />
-                        </FormControl>
-                        <FormDescription>
-                          Required for GPT-4 and language understanding
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+        <TabsContent value="api-keys" className="mt-6 space-y-8">
+          {/* Voice & AI Providers Section */}
+          <div className="space-y-4">
+            <div>
+              <h2 className="text-lg font-medium">Voice & AI Providers</h2>
+              <p className="text-sm text-muted-foreground">
+                Configure speech recognition, text-to-speech, and language model providers
+              </p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {voiceAiProviders.map((provider) => (
+                <ApiKeyCard
+                  key={provider.id}
+                  provider={provider}
+                  settings={settings}
+                  selectedWorkspaceId={
+                    selectedWorkspaceId === "user" ? undefined : selectedWorkspaceId
+                  }
+                />
+              ))}
+            </div>
+          </div>
 
-                  <FormField
-                    control={form.control}
-                    name="deepgramApiKey"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="flex items-center gap-1">
-                          Deepgram API Key
-                          <InfoTooltip content="Converts speech to text in real-time. Deepgram offers fast, accurate transcription for voice agents. Get your key from console.deepgram.com." />
-                        </FormLabel>
-                        <FormControl>
-                          <Input type="password" placeholder="••••••••" {...field} />
-                        </FormControl>
-                        <FormDescription>For speech-to-text transcription</FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="elevenLabsApiKey"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="flex items-center gap-1">
-                          ElevenLabs API Key
-                          <InfoTooltip content="Creates natural-sounding voice output for your agents. ElevenLabs provides premium voice quality. Get your key from elevenlabs.io." />
-                        </FormLabel>
-                        <FormControl>
-                          <Input type="password" placeholder="••••••••" {...field} />
-                        </FormControl>
-                        <FormDescription>
-                          For natural text-to-speech voice synthesis
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>Telephony Providers</CardTitle>
-                  <CardDescription>Configure phone number providers</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <FormField
-                    control={form.control}
-                    name="telnyxApiKey"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="flex items-center gap-1">
-                          Telnyx API Key
-                          <InfoTooltip content="Handles phone calls for your voice agents. Telnyx provides phone numbers and call routing. Get your key from portal.telnyx.com." />
-                        </FormLabel>
-                        <FormControl>
-                          <Input type="password" placeholder="KEY..." {...field} />
-                        </FormControl>
-                        <FormDescription>Primary telephony provider (recommended)</FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <Separator />
-
-                  <div className="space-y-4">
-                    <div className="flex items-center gap-1 text-sm font-medium">
-                      Twilio (Optional)
-                      <InfoTooltip content="Alternative telephony provider. Use Twilio if you already have an account or prefer their service. Both Account SID and Auth Token are required." />
-                    </div>
-                    <FormField
-                      control={form.control}
-                      name="twilioAccountSid"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel className="flex items-center gap-1">
-                            Account SID
-                            <InfoTooltip content="Your Twilio Account SID starts with 'AC'. Find it on your Twilio Console dashboard." />
-                          </FormLabel>
-                          <FormControl>
-                            <Input type="password" placeholder="AC..." {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-
-                    <FormField
-                      control={form.control}
-                      name="twilioAuthToken"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel className="flex items-center gap-1">
-                            Auth Token
-                            <InfoTooltip content="Your Twilio Auth Token is used to authenticate API requests. Keep this secret and never share it publicly." />
-                          </FormLabel>
-                          <FormControl>
-                            <Input type="password" placeholder="••••••••" {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </div>
-                </CardContent>
-              </Card>
-
-              <div className="flex justify-end">
-                <Button type="submit" disabled={updateMutation.isPending}>
-                  {updateMutation.isPending ? "Saving..." : "Save Settings"}
-                </Button>
-              </div>
-            </form>
-          </Form>
+          {/* Telephony Providers Section */}
+          <div className="space-y-4">
+            <div>
+              <h2 className="text-lg font-medium">Telephony Providers</h2>
+              <p className="text-sm text-muted-foreground">
+                Configure phone number and call routing providers
+              </p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {telephonyProviders.map((provider) => (
+                <ApiKeyCard
+                  key={provider.id}
+                  provider={provider}
+                  settings={settings}
+                  selectedWorkspaceId={
+                    selectedWorkspaceId === "user" ? undefined : selectedWorkspaceId
+                  }
+                />
+              ))}
+            </div>
+          </div>
         </TabsContent>
 
         <TabsContent value="profile" className="mt-6 space-y-4">
           <Card>
-            <CardHeader>
-              <CardTitle>Profile Settings</CardTitle>
-              <CardDescription>Manage your account information</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-muted-foreground">Profile settings coming soon...</p>
+            <CardContent className="flex flex-col items-center justify-center py-16">
+              <SettingsIcon className="mb-4 h-16 w-16 text-muted-foreground/50" />
+              <h3 className="mb-2 text-lg font-semibold">Profile Settings</h3>
+              <p className="text-sm text-muted-foreground">Coming soon...</p>
             </CardContent>
           </Card>
         </TabsContent>
 
         <TabsContent value="billing" className="mt-6 space-y-4">
           <Card>
-            <CardHeader>
-              <CardTitle>Billing & Usage</CardTitle>
-              <CardDescription>View your usage and manage billing</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-muted-foreground">Billing information coming soon...</p>
+            <CardContent className="flex flex-col items-center justify-center py-16">
+              <SettingsIcon className="mb-4 h-16 w-16 text-muted-foreground/50" />
+              <h3 className="mb-2 text-lg font-semibold">Billing & Usage</h3>
+              <p className="text-sm text-muted-foreground">Coming soon...</p>
             </CardContent>
           </Card>
         </TabsContent>
@@ -289,3 +315,283 @@ export default function SettingsPage() {
     </div>
   );
 }
+
+const ApiKeyCard = memo(function ApiKeyCard({
+  provider,
+  settings,
+  selectedWorkspaceId,
+}: {
+  provider: ApiKeyProvider;
+  settings?: SettingsResponse;
+  selectedWorkspaceId?: string;
+}) {
+  const [isConfigDialogOpen, setIsConfigDialogOpen] = useState(false);
+  const Icon = provider.icon;
+  const isConnected = provider.fields.some((field) => settings?.[field.settingsKey]);
+
+  return (
+    <Card className="group transition-all hover:border-primary/50">
+      <CardContent className="p-4">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex items-center gap-2.5 overflow-hidden">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/10">
+              <Icon className="h-4 w-4 text-primary" />
+            </div>
+            <div className="min-w-0">
+              <h3 className="truncate text-sm font-medium">{provider.name}</h3>
+              <p className="text-xs text-muted-foreground">
+                {provider.category === "voice-ai" ? "Voice & AI" : "Telephony"}
+              </p>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {isConnected && <Check className="h-4 w-4 text-green-500" />}
+          </div>
+        </div>
+
+        <p className="mt-2.5 line-clamp-2 min-h-[2lh] text-xs text-muted-foreground">
+          {provider.description}
+        </p>
+
+        <div className="mt-3 flex gap-2 border-t border-border/50 pt-3">
+          <Dialog open={isConfigDialogOpen} onOpenChange={setIsConfigDialogOpen}>
+            <DialogTrigger asChild>
+              <Button
+                variant={isConnected ? "ghost" : "default"}
+                size="sm"
+                className="h-7 flex-1 text-xs"
+              >
+                {isConnected ? (
+                  <>
+                    <SettingsIcon className="mr-1 h-3 w-3" />
+                    Configure
+                  </>
+                ) : (
+                  "Connect"
+                )}
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <Icon className="h-5 w-5" />
+                  {isConnected ? `Configure ${provider.name}` : `Connect ${provider.name}`}
+                </DialogTitle>
+                <DialogDescription>Enter your API credentials below</DialogDescription>
+              </DialogHeader>
+              <ApiKeyConfigForm
+                provider={provider}
+                isConnected={isConnected}
+                selectedWorkspaceId={selectedWorkspaceId}
+                onClose={() => setIsConfigDialogOpen(false)}
+              />
+            </DialogContent>
+          </Dialog>
+          <Button variant="ghost" size="sm" className="h-7 text-xs" asChild>
+            <a href={provider.documentationUrl} target="_blank" rel="noopener noreferrer">
+              <ExternalLink className="mr-1 h-3 w-3" />
+              Docs
+            </a>
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+});
+
+const ApiKeyConfigForm = memo(function ApiKeyConfigForm({
+  provider,
+  isConnected,
+  selectedWorkspaceId,
+  onClose,
+}: {
+  provider: ApiKeyProvider;
+  isConnected: boolean;
+  selectedWorkspaceId?: string;
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [credentials, setCredentials] = useState<Record<string, string>>({});
+  const [showPasswords, setShowPasswords] = useState<Record<string, boolean>>({});
+  const [showDisconnectDialog, setShowDisconnectDialog] = useState(false);
+
+  const updateMutation = useMutation({
+    mutationFn: async () => {
+      const request: UpdateSettingsRequest = {};
+      provider.fields.forEach((field) => {
+        const value = credentials[field.name];
+        if (value && value !== "••••••••") {
+          request[field.name] = value;
+        }
+      });
+      return updateSettings(request, selectedWorkspaceId);
+    },
+    onSuccess: () => {
+      toast.success(`${provider.name} updated successfully`);
+      void queryClient.invalidateQueries({ queryKey: ["settings"] });
+      onClose();
+    },
+    onError: (error: Error) => {
+      toast.error(error.message ?? `Failed to update ${provider.name}`);
+    },
+  });
+
+  const clearMutation = useMutation({
+    mutationFn: async () => {
+      const request: UpdateSettingsRequest = {};
+      provider.fields.forEach((field) => {
+        request[field.name] = "";
+      });
+      return updateSettings(request, selectedWorkspaceId);
+    },
+    onSuccess: () => {
+      toast.success(`${provider.name} disconnected`);
+      void queryClient.invalidateQueries({ queryKey: ["settings"] });
+      setShowDisconnectDialog(false);
+      onClose();
+    },
+    onError: (error: Error) => {
+      toast.error(error.message ?? `Failed to disconnect ${provider.name}`);
+    },
+  });
+
+  const handleFieldChange = useCallback((fieldName: string, value: string) => {
+    setCredentials((prev) => ({ ...prev, [fieldName]: value }));
+  }, []);
+
+  const togglePasswordVisibility = useCallback((fieldName: string) => {
+    setShowPasswords((prev) => ({ ...prev, [fieldName]: !prev[fieldName] }));
+  }, []);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+
+    // Validate required fields (at least one field must have a value)
+    const hasValue = provider.fields.some((field) => {
+      const value = credentials[field.name];
+      return value?.trim() && value !== "••••••••";
+    });
+
+    if (!hasValue && !isConnected) {
+      toast.error("Please enter at least one credential");
+      return;
+    }
+
+    updateMutation.mutate();
+  };
+
+  const isLoading = updateMutation.isPending;
+
+  return (
+    <>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {/* Show connection status if already connected */}
+        {isConnected && (
+          <div className="rounded-lg border border-green-500/20 bg-green-500/10 p-3">
+            <div className="flex items-center gap-2 text-green-600 dark:text-green-400">
+              <Check className="h-4 w-4" />
+              <span className="text-sm font-medium">Connected</span>
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Enter new credentials to update, or leave blank to keep existing.
+            </p>
+          </div>
+        )}
+
+        {/* Credential fields */}
+        {provider.fields.map((field) => (
+          <div key={field.name} className="space-y-2">
+            <Label htmlFor={field.name} className="text-sm">
+              {field.label}
+            </Label>
+            <div className="relative">
+              <Input
+                id={field.name}
+                type={showPasswords[field.name] ? "text" : "password"}
+                placeholder={isConnected ? "••••••••" : field.placeholder}
+                value={credentials[field.name] ?? ""}
+                onChange={(e) => handleFieldChange(field.name, e.target.value)}
+                className="pr-10"
+              />
+              <button
+                type="button"
+                onClick={() => togglePasswordVisibility(field.name)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                {showPasswords[field.name] ? (
+                  <EyeOff className="h-4 w-4" />
+                ) : (
+                  <Eye className="h-4 w-4" />
+                )}
+              </button>
+            </div>
+          </div>
+        ))}
+
+        {/* Documentation link */}
+        <div className="rounded-lg border bg-muted/50 p-3">
+          <p className="text-xs text-muted-foreground">
+            Need help finding your API key?{" "}
+            <a
+              href={provider.documentationUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-medium text-primary hover:underline"
+            >
+              Visit {provider.name} documentation
+              <ExternalLink className="ml-1 inline h-3 w-3" />
+            </a>
+          </p>
+        </div>
+
+        {/* Action buttons */}
+        <div className="flex gap-2 pt-2">
+          {isConnected ? (
+            <>
+              <Button type="submit" className="flex-1" disabled={isLoading}>
+                {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Update Credentials
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                onClick={() => setShowDisconnectDialog(true)}
+                disabled={clearMutation.isPending}
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </>
+          ) : (
+            <Button type="submit" className="w-full" disabled={isLoading}>
+              {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Connect
+            </Button>
+          )}
+        </div>
+      </form>
+
+      {/* Disconnect confirmation dialog */}
+      <AlertDialog open={showDisconnectDialog} onOpenChange={setShowDisconnectDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Disconnect {provider.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will remove your stored API credentials. Any agents using this service will no
+              longer function properly.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => clearMutation.mutate()}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {clearMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Disconnect
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  );
+});

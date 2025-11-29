@@ -316,7 +316,17 @@ export default function AppointmentsPage() {
         </div>
         <div className="flex items-center gap-3">
           {workspaces.length > 0 ? (
-            <Select value={selectedWorkspaceId} onValueChange={setSelectedWorkspaceId}>
+            <Select
+              value={selectedWorkspaceId}
+              onValueChange={(value) => {
+                setSelectedWorkspaceId(value);
+                const wsName =
+                  value === "all"
+                    ? "All Workspaces"
+                    : workspaces.find((ws) => ws.id === value)?.name;
+                toast.info(`Switched to ${wsName}`);
+              }}
+            >
               <SelectTrigger className="h-8 w-[180px] text-sm">
                 <FolderOpen className="mr-2 h-3.5 w-3.5" />
                 <SelectValue placeholder="All Workspaces" />

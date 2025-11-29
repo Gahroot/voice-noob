@@ -119,6 +119,7 @@ class GPTRealtimeSession:
         user_id: int,
         agent_config: dict[str, Any],
         session_id: str | None = None,
+        workspace_id: uuid.UUID | None = None,
     ) -> None:
         """Initialize GPT Realtime session.
 
@@ -127,10 +128,12 @@ class GPTRealtimeSession:
             user_id: User ID (int, from users.id)
             agent_config: Agent configuration (system prompt, enabled integrations, etc.)
             session_id: Optional session ID
+            workspace_id: Workspace UUID (required for API key isolation)
         """
         self.db = db
         self.user_id = user_id  # int for ToolRegistry (Contact queries)
         self.user_id_uuid = user_id_to_uuid(user_id)  # UUID for UserSettings queries
+        self.workspace_id = workspace_id  # For workspace-isolated API key lookup
         self.agent_config = agent_config
         self.session_id = session_id or str(uuid.uuid4())
         self.connection: Any = None
@@ -140,6 +143,7 @@ class GPTRealtimeSession:
             component="gpt_realtime",
             session_id=self.session_id,
             user_id=str(user_id),
+            workspace_id=str(workspace_id) if workspace_id else None,
         )
 
     async def initialize(self) -> None:
@@ -147,19 +151,23 @@ class GPTRealtimeSession:
         self.logger.info("gpt_realtime_session_initializing")
 
         # Get user's API keys from settings (uses UUID)
-        user_settings = await get_user_api_keys(self.user_id_uuid, self.db)
+        # Workspace isolation: only use workspace-specific API keys, no fallback
+        user_settings = await get_user_api_keys(
+            self.user_id_uuid, self.db, workspace_id=self.workspace_id
+        )
 
         # Determine which API key to use (user settings or global config)
         api_key = None
         if user_settings and user_settings.openai_api_key:
             api_key = user_settings.openai_api_key
-            self.logger.info("using_user_openai_key")
+            self.logger.info("using_workspace_openai_key")
         elif settings.OPENAI_API_KEY:
+            # Global platform key as fallback (for platform-owned agents only)
             api_key = settings.OPENAI_API_KEY
             self.logger.info("using_global_openai_key")
         else:
             raise ValueError(
-                "OpenAI API key not configured. Please add it in Settings or backend .env file."
+                "OpenAI API key not configured for this workspace. Please add it in Settings."
             )
 
         # Initialize OpenAI client with user's or global API key

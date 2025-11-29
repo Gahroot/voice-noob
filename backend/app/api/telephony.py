@@ -94,10 +94,18 @@ class CallResponse(BaseModel):
 # =============================================================================
 
 
-async def get_twilio_service(user_id: int, db: AsyncSession) -> TwilioService | None:
-    """Get Twilio service for a user."""
+async def get_twilio_service(
+    user_id: int, db: AsyncSession, workspace_id: uuid.UUID | None = None
+) -> TwilioService | None:
+    """Get Twilio service for a user.
+
+    Args:
+        user_id: User ID (int)
+        db: Database session
+        workspace_id: Workspace UUID (required for workspace-specific API keys)
+    """
     user_uuid = user_id_to_uuid(user_id)
-    user_settings = await get_user_api_keys(user_uuid, db)
+    user_settings = await get_user_api_keys(user_uuid, db, workspace_id=workspace_id)
 
     if (
         not user_settings
@@ -112,10 +120,18 @@ async def get_twilio_service(user_id: int, db: AsyncSession) -> TwilioService | 
     )
 
 
-async def get_telnyx_service(user_id: int, db: AsyncSession) -> TelnyxService | None:
-    """Get Telnyx service for a user."""
+async def get_telnyx_service(
+    user_id: int, db: AsyncSession, workspace_id: uuid.UUID | None = None
+) -> TelnyxService | None:
+    """Get Telnyx service for a user.
+
+    Args:
+        user_id: User ID (int)
+        db: Database session
+        workspace_id: Workspace UUID (required for workspace-specific API keys)
+    """
     user_uuid = user_id_to_uuid(user_id)
-    user_settings = await get_user_api_keys(user_uuid, db)
+    user_settings = await get_user_api_keys(user_uuid, db, workspace_id=workspace_id)
 
     if not user_settings or not user_settings.telnyx_api_key:
         return None
@@ -151,6 +167,7 @@ async def list_phone_numbers(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
     provider: str = Query("twilio", description="Provider: twilio or telnyx"),
+    workspace_id: str = Query(..., description="Workspace ID for API key isolation"),
 ) -> list[PhoneNumberResponse]:
     """List all phone numbers for the user's account.
 
@@ -158,24 +175,31 @@ async def list_phone_numbers(
         provider: Telephony provider (twilio or telnyx)
         current_user: Authenticated user
         db: Database session
+        workspace_id: Workspace ID for workspace-specific API keys
 
     Returns:
         List of phone numbers
     """
-    log = logger.bind(user_id=current_user.id, provider=provider)
+    log = logger.bind(user_id=current_user.id, provider=provider, workspace_id=workspace_id)
     log.info("listing_phone_numbers")
+
+    # Parse workspace_id
+    try:
+        workspace_uuid = uuid.UUID(workspace_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="Invalid workspace_id format") from e
 
     numbers: list[PhoneNumber] = []
 
     if provider == "twilio":
-        twilio_service = await get_twilio_service(current_user.id, db)
+        twilio_service = await get_twilio_service(current_user.id, db, workspace_id=workspace_uuid)
         if not twilio_service:
             # Return empty list when credentials not configured (not an error)
             return []
         numbers = await twilio_service.list_phone_numbers()
 
     elif provider == "telnyx":
-        telnyx_service = await get_telnyx_service(current_user.id, db)
+        telnyx_service = await get_telnyx_service(current_user.id, db, workspace_id=workspace_uuid)
         if not telnyx_service:
             # Return empty list when credentials not configured (not an error)
             return []
@@ -203,6 +227,7 @@ async def search_phone_numbers(
     request: SearchPhoneNumbersRequest,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
+    workspace_id: str = Query(..., description="Workspace ID for API key isolation"),
 ) -> list[PhoneNumberResponse]:
     """Search for available phone numbers to purchase.
 
@@ -210,17 +235,24 @@ async def search_phone_numbers(
         request: Search parameters
         current_user: Authenticated user
         db: Database session
+        workspace_id: Workspace ID for workspace-specific API keys
 
     Returns:
         List of available phone numbers
     """
-    log = logger.bind(user_id=current_user.id, provider=request.provider)
+    log = logger.bind(user_id=current_user.id, provider=request.provider, workspace_id=workspace_id)
     log.info("searching_phone_numbers", country=request.country, area_code=request.area_code)
+
+    # Parse workspace_id
+    try:
+        workspace_uuid = uuid.UUID(workspace_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="Invalid workspace_id format") from e
 
     numbers: list[PhoneNumber] = []
 
     if request.provider == "twilio":
-        twilio_service = await get_twilio_service(current_user.id, db)
+        twilio_service = await get_twilio_service(current_user.id, db, workspace_id=workspace_uuid)
         if not twilio_service:
             raise HTTPException(
                 status_code=400,
@@ -234,7 +266,7 @@ async def search_phone_numbers(
         )
 
     elif request.provider == "telnyx":
-        telnyx_service = await get_telnyx_service(current_user.id, db)
+        telnyx_service = await get_telnyx_service(current_user.id, db, workspace_id=workspace_uuid)
         if not telnyx_service:
             raise HTTPException(
                 status_code=400,
@@ -267,6 +299,7 @@ async def purchase_phone_number(
     request: PurchasePhoneNumberRequest,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
+    workspace_id: str = Query(..., description="Workspace ID for API key isolation"),
 ) -> PhoneNumberResponse:
     """Purchase a phone number.
 
@@ -274,17 +307,24 @@ async def purchase_phone_number(
         request: Purchase request with provider and phone number
         current_user: Authenticated user
         db: Database session
+        workspace_id: Workspace ID for workspace-specific API keys
 
     Returns:
         Purchased phone number details
     """
-    log = logger.bind(user_id=current_user.id, provider=request.provider)
+    log = logger.bind(user_id=current_user.id, provider=request.provider, workspace_id=workspace_id)
     log.info("purchasing_phone_number", phone_number=request.phone_number)
+
+    # Parse workspace_id
+    try:
+        workspace_uuid = uuid.UUID(workspace_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="Invalid workspace_id format") from e
 
     number: PhoneNumber
 
     if request.provider == "twilio":
-        twilio_service = await get_twilio_service(current_user.id, db)
+        twilio_service = await get_twilio_service(current_user.id, db, workspace_id=workspace_uuid)
         if not twilio_service:
             raise HTTPException(
                 status_code=400,
@@ -293,7 +333,7 @@ async def purchase_phone_number(
         number = await twilio_service.purchase_phone_number(request.phone_number)
 
     elif request.provider == "telnyx":
-        telnyx_service = await get_telnyx_service(current_user.id, db)
+        telnyx_service = await get_telnyx_service(current_user.id, db, workspace_id=workspace_uuid)
         if not telnyx_service:
             raise HTTPException(
                 status_code=400,
@@ -319,6 +359,7 @@ async def release_phone_number(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
     provider: str = Query(..., description="Provider: twilio or telnyx"),
+    workspace_id: str = Query(..., description="Workspace ID for API key isolation"),
 ) -> dict[str, str]:
     """Release a phone number.
 
@@ -327,17 +368,24 @@ async def release_phone_number(
         provider: Telephony provider
         current_user: Authenticated user
         db: Database session
+        workspace_id: Workspace ID for workspace-specific API keys
 
     Returns:
         Success message
     """
-    log = logger.bind(user_id=current_user.id, provider=provider)
+    log = logger.bind(user_id=current_user.id, provider=provider, workspace_id=workspace_id)
     log.info("releasing_phone_number", phone_number_id=phone_number_id)
+
+    # Parse workspace_id
+    try:
+        workspace_uuid = uuid.UUID(workspace_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="Invalid workspace_id format") from e
 
     success = False
 
     if provider == "twilio":
-        twilio_service = await get_twilio_service(current_user.id, db)
+        twilio_service = await get_twilio_service(current_user.id, db, workspace_id=workspace_uuid)
         if not twilio_service:
             raise HTTPException(
                 status_code=400,
@@ -346,7 +394,7 @@ async def release_phone_number(
         success = await twilio_service.release_phone_number(phone_number_id)
 
     elif provider == "telnyx":
-        telnyx_service = await get_telnyx_service(current_user.id, db)
+        telnyx_service = await get_telnyx_service(current_user.id, db, workspace_id=workspace_uuid)
         if not telnyx_service:
             raise HTTPException(
                 status_code=400,
@@ -374,6 +422,7 @@ async def initiate_call(
     http_request: Request,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
+    workspace_id: str = Query(..., description="Workspace ID for API key isolation"),
 ) -> CallResponse:
     """Initiate an outbound call.
 
@@ -382,12 +431,19 @@ async def initiate_call(
         http_request: HTTP request for building webhook URLs
         current_user: Authenticated user
         db: Database session
+        workspace_id: Workspace ID for workspace-specific API keys
 
     Returns:
         Call details
     """
-    log = logger.bind(user_id=current_user.id, agent_id=request.agent_id)
+    log = logger.bind(user_id=current_user.id, agent_id=request.agent_id, workspace_id=workspace_id)
     log.info("initiating_call", to=request.to_number, from_=request.from_number)
+
+    # Parse workspace_id
+    try:
+        workspace_uuid = uuid.UUID(workspace_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="Invalid workspace_id format") from e
 
     # Load agent to get provider preference
     result = await db.execute(select(Agent).where(Agent.id == uuid.UUID(request.agent_id)))
@@ -401,8 +457,8 @@ async def initiate_call(
     provider = "telnyx"
 
     # Try Telnyx first
-    telnyx_service = await get_telnyx_service(current_user.id, db)
-    twilio_service = await get_twilio_service(current_user.id, db)
+    telnyx_service = await get_telnyx_service(current_user.id, db, workspace_id=workspace_uuid)
+    twilio_service = await get_twilio_service(current_user.id, db, workspace_id=workspace_uuid)
 
     if not telnyx_service and not twilio_service:
         raise HTTPException(
@@ -467,6 +523,7 @@ async def hangup_call(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
     provider: str = Query(..., description="Provider: twilio or telnyx"),
+    workspace_id: str = Query(..., description="Workspace ID for API key isolation"),
 ) -> dict[str, str]:
     """Hang up an active call.
 
@@ -475,22 +532,31 @@ async def hangup_call(
         provider: Telephony provider
         current_user: Authenticated user
         db: Database session
+        workspace_id: Workspace ID for workspace-specific API keys
 
     Returns:
         Success message
     """
-    log = logger.bind(user_id=current_user.id, call_id=call_id, provider=provider)
+    log = logger.bind(
+        user_id=current_user.id, call_id=call_id, provider=provider, workspace_id=workspace_id
+    )
     log.info("hanging_up_call")
+
+    # Parse workspace_id
+    try:
+        workspace_uuid = uuid.UUID(workspace_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="Invalid workspace_id format") from e
 
     success = False
 
     if provider == "twilio":
-        twilio_service = await get_twilio_service(current_user.id, db)
+        twilio_service = await get_twilio_service(current_user.id, db, workspace_id=workspace_uuid)
         if twilio_service:
             success = await twilio_service.hangup_call(call_id)
 
     elif provider == "telnyx":
-        telnyx_service = await get_telnyx_service(current_user.id, db)
+        telnyx_service = await get_telnyx_service(current_user.id, db, workspace_id=workspace_uuid)
         if telnyx_service:
             success = await telnyx_service.hangup_call(call_id)
 
