@@ -429,8 +429,38 @@ class CRMTools:
                     "error": f"No contact found with phone {contact_phone}. Please create contact first.",
                 }
 
-            # Parse datetime
+            # Parse datetime and handle timezone
             appointment_time = datetime.fromisoformat(scheduled_at.replace("Z", "+00:00"))
+
+            # If datetime is naive (no timezone), interpret it in workspace timezone
+            if appointment_time.tzinfo is None and self.workspace_id:
+                from zoneinfo import ZoneInfo
+
+                from app.models.workspace import Workspace
+
+                # Get workspace timezone
+                ws_result = await self.db.execute(
+                    select(Workspace).where(Workspace.id == self.workspace_id)
+                )
+                workspace = ws_result.scalar_one_or_none()
+                if workspace and workspace.settings:
+                    tz_name = workspace.settings.get("timezone", "UTC")
+                    try:
+                        tz = ZoneInfo(tz_name)
+                        # Interpret the naive datetime as being in workspace timezone
+                        appointment_time = appointment_time.replace(tzinfo=tz)
+                        self.logger.info(
+                            "interpreted_naive_datetime",
+                            original=scheduled_at,
+                            timezone=tz_name,
+                            result=appointment_time.isoformat(),
+                        )
+                    except Exception as tz_error:
+                        self.logger.warning(
+                            "timezone_conversion_failed",
+                            timezone=tz_name,
+                            error=str(tz_error),
+                        )
 
             # Create appointment (inherit workspace_id from contact)
             appointment = Appointment(

@@ -48,11 +48,20 @@ import { api } from "@/lib/api";
 import { toast } from "sonner";
 import Link from "next/link";
 
+interface WorkspaceSettings {
+  timezone?: string;
+  booking_buffer_minutes?: number;
+  max_advance_booking_days?: number;
+  default_appointment_duration?: number;
+  allow_same_day_booking?: boolean;
+}
+
 interface Workspace {
   id: string;
   name: string;
   description: string | null;
   is_default: boolean;
+  settings?: WorkspaceSettings;
 }
 
 interface Appointment {
@@ -213,7 +222,7 @@ export default function AppointmentsPage() {
     setSelectedAppointment(appointment);
     setFormData({
       contact_id: appointment.contact_id,
-      scheduled_at: appointment.scheduled_at.slice(0, 16),
+      scheduled_at: toDatetimeLocalValue(appointment.scheduled_at, appointment.workspace_id),
       duration_minutes: appointment.duration_minutes,
       service_type: appointment.service_type ?? "",
       notes: appointment.notes ?? "",
@@ -268,8 +277,16 @@ export default function AppointmentsPage() {
     return colors[status] ?? "bg-gray-100 text-gray-800";
   };
 
-  const formatDateTime = (isoString: string) => {
+  // Get workspace timezone by ID
+  const getWorkspaceTimezone = (workspaceId?: string | null): string => {
+    const workspace = workspaceId ? workspaces.find((w) => w.id === workspaceId) : undefined;
+    return workspace?.settings?.timezone ?? "UTC";
+  };
+
+  const formatDateTime = (isoString: string, workspaceId?: string | null) => {
     const date = new Date(isoString);
+    const timezone = getWorkspaceTimezone(workspaceId);
+
     return date.toLocaleString("en-US", {
       weekday: "short",
       month: "short",
@@ -278,7 +295,28 @@ export default function AppointmentsPage() {
       hour: "numeric",
       minute: "2-digit",
       hour12: true,
+      timeZone: timezone,
     });
+  };
+
+  // Convert ISO string to datetime-local input format in workspace timezone
+  const toDatetimeLocalValue = (isoString: string, workspaceId?: string | null): string => {
+    const date = new Date(isoString);
+    const timezone = getWorkspaceTimezone(workspaceId);
+
+    // Format as YYYY-MM-DDTHH:MM in the workspace timezone
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZone: timezone,
+    }).formatToParts(date);
+
+    const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+    return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}`;
   };
 
   const isSubmitting = createAppointmentMutation.isPending || updateAppointmentMutation.isPending;
@@ -465,7 +503,7 @@ export default function AppointmentsPage() {
                         {appointment.contact_name ?? "Unknown Contact"}
                       </h3>
                       <p className="truncate text-xs text-muted-foreground">
-                        {formatDateTime(appointment.scheduled_at)}
+                        {formatDateTime(appointment.scheduled_at, appointment.workspace_id)}
                       </p>
                     </div>
                   </div>

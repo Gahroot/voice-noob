@@ -34,6 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.integrations import get_workspace_integrations
 from app.db.session import get_db
 from app.models.agent import Agent
+from app.models.workspace import Workspace
 from app.services.gpt_realtime import GPTRealtimeSession
 
 router = APIRouter(prefix="/api/public/embed", tags=["public-embed"])
@@ -590,9 +591,20 @@ async def get_embed_ephemeral_token(  # noqa: PLR0915
             token_data = response.json()
             log.info("ephemeral_token_created")
 
-            # Build instructions for the frontend
+            # Get workspace timezone for proper time handling
+            ws_query_result = await db.execute(
+                select(Workspace).where(Workspace.id == agent_workspace.workspace_id)
+            )
+            ws_obj = ws_query_result.scalar_one_or_none()
+            workspace_timezone = (
+                ws_obj.settings.get("timezone", "UTC") if ws_obj and ws_obj.settings else "UTC"
+            )
+
+            # Build instructions for the frontend with timezone context
             system_prompt = agent.system_prompt or "You are a helpful voice assistant."
-            instructions = build_instructions_with_language(system_prompt, agent.language)
+            instructions = build_instructions_with_language(
+                system_prompt, agent.language, timezone=workspace_timezone
+            )
 
             # Get tool definitions for this agent (matching realtime.py implementation)
             # Note: For embed widgets, we include tool definitions but execution

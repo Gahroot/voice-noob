@@ -7,6 +7,7 @@ from typing import Any
 
 import structlog
 from openai import AsyncOpenAI
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.integrations import get_workspace_integrations
@@ -49,6 +50,7 @@ def build_instructions_with_language(
     system_prompt: str,
     language: str,
     enabled_tools: list[str] | None = None,
+    timezone: str | None = None,
 ) -> str:
     """Build comprehensive voice agent instructions.
 
@@ -59,46 +61,42 @@ def build_instructions_with_language(
         system_prompt: The agent's custom system prompt (from frontend UI)
         language: Language code (e.g., "en-US", "es-ES")
         enabled_tools: List of enabled tool IDs (optional, for context)
+        timezone: Workspace timezone (e.g., "America/New_York", "UTC")
 
     Returns:
         Complete instructions string optimized for voice conversations
     """
     language_name = LANGUAGE_NAMES.get(language, language)
+    tz_name = timezone or "UTC"
+
+    # Get current date/time in the workspace timezone for context
+    from datetime import datetime
+
+    try:
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo(tz_name)
+        now = datetime.now(tz)
+        current_datetime = now.strftime("%A, %B %d, %Y at %I:%M %p")
+    except Exception:
+        # Fallback if timezone is invalid
+        current_datetime = datetime.now().strftime("%A, %B %d, %Y at %I:%M %p")
 
     # Build the complete voice agent instructions
-    instructions = f"""[VOICE AGENT CONFIGURATION]
+    instructions = f"""[CONTEXT]
 Language: {language_name}
-Mode: Real-time voice conversation
+Timezone: {tz_name}
+Current: {current_datetime}
 
-[LANGUAGE REQUIREMENT]
-You are in a live VOICE call. You MUST speak ONLY in {language_name} throughout this entire conversation.
-Never switch to another language, even if the caller speaks differently.
+[RULES]
+- Speak ONLY in {language_name}
+- All times are in {tz_name} timezone
+- For booking tools, use ISO format with timezone offset (e.g., 2024-12-01T14:00:00-05:00)
+- Keep responses concise - this is voice, not text
+- Summarize tool results naturally
 
-[VOICE STYLE & DELIVERY]
-- Speak with a warm, engaging, and natural pace - NOT monotone or robotic
-- Vary your tone, emphasis, and pacing naturally as a human would
-- Be lively and conversational, like talking to a friend
-- Talk at a brisk but comfortable pace - don't drag words out
-- Express appropriate emotion: enthusiasm, empathy, curiosity
-- Use natural filler words sparingly ("well", "so", "you know") for authenticity
-
-[VOICE CONVERSATION GUIDELINES]
-- Keep responses concise and conversational - this is spoken audio, not text
-- Don't use markdown, bullet points, numbered lists, or any formatting
-- Use natural speech patterns and transitions appropriate for {language_name}
-- Confirm important details by repeating them back to the caller
-- If you didn't understand something, ask for clarification naturally
-- Pause briefly between different topics or when the caller might want to respond
-
-[YOUR ROLE AND INSTRUCTIONS]
-{system_prompt}
-
-[TOOL USAGE GUIDELINES]
-When using tools to look up information or perform actions:
-- Verbally summarize results in a natural, conversational way
-- Don't read raw data or technical details - interpret them for the caller
-- If a tool fails, explain the issue simply and offer alternatives
-- Confirm actions before and after performing them when appropriate"""
+[YOUR ROLE]
+{system_prompt}"""
 
     return instructions
 
@@ -225,13 +223,27 @@ class GPTRealtimeSession:
         enabled_tools = self.agent_config.get("enabled_tools", [])
         tools = self.tool_registry.get_all_tool_definitions(enabled_tools)
 
-        # Build instructions with language directive
+        # Get workspace timezone if available
+        workspace_timezone = "UTC"
+        if self.workspace_id:
+            from app.models.workspace import Workspace
+
+            result = await self.db.execute(
+                select(Workspace).where(Workspace.id == self.workspace_id)
+            )
+            workspace = result.scalar_one_or_none()
+            if workspace and workspace.settings:
+                workspace_timezone = workspace.settings.get("timezone", "UTC")
+
+        # Build instructions with language directive and timezone
         system_prompt = self.agent_config.get("system_prompt", "You are a helpful voice assistant.")
         language = self.agent_config.get("language", "en-US")
         # Default to marin for natural conversational tone
         voice = self.agent_config.get("voice", "marin")
         temperature = self.agent_config.get("temperature", 0.6)
-        instructions = build_instructions_with_language(system_prompt, language)
+        instructions = build_instructions_with_language(
+            system_prompt, language, timezone=workspace_timezone
+        )
 
         session_config = {
             "modalities": ["text", "audio"],
