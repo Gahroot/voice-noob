@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@/test/test-utils";
 import userEvent from "@testing-library/user-event";
-import { TierSelector, TierComparison } from "../tier-selector";
+import { TierSelector } from "../tier-selector";
 
 describe("TierSelector", () => {
   it("renders all pricing tiers", () => {
@@ -140,90 +140,5 @@ describe("TierSelector", () => {
     // Just verify it can re-render without errors
     rerender(<TierSelector selectedTier="balanced" onTierChange={mockOnTierChange} />);
     expect(screen.getByText("Balanced")).toBeInTheDocument();
-  });
-});
-
-describe("TierComparison", () => {
-  it("renders cost comparison card", () => {
-    render(<TierComparison callsPerMonth={1000} avgMinutes={5} />);
-
-    expect(screen.getByText("Cost Comparison")).toBeInTheDocument();
-    expect(
-      screen.getByText("Estimated monthly costs for 1,000 calls (5 min avg)")
-    ).toBeInTheDocument();
-  });
-
-  it("displays all tiers in comparison", () => {
-    render(<TierComparison callsPerMonth={1000} avgMinutes={5} />);
-
-    expect(screen.getByText("Budget")).toBeInTheDocument();
-    expect(screen.getByText("Balanced")).toBeInTheDocument();
-    expect(screen.getByText("Premium")).toBeInTheDocument();
-  });
-
-  it("calculates monthly costs correctly", () => {
-    render(<TierComparison callsPerMonth={1000} avgMinutes={5} />);
-
-    // 1000 calls * 5 min = 5000 minutes
-    // Budget: 5000 * 0.0143 = $71.50
-    // Balanced: 5000 * 0.0225 = $112.50
-    // Premium: 5000 * 0.032 = $160.00
-    const budgetCost = screen.getByText(/\$71\.50\/mo/);
-    const balancedCost = screen.getByText(/\$112\.50\/mo/);
-    const premiumCost = screen.getByText(/\$160\.00\/mo/);
-
-    expect(budgetCost).toBeInTheDocument();
-    expect(balancedCost).toBeInTheDocument();
-    expect(premiumCost).toBeInTheDocument();
-  });
-
-  it("shows Best Value badge for recommended tier", () => {
-    render(<TierComparison callsPerMonth={1000} avgMinutes={5} />);
-
-    expect(screen.getByText("Best Value")).toBeInTheDocument();
-  });
-
-  it("calculates savings vs premium tier", () => {
-    render(<TierComparison callsPerMonth={1000} avgMinutes={5} />);
-
-    // Budget should save $88.50 (55%)
-    // Balanced should save $47.50 (30%)
-    const savingsText = screen.getAllByText(/Save/);
-    expect(savingsText.length).toBeGreaterThan(0);
-  });
-
-  it("displays annual savings examples", () => {
-    render(<TierComparison callsPerMonth={1000} avgMinutes={5} />);
-
-    expect(screen.getByText("Example Annual Savings:")).toBeInTheDocument();
-    expect(screen.getByText(/10K calls\/month: Save up to/)).toBeInTheDocument();
-    expect(screen.getByText(/100K calls\/month: Save up to/)).toBeInTheDocument();
-    expect(screen.getByText(/1M calls\/month: Save up to/)).toBeInTheDocument();
-  });
-
-  it("handles custom call volumes", () => {
-    render(<TierComparison callsPerMonth={5000} avgMinutes={3} />);
-
-    expect(
-      screen.getByText("Estimated monthly costs for 5,000 calls (3 min avg)")
-    ).toBeInTheDocument();
-  });
-
-  it("uses default values when props not provided", () => {
-    render(<TierComparison />);
-
-    // Default: 1000 calls, 5 min avg
-    expect(
-      screen.getByText("Estimated monthly costs for 1,000 calls (5 min avg)")
-    ).toBeInTheDocument();
-  });
-
-  it("formats numbers with locale-specific separators", () => {
-    render(<TierComparison callsPerMonth={10000} avgMinutes={5} />);
-
-    // Should show 10,000 with comma separator
-    expect(
-      screen.getByText("Estimated monthly costs for 10,000 calls (5 min avg)")
-    ).toBeInTheDocument();
   });
 });

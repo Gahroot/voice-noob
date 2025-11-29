@@ -15,7 +15,6 @@ dependencies = [
     "psycopg2-binary>=2.9.10",
     # Redis
     "redis[hiredis]>=5.2.0",
-    "redis-om>=0.3.2",
     # Data Validation
     "pydantic>=2.9.2",
     "pydantic-settings>=2.6.1",
@@ -27,9 +26,6 @@ dependencies = [
     "python-multipart>=0.0.18",
     # HTTP Client
     "httpx>=0.28.0",
-    # Task Queue
-    "arq>=0.26.1",
-    "celery[redis]>=5.4.0",
     # Voice & AI
     "pipecat-ai>=0.0.67",
     "deepgram-sdk>=3.8.3",

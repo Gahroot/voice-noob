@@ -153,7 +153,7 @@ export function getLanguagesForTier(tier: PricingTierType): Language[] {
 /**
  * Check if a language code is valid for a given tier.
  */
-export function isLanguageValidForTier(languageCode: string, tier: PricingTierType): boolean {
+function isLanguageValidForTier(languageCode: string, tier: PricingTierType): boolean {
   const languages = getLanguagesForTier(tier);
   return languages.some((lang) => lang.code === languageCode);
 }
