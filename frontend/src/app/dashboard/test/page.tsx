@@ -5,10 +5,11 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { fetchAgents, updateAgent } from "@/lib/api/agents";
+import { updateAgent } from "@/lib/api/agents";
+import { api } from "@/lib/api";
 import { getWhisperCode, getLanguagesForTier } from "@/lib/languages";
 import { Button } from "@/components/ui/button";
-import { Play, Square, Loader2, Save } from "lucide-react";
+import { Play, Square, Loader2, Save, FolderOpen } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -23,6 +24,20 @@ import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { RealtimeAgent, RealtimeSession, type RealtimeItem } from "@openai/agents/realtime";
+import Link from "next/link";
+
+interface Workspace {
+  id: string;
+  name: string;
+  description: string | null;
+  is_default: boolean;
+}
+
+interface WorkspaceAgent {
+  agent_id: string;
+  agent_name: string;
+  is_default: boolean;
+}
 
 type TranscriptItem = {
   id: string;
@@ -198,6 +213,7 @@ function ToggleGroup({
 }
 
 export default function TestAgentPage() {
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>("all");
   const [selectedAgentId, setSelectedAgentId] = useState<string>("");
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("idle");
   const [transcript, setTranscript] = useState<TranscriptItem[]>([]);
@@ -215,6 +231,44 @@ export default function TestAgentPage() {
   const [editedSystemPrompt, setEditedSystemPrompt] = useState("");
 
   const queryClient = useQueryClient();
+
+  // Fetch workspaces
+  const { data: workspaces = [] } = useQuery<Workspace[]>({
+    queryKey: ["workspaces"],
+    queryFn: async () => {
+      const response = await api.get("/api/v1/workspaces");
+      return response.data;
+    },
+  });
+
+  // Fetch all agents (for "All Workspaces" / admin mode)
+  const { data: allAgents = [] } = useQuery<{ id: string; name: string; pricing_tier: string }[]>({
+    queryKey: ["agents"],
+    queryFn: async () => {
+      const response = await api.get("/api/v1/agents");
+      return response.data;
+    },
+    enabled: selectedWorkspaceId === "all",
+  });
+
+  // Fetch agents for selected workspace
+  const { data: workspaceAgents = [] } = useQuery<WorkspaceAgent[]>({
+    queryKey: ["workspace-agents", selectedWorkspaceId],
+    queryFn: async () => {
+      if (!selectedWorkspaceId || selectedWorkspaceId === "all") return [];
+      const response = await api.get(`/api/v1/workspaces/${selectedWorkspaceId}/agents`);
+      return response.data;
+    },
+    enabled: !!selectedWorkspaceId && selectedWorkspaceId !== "all",
+  });
+
+  // Get the list of agents based on selection mode
+  const availableAgents =
+    selectedWorkspaceId === "all"
+      ? allAgents
+          .filter((a) => a.pricing_tier === "premium" || a.pricing_tier === "premium-mini")
+          .map((a) => ({ agent_id: a.id, agent_name: a.name, is_default: false }))
+      : workspaceAgents;
 
   const sessionRef = useRef<RealtimeSession | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
@@ -237,23 +291,32 @@ export default function TestAgentPage() {
     transcriptEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [transcript]);
 
-  // Fetch agents from API
-  const { data: agents = [] } = useQuery({
-    queryKey: ["agents"],
-    queryFn: fetchAgents,
+  // Fetch selected agent details
+  const { data: selectedAgent } = useQuery({
+    queryKey: ["agent", selectedAgentId],
+    queryFn: async () => {
+      if (!selectedAgentId) return null;
+      const response = await api.get(`/api/v1/agents/${selectedAgentId}`);
+      return response.data;
+    },
+    enabled: !!selectedAgentId,
   });
+
+  // Clear agent selection when workspace changes
+  useEffect(() => {
+    setSelectedAgentId("");
+  }, [selectedWorkspaceId]);
 
   // Update all settings when agent changes
   useEffect(() => {
-    const agent = agents.find((a) => a.id === selectedAgentId);
-    if (agent) {
-      setEditedSystemPrompt(agent.system_prompt || "");
-      setVoice(agent.voice || "alloy");
-      setLanguage(agent.language || "en-US");
-      setTurnDetection(agent.turn_detection_mode || "normal");
-      setThreshold(agent.turn_detection_threshold ?? 0.5);
-      setPrefixPadding(agent.turn_detection_prefix_padding_ms ?? 300);
-      setSilenceDuration(agent.turn_detection_silence_duration_ms ?? 200);
+    if (selectedAgent) {
+      setEditedSystemPrompt(selectedAgent.system_prompt ?? "");
+      setVoice(selectedAgent.voice ?? "alloy");
+      setLanguage(selectedAgent.language ?? "en-US");
+      setTurnDetection(selectedAgent.turn_detection_mode ?? "normal");
+      setThreshold(selectedAgent.turn_detection_threshold ?? 0.5);
+      setPrefixPadding(selectedAgent.turn_detection_prefix_padding_ms ?? 300);
+      setSilenceDuration(selectedAgent.turn_detection_silence_duration_ms ?? 200);
     } else {
       setEditedSystemPrompt("");
       setVoice("marin");
@@ -263,7 +326,7 @@ export default function TestAgentPage() {
       setPrefixPadding(300);
       setSilenceDuration(200);
     }
-  }, [selectedAgentId, agents]);
+  }, [selectedAgent]);
 
   // Mutation to save all settings
   const saveSettingsMutation = useMutation({
@@ -280,7 +343,7 @@ export default function TestAgentPage() {
       });
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["agents"] });
+      void queryClient.invalidateQueries({ queryKey: ["agent", selectedAgentId] });
       toast.success("Settings saved");
     },
     onError: (error: Error) => {
@@ -288,7 +351,6 @@ export default function TestAgentPage() {
     },
   });
 
-  const selectedAgent = agents.find((a) => a.id === selectedAgentId);
   const hasUnsavedChanges = selectedAgent
     ? selectedAgent.system_prompt !== editedSystemPrompt ||
       selectedAgent.voice !== voice ||
@@ -456,8 +518,18 @@ export default function TestAgentPage() {
       return;
     }
 
-    const selectedAgent = agents.find((a) => a.id === selectedAgentId);
-    if (!selectedAgent) return;
+    if (!selectedAgent) {
+      toast.error("Agent data not loaded");
+      return;
+    }
+
+    if (!selectedWorkspaceId) {
+      toast.error("Please select a workspace first");
+      return;
+    }
+
+    // When using "All Workspaces", warn that user-level API keys will be used
+    const isAdminMode = selectedWorkspaceId === "all";
 
     // Set connecting state
     setConnectionStatus("connecting");
@@ -539,9 +611,14 @@ export default function TestAgentPage() {
       });
 
       // Fetch ephemeral token from our backend
+      // - For specific workspace: include workspace_id to use workspace API keys
+      // - For "all" (admin mode): no workspace_id, uses user-level API keys
       const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
       const authToken = localStorage.getItem("access_token");
-      const tokenResponse = await fetch(`${apiBase}/api/v1/realtime/token/${selectedAgentId}`, {
+      const tokenUrl = isAdminMode
+        ? `${apiBase}/api/v1/realtime/token/${selectedAgentId}`
+        : `${apiBase}/api/v1/realtime/token/${selectedAgentId}?workspace_id=${selectedWorkspaceId}`;
+      const tokenResponse = await fetch(tokenUrl, {
         headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
       });
 
@@ -905,23 +982,68 @@ export default function TestAgentPage() {
         {/* Right - Settings Panel */}
         <div className="flex w-[320px] shrink-0 flex-col border-l bg-muted/20">
           <div className="flex-1 space-y-4 overflow-y-auto p-4">
+            {/* Workspace Selection */}
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">
+                <span className="flex items-center gap-2">
+                  <FolderOpen className="h-4 w-4" />
+                  Workspace
+                </span>
+              </Label>
+              <Select value={selectedWorkspaceId} onValueChange={setSelectedWorkspaceId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a workspace" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Workspaces (Admin)</SelectItem>
+                  {workspaces.map((ws) => (
+                    <SelectItem key={ws.id} value={ws.id}>
+                      {ws.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
             {/* Agent Selection */}
             <div className="space-y-2">
               <Label className="text-sm font-medium">Agent</Label>
-              <Select value={selectedAgentId} onValueChange={setSelectedAgentId}>
+              <Select
+                value={selectedAgentId}
+                onValueChange={setSelectedAgentId}
+                disabled={!selectedWorkspaceId}
+              >
                 <SelectTrigger>
-                  <SelectValue placeholder="Select an agent" />
+                  <SelectValue
+                    placeholder={
+                      !selectedWorkspaceId
+                        ? "Select a workspace first"
+                        : availableAgents.length === 0
+                          ? selectedWorkspaceId === "all"
+                            ? "No premium agents found"
+                            : "No agents in this workspace"
+                          : "Select an agent"
+                    }
+                  />
                 </SelectTrigger>
                 <SelectContent>
-                  {agents
-                    .filter((agent) => agent.pricing_tier === "premium")
-                    .map((agent) => (
-                      <SelectItem key={agent.id} value={agent.id}>
-                        {agent.name}
-                      </SelectItem>
-                    ))}
+                  {availableAgents.map((agent) => (
+                    <SelectItem key={agent.agent_id} value={agent.agent_id}>
+                      {agent.agent_name}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
+              {selectedWorkspaceId &&
+                selectedWorkspaceId !== "all" &&
+                availableAgents.length === 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    Add agents to this workspace in{" "}
+                    <Link href="/dashboard/workspaces" className="text-primary hover:underline">
+                      Workspaces
+                    </Link>
+                  </p>
+                )}
             </div>
 
             <Separator />

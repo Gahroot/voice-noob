@@ -37,11 +37,11 @@ export const PRICING_TIERS: PricingTier[] = [
     ],
     config: {
       llmProvider: "cerebras",
-      llmModel: "llama-3.1-70b",
+      llmModel: "llama-3.3-70b",
       sttProvider: "deepgram",
-      sttModel: "nova-2",
+      sttModel: "nova-3",
       ttsProvider: "elevenlabs",
-      ttsModel: "flash-v2.5",
+      ttsModel: "eleven_flash_v2_5",
       telephonyProvider: "telnyx",
     },
     performance: {

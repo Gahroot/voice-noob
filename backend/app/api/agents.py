@@ -363,14 +363,19 @@ def _get_provider_config(tier: str) -> dict[str, Any]:
     Returns:
         Provider configuration
     """
+    # Latest models as of Nov 2025:
+    # - Deepgram: nova-3 (GA Feb 2025, 54% better accuracy than nova-2)
+    # - ElevenLabs: eleven_flash_v2_5 (~75ms latency, 32 languages)
+    # - OpenAI: gpt-realtime-2025-08-28 (GA Aug 2025)
+    # - Google: gemini-2.5-flash with native audio (30 HD voices)
     configs = {
         "budget": {
             "llm_provider": "cerebras",
-            "llm_model": "llama-3.1-70b",
+            "llm_model": "llama-3.3-70b",
             "stt_provider": "deepgram",
-            "stt_model": "nova-2",
+            "stt_model": "nova-3",
             "tts_provider": "elevenlabs",
-            "tts_model": "flash-v2.5",
+            "tts_model": "eleven_flash_v2_5",
         },
         "balanced": {
             "llm_provider": "google",

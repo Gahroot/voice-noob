@@ -4,7 +4,7 @@ import { PRICING_TIERS, calculateMonthlyCost, compareTiers } from "../pricing-ti
 describe("PRICING_TIERS", () => {
   it("exports an array of pricing tiers", () => {
     expect(Array.isArray(PRICING_TIERS)).toBe(true);
-    expect(PRICING_TIERS.length).toBe(3);
+    expect(PRICING_TIERS.length).toBe(4); // budget, balanced, premium-mini, premium
   });
 
   it("contains budget tier", () => {
@@ -19,7 +19,6 @@ describe("PRICING_TIERS", () => {
     const balancedTier = PRICING_TIERS.find((t) => t.id === "balanced");
     expect(balancedTier).toBeDefined();
     expect(balancedTier?.name).toBe("Balanced");
-    expect(balancedTier?.recommended).toBe(true);
     expect(balancedTier?.costPerHour).toBe(1.35);
     expect(balancedTier?.costPerMinute).toBe(0.0225);
   });
@@ -35,9 +34,11 @@ describe("PRICING_TIERS", () => {
   it("has correct configuration for budget tier", () => {
     const budgetTier = PRICING_TIERS.find((t) => t.id === "budget");
     expect(budgetTier?.config.llmProvider).toBe("cerebras");
-    expect(budgetTier?.config.llmModel).toBe("llama-3.1-70b");
+    expect(budgetTier?.config.llmModel).toBe("llama-3.3-70b");
     expect(budgetTier?.config.sttProvider).toBe("deepgram");
+    expect(budgetTier?.config.sttModel).toBe("nova-3");
     expect(budgetTier?.config.ttsProvider).toBe("elevenlabs");
+    expect(budgetTier?.config.ttsModel).toBe("eleven_flash_v2_5");
   });
 
   it("has correct configuration for balanced tier", () => {
@@ -51,7 +52,14 @@ describe("PRICING_TIERS", () => {
   it("has correct configuration for premium tier", () => {
     const premiumTier = PRICING_TIERS.find((t) => t.id === "premium");
     expect(premiumTier?.config.llmProvider).toBe("openai-realtime");
-    expect(premiumTier?.config.llmModel).toBe("gpt-realtime");
+    expect(premiumTier?.config.llmModel).toBe("gpt-realtime-2025-08-28");
+  });
+
+  it("has correct configuration for premium-mini tier", () => {
+    const premiumMiniTier = PRICING_TIERS.find((t) => t.id === "premium-mini");
+    expect(premiumMiniTier).toBeDefined();
+    expect(premiumMiniTier?.config.llmProvider).toBe("openai-realtime");
+    expect(premiumMiniTier?.config.llmModel).toBe("gpt-4o-mini-realtime");
   });
 
   it("has performance metrics for all tiers", () => {
@@ -69,10 +77,10 @@ describe("PRICING_TIERS", () => {
     });
   });
 
-  it("only balanced tier is marked as recommended", () => {
+  it("only premium tier is marked as recommended", () => {
     const recommendedTiers = PRICING_TIERS.filter((t) => t.recommended);
     expect(recommendedTiers.length).toBe(1);
-    expect(recommendedTiers[0]?.id).toBe("balanced");
+    expect(recommendedTiers[0]?.id).toBe("premium");
   });
 });
 
@@ -165,7 +173,7 @@ describe("calculateMonthlyCost", () => {
 describe("compareTiers", () => {
   it("returns comparison for all tiers", () => {
     const comparison = compareTiers(1000, 5);
-    expect(comparison.length).toBe(3);
+    expect(comparison.length).toBe(4); // budget, balanced, premium-mini, premium
   });
 
   it("includes tier information in comparison", () => {
@@ -189,13 +197,14 @@ describe("compareTiers", () => {
     expect(budgetItem?.savingsVsPremium).toBeGreaterThan(0);
   });
 
-  it("budget tier has highest savings", () => {
+  it("premium-mini tier has highest savings (cheapest tier)", () => {
     const comparison = compareTiers(1000, 5);
     const savings = comparison.map((item) => item.savingsVsPremium);
     const maxSavings = Math.max(...savings);
 
-    const budgetItem = comparison.find((item) => item.tier.id === "budget");
-    expect(budgetItem?.savingsVsPremium).toBe(maxSavings);
+    // Premium-mini is the cheapest tier, so it has the highest savings vs premium
+    const premiumMiniItem = comparison.find((item) => item.tier.id === "premium-mini");
+    expect(premiumMiniItem?.savingsVsPremium).toBe(maxSavings);
   });
 
   it("throws error if premium tier not found", () => {
@@ -219,11 +228,12 @@ describe("compareTiers", () => {
     expect(long[0]?.cost.totalCost).toBeGreaterThan(short[0]?.cost.totalCost ?? 0);
   });
 
-  it("maintains tier order (budget, balanced, premium)", () => {
+  it("maintains tier order (budget, balanced, premium-mini, premium)", () => {
     const comparison = compareTiers(1000, 5);
     expect(comparison[0]?.tier.id).toBe("budget");
     expect(comparison[1]?.tier.id).toBe("balanced");
-    expect(comparison[2]?.tier.id).toBe("premium");
+    expect(comparison[2]?.tier.id).toBe("premium-mini");
+    expect(comparison[3]?.tier.id).toBe("premium");
   });
 
   it("includes full cost breakdown for each tier", () => {
@@ -237,9 +247,15 @@ describe("compareTiers", () => {
     });
   });
 
-  it("savings decrease from budget to premium", () => {
+  it("premium tier has zero savings vs itself", () => {
     const comparison = compareTiers(1000, 5);
-    expect(comparison[0]?.savingsVsPremium).toBeGreaterThan(comparison[1]?.savingsVsPremium ?? 0);
-    expect(comparison[1]?.savingsVsPremium).toBeGreaterThan(comparison[2]?.savingsVsPremium ?? 0);
+    const premiumItem = comparison.find((item) => item.tier.id === "premium");
+    expect(premiumItem?.savingsVsPremium).toBe(0);
+
+    // All other tiers should have positive savings
+    const nonPremiumTiers = comparison.filter((item) => item.tier.id !== "premium");
+    nonPremiumTiers.forEach((item) => {
+      expect(item.savingsVsPremium).toBeGreaterThan(0);
+    });
   });
 });

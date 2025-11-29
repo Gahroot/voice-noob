@@ -219,12 +219,12 @@ export default function CallHistoryPage() {
                 toast.info(`Switched to ${wsName}`);
               }}
             >
-              <SelectTrigger className="h-8 w-[180px] text-sm">
+              <SelectTrigger className="h-8 w-[220px] text-sm">
                 <FolderOpen className="mr-2 h-3.5 w-3.5" />
                 <SelectValue placeholder="All Workspaces" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Workspaces</SelectItem>
+                <SelectItem value="all">All Workspaces (Admin)</SelectItem>
                 {workspaces.map((ws) => (
                   <SelectItem key={ws.id} value={ws.id}>
                     {ws.name}

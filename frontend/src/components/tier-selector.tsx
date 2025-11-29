@@ -3,7 +3,7 @@
 import React from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Check, Zap, TrendingUp, Crown } from "lucide-react";
+import { Check, Zap, TrendingUp, Crown, Sparkles } from "lucide-react";
 import { PRICING_TIERS } from "@/lib/pricing-tiers";
 import { cn } from "@/lib/utils";
 
@@ -15,6 +15,7 @@ interface TierSelectorProps {
 const tierIcons = {
   budget: Zap,
   balanced: TrendingUp,
+  "premium-mini": Sparkles,
   premium: Crown,
 };
 
@@ -23,7 +24,7 @@ export const TierSelector = React.memo(function TierSelector({
   onTierChange,
 }: TierSelectorProps) {
   return (
-    <div className="grid gap-4 md:grid-cols-3">
+    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
       {PRICING_TIERS.map((tier) => {
         const Icon = tierIcons[tier.id as keyof typeof tierIcons];
         const isSelected = selectedTier === tier.id;
@@ -45,6 +46,7 @@ export const TierSelector = React.memo(function TierSelector({
                       "flex h-10 w-10 items-center justify-center rounded-lg",
                       tier.id === "budget" && "bg-green-500/10 text-green-600",
                       tier.id === "balanced" && "bg-blue-500/10 text-blue-600",
+                      tier.id === "premium-mini" && "bg-orange-500/10 text-orange-600",
                       tier.id === "premium" && "bg-purple-500/10 text-purple-600"
                     )}
                   >

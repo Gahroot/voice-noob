@@ -831,14 +831,17 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
                               </SelectTrigger>
                             </FormControl>
                             <SelectContent>
-                              <SelectItem value="turbo-v2.5">
+                              <SelectItem value="eleven_turbo_v2_5">
                                 Turbo v2.5 (Recommended - Best Quality)
                               </SelectItem>
-                              <SelectItem value="flash-v2.5">
+                              <SelectItem value="eleven_flash_v2_5">
                                 Flash v2.5 (Fastest - 75ms latency)
                               </SelectItem>
-                              <SelectItem value="eleven-multilingual-v2">
+                              <SelectItem value="eleven_multilingual_v2">
                                 Multilingual v2 (29 languages)
+                              </SelectItem>
+                              <SelectItem value="eleven_v3">
+                                V3 Alpha (Most Expressive - 70+ languages)
                               </SelectItem>
                             </SelectContent>
                           </Select>
@@ -934,10 +937,12 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
                               <SelectItem value="nova-3">
                                 Nova-3 (Latest - 54% better WER)
                               </SelectItem>
-                              <SelectItem value="nova-2">
-                                Nova-2 (25% cheaper, still excellent)
+                              <SelectItem value="flux">
+                                Flux (Voice Agents - end-of-turn detection)
                               </SelectItem>
-                              <SelectItem value="enhanced">Enhanced</SelectItem>
+                              <SelectItem value="nova-2">
+                                Nova-2 (Legacy - still excellent)
+                              </SelectItem>
                             </SelectContent>
                           </Select>
                           <FormDescription>

@@ -4,7 +4,16 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Bot, MoreVertical, AlertCircle, Phone, Wrench, Clock } from "lucide-react";
+import {
+  Plus,
+  Bot,
+  MoreVertical,
+  AlertCircle,
+  Phone,
+  Wrench,
+  Clock,
+  FolderOpen,
+} from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -28,6 +37,21 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { MakeCallDialog } from "@/components/make-call-dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { api } from "@/lib/api";
+
+interface Workspace {
+  id: string;
+  name: string;
+  description: string | null;
+  is_default: boolean;
+}
 
 function formatRelativeTime(dateString: string): string {
   const date = new Date(dateString);
@@ -49,16 +73,55 @@ export default function AgentsPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [agentToDelete, setAgentToDelete] = useState<Agent | null>(null);
   const [deletingAgentIds, setDeletingAgentIds] = useState<Set<string>>(new Set());
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>("all");
 
-  // Fetch agents from API
+  // Fetch workspaces
+  const { data: workspaces = [] } = useQuery<Workspace[]>({
+    queryKey: ["workspaces"],
+    queryFn: async () => {
+      const response = await api.get("/api/v1/workspaces");
+      return response.data;
+    },
+  });
+
+  // Fetch all agents (for "All Workspaces" / admin mode)
   const {
-    data: agents = [],
-    isLoading,
-    error,
+    data: allAgents = [],
+    isLoading: isLoadingAllAgents,
+    error: allAgentsError,
   } = useQuery({
     queryKey: ["agents"],
     queryFn: fetchAgents,
+    enabled: selectedWorkspaceId === "all",
   });
+
+  // Fetch workspace-specific agents
+  const {
+    data: workspaceAgents = [],
+    isLoading: isLoadingWorkspaceAgents,
+    error: workspaceAgentsError,
+  } = useQuery<{ agent_id: string; agent_name: string; is_default: boolean }[]>({
+    queryKey: ["workspace-agents", selectedWorkspaceId],
+    queryFn: async () => {
+      if (!selectedWorkspaceId || selectedWorkspaceId === "all") return [];
+      const response = await api.get(`/api/v1/workspaces/${selectedWorkspaceId}/agents`);
+      return response.data;
+    },
+    enabled: !!selectedWorkspaceId && selectedWorkspaceId !== "all",
+  });
+
+  // Get the filtered agents based on selection mode
+  const agents =
+    selectedWorkspaceId === "all"
+      ? allAgents
+      : allAgents.filter((a) => workspaceAgents.some((wa) => wa.agent_id === a.id));
+
+  const isLoading =
+    selectedWorkspaceId === "all"
+      ? isLoadingAllAgents
+      : isLoadingAllAgents || isLoadingWorkspaceAgents;
+  const error =
+    selectedWorkspaceId === "all" ? allAgentsError : (allAgentsError ?? workspaceAgentsError);
 
   const deleteMutation = useMutation({
     mutationFn: deleteAgent,
@@ -166,12 +229,40 @@ export default function AgentsPage() {
           <h1 className="text-xl font-semibold">Voice Agents</h1>
           <p className="text-sm text-muted-foreground">Manage and configure your AI voice agents</p>
         </div>
-        <Button size="sm" asChild>
-          <Link href="/dashboard/agents/create-agent">
-            <Plus className="mr-2 h-4 w-4" />
-            Create Agent
-          </Link>
-        </Button>
+        <div className="flex items-center gap-2">
+          {workspaces.length > 0 && (
+            <Select
+              value={selectedWorkspaceId}
+              onValueChange={(value) => {
+                setSelectedWorkspaceId(value);
+                const wsName =
+                  value === "all"
+                    ? "All Workspaces"
+                    : workspaces.find((ws) => ws.id === value)?.name;
+                toast.info(`Switched to ${wsName}`);
+              }}
+            >
+              <SelectTrigger className="h-8 w-[220px] text-sm">
+                <FolderOpen className="mr-2 h-3.5 w-3.5" />
+                <SelectValue placeholder="All Workspaces" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Workspaces (Admin)</SelectItem>
+                {workspaces.map((ws) => (
+                  <SelectItem key={ws.id} value={ws.id}>
+                    {ws.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          <Button size="sm" asChild>
+            <Link href="/dashboard/agents/create-agent">
+              <Plus className="mr-2 h-4 w-4" />
+              Create Agent
+            </Link>
+          </Button>
+        </div>
       </div>
 
       {isLoading ? (

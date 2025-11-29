@@ -170,7 +170,7 @@ const API_KEY_PROVIDERS: ApiKeyProvider[] = [
 ];
 
 export default function SettingsPage() {
-  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>("user");
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>("all");
 
   // Fetch workspaces
   const { data: workspaces = [] } = useQuery<Workspace[]>({
@@ -184,7 +184,7 @@ export default function SettingsPage() {
   // Fetch existing settings for selected workspace
   const { data: settings } = useQuery({
     queryKey: ["settings", selectedWorkspaceId],
-    queryFn: () => fetchSettings(selectedWorkspaceId === "user" ? undefined : selectedWorkspaceId),
+    queryFn: () => fetchSettings(selectedWorkspaceId === "all" ? undefined : selectedWorkspaceId),
   });
 
   const voiceAiProviders = API_KEY_PROVIDERS.filter((p) => p.category === "voice-ai");
@@ -209,16 +209,16 @@ export default function SettingsPage() {
             onValueChange={(value) => {
               setSelectedWorkspaceId(value);
               const wsName =
-                value === "user" ? "User Default" : workspaces.find((ws) => ws.id === value)?.name;
+                value === "all" ? "All Workspaces" : workspaces.find((ws) => ws.id === value)?.name;
               toast.info(`Switched to ${wsName}`);
             }}
           >
-            <SelectTrigger className="h-8 w-[200px] text-sm">
+            <SelectTrigger className="h-8 w-[220px] text-sm">
               <FolderOpen className="mr-2 h-3.5 w-3.5" />
-              <SelectValue placeholder="User Default" />
+              <SelectValue placeholder="All Workspaces" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="user">User Default</SelectItem>
+              <SelectItem value="all">All Workspaces (Admin)</SelectItem>
               {workspaces.map((ws) => (
                 <SelectItem key={ws.id} value={ws.id}>
                   {ws.name}
@@ -262,7 +262,7 @@ export default function SettingsPage() {
                   provider={provider}
                   settings={settings}
                   selectedWorkspaceId={
-                    selectedWorkspaceId === "user" ? undefined : selectedWorkspaceId
+                    selectedWorkspaceId === "all" ? undefined : selectedWorkspaceId
                   }
                 />
               ))}
@@ -284,7 +284,7 @@ export default function SettingsPage() {
                   provider={provider}
                   settings={settings}
                   selectedWorkspaceId={
-                    selectedWorkspaceId === "user" ? undefined : selectedWorkspaceId
+                    selectedWorkspaceId === "all" ? undefined : selectedWorkspaceId
                   }
                 />
               ))}

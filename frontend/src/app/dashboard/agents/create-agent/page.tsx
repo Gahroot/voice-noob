@@ -55,7 +55,7 @@ import { InfoTooltip } from "@/components/ui/info-tooltip";
 import { cn } from "@/lib/utils";
 
 // OpenAI Realtime API voices (only for Premium tier)
-// marin and cedar are the new recommended voices (most natural and expressive)
+// All 13 voices as of Nov 2025 - marin and cedar are exclusive to Realtime API
 const REALTIME_VOICES = [
   {
     id: "marin",
@@ -69,14 +69,17 @@ const REALTIME_VOICES = [
     description: "Natural & conversational (Recommended)",
     recommended: true,
   },
-  { id: "shimmer", name: "Shimmer", description: "Energetic and expressive" },
   { id: "alloy", name: "Alloy", description: "Neutral and balanced" },
-  { id: "coral", name: "Coral", description: "Warm and friendly" },
-  { id: "echo", name: "Echo", description: "Warm and engaging" },
-  { id: "sage", name: "Sage", description: "Calm and thoughtful" },
-  { id: "verse", name: "Verse", description: "Versatile and expressive" },
   { id: "ash", name: "Ash", description: "Clear and precise" },
   { id: "ballad", name: "Ballad", description: "Melodic and smooth" },
+  { id: "coral", name: "Coral", description: "Warm and friendly" },
+  { id: "echo", name: "Echo", description: "Warm and engaging" },
+  { id: "fable", name: "Fable", description: "Expressive and dramatic" },
+  { id: "nova", name: "Nova", description: "Friendly and upbeat" },
+  { id: "onyx", name: "Onyx", description: "Deep and authoritative" },
+  { id: "sage", name: "Sage", description: "Calm and thoughtful" },
+  { id: "shimmer", name: "Shimmer", description: "Energetic and expressive" },
+  { id: "verse", name: "Verse", description: "Versatile and expressive" },
 ] as const;
 
 // Get integrations that have tools defined

@@ -29,15 +29,15 @@ logger = structlog.get_logger()
 
 async def get_openai_api_key_for_workspace(
     user_uuid: uuid.UUID,
-    workspace_uuid: uuid.UUID,
+    workspace_uuid: uuid.UUID | None,
     db: AsyncSession,
     log: structlog.BoundLogger,
 ) -> str:
-    """Get OpenAI API key for a workspace.
+    """Get OpenAI API key for a workspace - strictly isolated, no fallback.
 
     Args:
         user_uuid: User UUID
-        workspace_uuid: Workspace UUID
+        workspace_uuid: Workspace UUID (required for workspace-scoped operations)
         db: Database session
         log: Logger instance
 
@@ -45,19 +45,33 @@ async def get_openai_api_key_for_workspace(
         OpenAI API key
 
     Raises:
-        HTTPException: If no API key is configured
+        HTTPException: If no API key is configured for the workspace
     """
     user_settings = await get_user_api_keys(user_uuid, db, workspace_id=workspace_uuid)
     if user_settings and user_settings.openai_api_key:
-        log.info("using_workspace_openai_key", workspace_id=str(workspace_uuid))
+        if workspace_uuid:
+            log.info("using_workspace_openai_key", workspace_id=str(workspace_uuid))
+        else:
+            log.info("using_user_level_openai_key")
         return user_settings.openai_api_key
+
+    # If workspace is explicitly specified but has no API key, fail - no fallback
+    # This ensures billing isolation between workspaces
+    if workspace_uuid:
+        log.warning("workspace_missing_openai_key", workspace_id=str(workspace_uuid))
+        raise HTTPException(
+            status_code=400,
+            detail="OpenAI API key not configured for this workspace. Please add it in Settings > Workspace API Keys.",
+        )
+
+    # Only fall back to global platform key when no workspace is specified (admin use)
     if settings.OPENAI_API_KEY:
-        # Global platform key as fallback (for platform-owned agents only)
         log.info("using_global_openai_key")
         return settings.OPENAI_API_KEY
+
     raise HTTPException(
         status_code=400,
-        detail="OpenAI API key not configured for this workspace. Please add it in Settings.",
+        detail="OpenAI API key not configured. Please add it in Settings.",
     )
 
 
@@ -464,9 +478,9 @@ async def create_webrtc_session(
 @webrtc_router.get("/token/{agent_id}")
 async def get_ephemeral_token(
     agent_id: str,
-    workspace_id: str,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
+    workspace_id: str | None = None,
 ) -> dict[str, Any]:
     """Get an ephemeral token for OpenAI Realtime API WebRTC connection.
 
@@ -475,9 +489,9 @@ async def get_ephemeral_token(
 
     Args:
         agent_id: Agent UUID
-        workspace_id: Workspace UUID (required for API key isolation)
         current_user: Authenticated user
         db: Database session
+        workspace_id: Optional workspace UUID (falls back to user-level API key)
 
     Returns:
         Ephemeral token response with client_secret value and session config
@@ -511,7 +525,7 @@ async def get_ephemeral_token(
     realtime_model = get_realtime_model_for_tier(agent.pricing_tier)
 
     # Get OpenAI API key (user_uuid for UserSettings lookup)
-    workspace_uuid = uuid.UUID(workspace_id)
+    workspace_uuid = uuid.UUID(workspace_id) if workspace_id else None
     api_key = await get_openai_api_key_for_workspace(user_uuid, workspace_uuid, db, token_logger)
 
     # Build minimal session configuration for ephemeral token request
