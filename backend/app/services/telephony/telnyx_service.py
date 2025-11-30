@@ -193,7 +193,8 @@ class TelnyxService(TelephonyProvider):
         try:
             self.logger.info("getting_call_control_application")
             # Get call control application ID for the call
-            call_control_app_id = await self._get_call_control_application_id()
+            # Pass webhook_url so it can be configured when creating the application
+            call_control_app_id = await self._get_call_control_application_id(webhook_url)
             self.logger.debug("call_control_application_id_obtained", app_id=call_control_app_id)
 
             # Dial the call using the Telnyx Call Control API
@@ -586,11 +587,15 @@ class TelnyxService(TelephonyProvider):
         # Already has country code
         return f"+{digits}"
 
-    async def _get_call_control_application_id(self) -> str:
+    async def _get_call_control_application_id(self, webhook_event_url: str | None = None) -> str:
         """Get or create a Telnyx Call Control Application for outbound calls.
 
         Call Control Applications are required for the Call Control API.
         They define how calls should be handled and where webhooks are sent.
+
+        Args:
+            webhook_event_url: Optional webhook URL for call events. If creating a new app,
+                              this will be set as the application's webhook_event_url.
 
         Returns:
             Call Control Application ID string
@@ -617,14 +622,23 @@ class TelnyxService(TelephonyProvider):
                     return str(app_id)
 
             # Create a new Call Control Application if none exists
-            self.logger.info("creating_new_call_control_application")
+            self.logger.info("creating_new_call_control_application", webhook_url=webhook_event_url)
+            app_payload = {
+                "application_name": "voice-agent-application",
+                "active": True,
+            }
+
+            # Add webhook_event_url if provided (required by Telnyx)
+            if webhook_event_url:
+                app_payload["webhook_event_url"] = webhook_event_url
+                self.logger.debug("webhook_event_url_added", url=webhook_event_url)
+            else:
+                self.logger.warning("webhook_event_url_not_provided")
+
             new_data = await self._make_request(
                 "POST",
                 "/call_control_applications",
-                json_data={
-                    "application_name": "voice-agent-application",
-                    "active": True,
-                },
+                json_data=app_payload,
             )
             app_id = new_data.get("data", {}).get("id")
 
