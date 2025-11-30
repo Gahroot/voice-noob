@@ -103,7 +103,7 @@ export function MakeCallDialog({ open, onOpenChange, agent, workspaceId }: MakeC
   const hangupMutation = useMutation({
     mutationFn: () => {
       if (!callId) throw new Error("No call to hang up");
-      return hangupCall(callId, provider);
+      return hangupCall(callId, provider, workspaceId);
     },
     onSuccess: () => {
       setCallState("ended");
