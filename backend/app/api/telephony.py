@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.settings import get_user_api_keys
 from app.core.auth import CurrentUser, user_id_to_uuid
+from app.core.config import settings
 from app.core.limiter import limiter
 from app.core.webhook_security import verify_telnyx_webhook, verify_twilio_webhook
 from app.db.session import get_db
@@ -444,7 +445,7 @@ async def release_phone_number(
 
 @router.post("/calls", response_model=CallResponse)
 @limiter.limit("30/minute")  # Rate limit outbound call initiation (costs money!)
-async def initiate_call(
+async def initiate_call(  # noqa: PLR0912, PLR0915
     call_request: InitiateCallRequest,
     request: Request,
     current_user: CurrentUser,
@@ -503,8 +504,19 @@ async def initiate_call(
         )
 
     # Build webhook URL
-    base_url = str(request.base_url).rstrip("/")
+    # Use PUBLIC_WEBHOOK_URL if configured (required for Telnyx production)
+    # Falls back to request.base_url for local development
+    if settings.PUBLIC_WEBHOOK_URL:
+        base_url = settings.PUBLIC_WEBHOOK_URL.rstrip("/")
+    else:
+        base_url = str(request.base_url).rstrip("/")
+
     webhook_url = f"{base_url}/webhooks/{'telnyx' if telnyx_service else 'twilio'}/answer?agent_id={call_request.agent_id}"
+    log.info(
+        "webhook_url_constructed",
+        webhook_url=webhook_url,
+        using_public_url=bool(settings.PUBLIC_WEBHOOK_URL),
+    )
 
     try:
         if telnyx_service:
