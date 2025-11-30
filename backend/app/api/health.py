@@ -43,7 +43,7 @@ async def health_check_redis(response: Response) -> dict[str, str]:
     """Redis health check endpoint."""
     try:
         redis = await get_redis()
-        await redis.ping()
+        await redis.ping()  # type: ignore[misc]
         return {"status": "healthy", "redis": "connected"}
     except Exception as e:
         logger.exception("Redis health check failed")

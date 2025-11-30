@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "008_add_turn_detection_settings"
+revision: str = "008_turn_detection"
 down_revision: str | None = "007_add_call_records"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
