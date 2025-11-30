@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     PORT: int = 8000
     RELOAD: bool = False
+    PUBLIC_WEBHOOK_URL: str | None = (
+        None  # e.g., "https://yourdomain.com" or "https://abc123.ngrok.io"
+    )
 
     # Database
     POSTGRES_SERVER: str = "localhost"
