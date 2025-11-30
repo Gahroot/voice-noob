@@ -432,6 +432,7 @@ export default function AgentsPage() {
           open={callDialogOpen}
           onOpenChange={setCallDialogOpen}
           agent={selectedAgent}
+          workspaceId={selectedWorkspaceId !== "all" ? selectedWorkspaceId : undefined}
         />
       )}
 

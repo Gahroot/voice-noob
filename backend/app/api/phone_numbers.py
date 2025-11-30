@@ -172,15 +172,26 @@ async def list_phone_numbers(
     records = result.scalars().all()
 
     # Build response with workspace and agent names
+    # Also need to find which agent has this phone number assigned
+    from app.models.agent import Agent
+
     phone_numbers = []
     for record in records:
         workspace_name = None
         agent_name = None
+        assigned_agent_id = None
 
         if record.workspace:
             workspace_name = record.workspace.name
-        if record.assigned_agent:
-            agent_name = record.assigned_agent.name
+
+        # Look up which agent has this phone number assigned
+        agent_result = await db.execute(
+            select(Agent).where(Agent.phone_number_id == str(record.id))
+        )
+        agent = agent_result.scalar_one_or_none()
+        if agent:
+            assigned_agent_id = str(agent.id)
+            agent_name = agent.name
 
         phone_numbers.append(
             PhoneNumberResponse(
@@ -191,9 +202,7 @@ async def list_phone_numbers(
                 provider_id=record.provider_id,
                 workspace_id=str(record.workspace_id) if record.workspace_id else None,
                 workspace_name=workspace_name,
-                assigned_agent_id=str(record.assigned_agent_id)
-                if record.assigned_agent_id
-                else None,
+                assigned_agent_id=assigned_agent_id,
                 assigned_agent_name=agent_name,
                 can_receive_calls=record.can_receive_calls,
                 can_make_calls=record.can_make_calls,
@@ -248,13 +257,21 @@ async def get_phone_number(
     if not record:
         raise HTTPException(status_code=404, detail="Phone number not found")
 
+    from app.models.agent import Agent
+
     workspace_name = None
     agent_name = None
+    assigned_agent_id = None
 
     if record.workspace:
         workspace_name = record.workspace.name
-    if record.assigned_agent:
-        agent_name = record.assigned_agent.name
+
+    # Look up which agent has this phone number assigned
+    agent_result = await db.execute(select(Agent).where(Agent.phone_number_id == str(record.id)))
+    agent = agent_result.scalar_one_or_none()
+    if agent:
+        assigned_agent_id = str(agent.id)
+        agent_name = agent.name
 
     return PhoneNumberResponse(
         id=str(record.id),
@@ -264,7 +281,7 @@ async def get_phone_number(
         provider_id=record.provider_id,
         workspace_id=str(record.workspace_id) if record.workspace_id else None,
         workspace_name=workspace_name,
-        assigned_agent_id=str(record.assigned_agent_id) if record.assigned_agent_id else None,
+        assigned_agent_id=assigned_agent_id,
         assigned_agent_name=agent_name,
         can_receive_calls=record.can_receive_calls,
         can_make_calls=record.can_make_calls,
@@ -411,11 +428,21 @@ async def update_phone_number(
 
     workspace_name = None
     agent_name = None
+    assigned_agent_id = None
 
     if phone_number.workspace:
         workspace_name = phone_number.workspace.name
-    if phone_number.assigned_agent:
-        agent_name = phone_number.assigned_agent.name
+
+    # Look up which agent has this phone number assigned
+    from app.models.agent import Agent
+
+    agent_result = await db.execute(
+        select(Agent).where(Agent.phone_number_id == str(phone_number.id))
+    )
+    agent = agent_result.scalar_one_or_none()
+    if agent:
+        assigned_agent_id = str(agent.id)
+        agent_name = agent.name
 
     return PhoneNumberResponse(
         id=str(phone_number.id),
@@ -425,9 +452,7 @@ async def update_phone_number(
         provider_id=phone_number.provider_id,
         workspace_id=str(phone_number.workspace_id) if phone_number.workspace_id else None,
         workspace_name=workspace_name,
-        assigned_agent_id=str(phone_number.assigned_agent_id)
-        if phone_number.assigned_agent_id
-        else None,
+        assigned_agent_id=assigned_agent_id,
         assigned_agent_name=agent_name,
         can_receive_calls=phone_number.can_receive_calls,
         can_make_calls=phone_number.can_make_calls,
