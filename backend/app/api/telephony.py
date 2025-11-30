@@ -506,24 +506,40 @@ async def initiate_call(
     base_url = str(request.base_url).rstrip("/")
     webhook_url = f"{base_url}/webhooks/{'telnyx' if telnyx_service else 'twilio'}/answer?agent_id={call_request.agent_id}"
 
-    if telnyx_service:
-        provider = "telnyx"
-        call_info = await telnyx_service.initiate_call(
-            to_number=call_request.to_number,
-            from_number=call_request.from_number,
-            webhook_url=webhook_url,
-            agent_id=call_request.agent_id,
-        )
-    elif twilio_service:
-        provider = "twilio"
-        call_info = await twilio_service.initiate_call(
-            to_number=call_request.to_number,
-            from_number=call_request.from_number,
-            webhook_url=webhook_url,
-            agent_id=call_request.agent_id,
-        )
-    else:
-        raise HTTPException(status_code=500, detail="Failed to initialize telephony service")
+    try:
+        if telnyx_service:
+            provider = "telnyx"
+            call_info = await telnyx_service.initiate_call(
+                to_number=call_request.to_number,
+                from_number=call_request.from_number,
+                webhook_url=webhook_url,
+                agent_id=call_request.agent_id,
+            )
+        elif twilio_service:
+            provider = "twilio"
+            call_info = await twilio_service.initiate_call(
+                to_number=call_request.to_number,
+                from_number=call_request.from_number,
+                webhook_url=webhook_url,
+                agent_id=call_request.agent_id,
+            )
+        else:
+            msg = "Failed to initialize telephony service"
+            raise HTTPException(status_code=500, detail=msg) from None  # noqa: TRY301
+    except ValueError as e:
+        log.exception("telephony_service_error", error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to initiate call with telephony provider: {e!s}",
+        ) from e
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.exception("unexpected_error_initiating_call", error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error initiating call: {e!s}",
+        ) from e
 
     log.info("call_initiated", call_id=call_info.call_id, provider=provider)
 

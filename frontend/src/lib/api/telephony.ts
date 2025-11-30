@@ -31,6 +31,7 @@ async function fetchWithTimeout(
     const response = await fetch(url, {
       ...options,
       headers,
+      credentials: "include", // Include cookies for CORS
       signal: controller.signal,
     });
     return response;
@@ -162,13 +163,16 @@ export async function purchasePhoneNumber(
 /**
  * Release a phone number
  */
-export async function releasePhoneNumber(phoneNumberId: string, provider: Provider): Promise<void> {
-  const response = await fetchWithTimeout(
-    `${API_BASE}/api/v1/telephony/phone-numbers/${phoneNumberId}?provider=${provider}`,
-    {
-      method: "DELETE",
-    }
-  );
+export async function releasePhoneNumber(phoneNumberId: string, provider: Provider, workspaceId?: string): Promise<void> {
+  const url = new URL(`${API_BASE}/api/v1/telephony/phone-numbers/${phoneNumberId}`);
+  url.searchParams.set("provider", provider);
+  if (workspaceId) {
+    url.searchParams.set("workspace_id", workspaceId);
+  }
+
+  const response = await fetchWithTimeout(url.toString(), {
+    method: "DELETE",
+  });
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: response.statusText }));
@@ -208,13 +212,16 @@ export async function initiateCall(request: InitiateCallRequest): Promise<CallRe
 /**
  * Hang up an active call
  */
-export async function hangupCall(callId: string, provider: Provider): Promise<void> {
-  const response = await fetchWithTimeout(
-    `${API_BASE}/api/v1/telephony/calls/${callId}/hangup?provider=${provider}`,
-    {
-      method: "POST",
-    }
-  );
+export async function hangupCall(callId: string, provider: Provider, workspaceId?: string): Promise<void> {
+  const url = new URL(`${API_BASE}/api/v1/telephony/calls/${callId}/hangup`);
+  url.searchParams.set("provider", provider);
+  if (workspaceId) {
+    url.searchParams.set("workspace_id", workspaceId);
+  }
+
+  const response = await fetchWithTimeout(url.toString(), {
+    method: "POST",
+  });
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: response.statusText }));

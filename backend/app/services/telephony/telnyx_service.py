@@ -61,7 +61,14 @@ class TelnyxService(TelephonyProvider):
 
         Returns:
             CallInfo with call details
+
+        Raises:
+            ValueError: If call initiation fails
         """
+        # Normalize phone numbers to E.164 format
+        to_number = self._normalize_e164(to_number)
+        from_number = self._normalize_e164(from_number)
+
         self.logger.info(
             "initiating_call",
             to=to_number,
@@ -70,35 +77,52 @@ class TelnyxService(TelephonyProvider):
             agent_id=agent_id,
         )
 
-        # Get connection ID for the call
-        connection_id = await self._get_connection_id()
+        try:
+            # Get call control application ID for the call
+            call_control_app_id = await self._get_call_control_application_id()
 
-        # Dial the call using the Telnyx Call Control API
-        client = await self._get_http_client()
-        response = await client.post(
-            "/calls",
-            json={
+            # Dial the call using the Telnyx Call Control API
+            client = await self._get_http_client()
+            payload = {
                 "to": to_number,
                 "from": from_number,
-                "webhook_url": webhook_url,
-                "connection_id": connection_id,
-            },
-        )
-        response.raise_for_status()
-        call_data = response.json().get("data", {})
-        call_control_id = call_data.get("call_control_id", "")
+                "call_control_application_id": call_control_app_id,
+            }
 
-        self.logger.info("call_initiated", call_control_id=call_control_id)
+            # Add webhook_url if provided (optional)
+            if webhook_url:
+                payload["webhook_url"] = webhook_url
 
-        return CallInfo(
-            call_id=call_control_id,
-            call_control_id=call_control_id,
-            from_number=from_number,
-            to_number=to_number,
-            direction=CallDirection.OUTBOUND,
-            status=CallStatus.INITIATED,
-            agent_id=agent_id,
-        )
+            self.logger.debug("sending_call_request", payload=payload)
+            response = await client.post("/calls", json=payload)
+            response.raise_for_status()
+            call_data = response.json().get("data", {})
+            call_control_id = call_data.get("call_control_id", "")
+
+            if not call_control_id:
+                msg = "No call_control_id returned from Telnyx API"
+                raise ValueError(msg) from None  # noqa: TRY301
+
+            self.logger.info("call_initiated", call_control_id=call_control_id)
+
+            return CallInfo(
+                call_id=call_control_id,
+                call_control_id=call_control_id,
+                from_number=from_number,
+                to_number=to_number,
+                direction=CallDirection.OUTBOUND,
+                status=CallStatus.INITIATED,
+                agent_id=agent_id,
+            )
+
+        except Exception as e:
+            self.logger.exception(
+                "call_initiation_failed",
+                to=to_number,
+                from_=from_number,
+                error=str(e),
+            )
+            raise ValueError(f"Failed to initiate Telnyx call: {e!s}") from e
 
     async def hangup_call(self, call_id: str) -> bool:
         """Hang up an active Telnyx call.
@@ -380,33 +404,106 @@ class TelnyxService(TelephonyProvider):
             self.logger.exception("configure_failed", id=phone_number_id, error=str(e))
             return False
 
-    async def _get_connection_id(self) -> str:
-        """Get or create a Telnyx connection for outbound calls.
+    def _normalize_e164(self, phone_number: str) -> str:
+        """Normalize a phone number to E.164 format.
+
+        Args:
+            phone_number: Phone number in any format
 
         Returns:
-            Connection ID string
+            Phone number in E.164 format (+countrycode...)
+
+        Raises:
+            ValueError: If phone number cannot be normalized
         """
-        # List existing connections
-        client = await self._get_http_client()
-        response = await client.get("/credential_connections")
-        response.raise_for_status()
-        data = response.json()
+        # Remove all non-digit characters except leading +
+        cleaned = phone_number.strip()
+        if cleaned.startswith("+"):
+            digits = (
+                cleaned[1:]
+                .replace("-", "")
+                .replace(" ", "")
+                .replace("(", "")
+                .replace(")", "")
+                .replace(".", "")
+            )
+            if not digits.isdigit():
+                msg = f"Invalid phone number format: {phone_number}"
+                raise ValueError(msg) from None
+            return f"+{digits}"
 
-        connections = data.get("data", [])
-        if connections:
-            return str(connections[0].get("id", ""))
-
-        # Create a new connection if none exists
-        response = await client.post(
-            "/credential_connections",
-            json={
-                "connection_name": "voice-agent-connection",
-                "active": True,
-            },
+        # If no + prefix, assume US number and add +1
+        digits = (
+            cleaned.replace("-", "")
+            .replace(" ", "")
+            .replace("(", "")
+            .replace(")", "")
+            .replace(".", "")
         )
-        response.raise_for_status()
-        new_data = response.json()
-        return str(new_data.get("data", {}).get("id", ""))
+        if not digits.isdigit():
+            msg = f"Invalid phone number format: {phone_number}"
+            raise ValueError(msg) from None
+
+        # Default to US country code if not specified
+        # US phone numbers have 10 digits without country code
+        if len(digits) == 10:  # noqa: PLR2004
+            return f"+1{digits}"
+
+        # Already has country code
+        return f"+{digits}"
+
+    async def _get_call_control_application_id(self) -> str:
+        """Get or create a Telnyx Call Control Application for outbound calls.
+
+        Call Control Applications are required for the Call Control API.
+        They define how calls should be handled and where webhooks are sent.
+
+        Returns:
+            Call Control Application ID string
+
+        Raises:
+            ValueError: If no application ID is found or created
+        """
+        client = await self._get_http_client()
+
+        try:
+            # List existing Call Control Applications
+            response = await client.get("/call_control_applications")
+            response.raise_for_status()
+            data = response.json()
+
+            applications = data.get("data", [])
+            if applications:
+                app_id = applications[0].get("id")
+                if app_id:
+                    self.logger.info("using_existing_call_control_application", app_id=app_id)
+                    return str(app_id)
+
+            # Create a new Call Control Application if none exists
+            self.logger.info("creating_new_call_control_application")
+            response = await client.post(
+                "/call_control_applications",
+                json={
+                    "application_name": "voice-agent-application",
+                    "active": True,
+                },
+            )
+            response.raise_for_status()
+            new_data = response.json()
+            app_id = new_data.get("data", {}).get("id")
+
+            if not app_id:
+                msg = "No call control application ID returned from Telnyx API"
+                raise ValueError(msg) from None  # noqa: TRY301
+
+            self.logger.info("call_control_application_created", app_id=app_id)
+            return str(app_id)
+
+        except Exception as e:
+            self.logger.exception("failed_to_get_or_create_call_control_application", error=str(e))
+            raise ValueError(
+                f"Failed to get or create Telnyx Call Control Application: {e!s}"
+            ) from e
 
     def generate_answer_response(self, websocket_url: str, agent_id: str | None = None) -> str:  # noqa: ARG002
         """Generate TeXML response to answer a call and stream to WebSocket.
