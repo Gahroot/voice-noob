@@ -1,0 +1,13 @@
+# Database
+DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/voicenoob
+
+# Redis
+REDIS_URL=redis://localhost:6379/0
+
+# Security (generate with: python -c "import secrets; print(secrets.token_hex(32))")
+SECRET_KEY=change-this-to-a-random-secret-key-in-production
+
+# Default Admin (created on first startup if no users exist)
+ADMIN_EMAIL=admin@voicenoob.com
+ADMIN_PASSWORD=admin
+ADMIN_NAME=Admin

@@ -20,6 +20,17 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Upgrade schema."""
+    # Check if table exists - may already be created by a7176cbf6e3a
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
+    if 'user_integrations' in inspector.get_table_names():
+        # Table already exists, just add workspace_id if missing
+        existing_columns = [c['name'] for c in inspector.get_columns('user_integrations')]
+        if 'workspace_id' not in existing_columns:
+            op.add_column('user_integrations',
+                sa.Column('workspace_id', sa.Uuid(), nullable=True, comment='Workspace this integration belongs to (null = user-level)'))
+            op.create_foreign_key('fk_user_integrations_workspace', 'user_integrations', 'workspaces', ['workspace_id'], ['id'], ondelete='CASCADE')
+        return
     op.create_table('user_integrations',
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('user_id', sa.Uuid(), nullable=False),
