@@ -11,7 +11,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 
 if TYPE_CHECKING:
-    from app.models.agent import Agent
     from app.models.workspace import Workspace
 
 
@@ -103,12 +102,12 @@ class PhoneNumber(Base):
     )
 
     # Assignment (currently assigned to which agent)
+    # Note: This is informational only - actual FK is on agents.phone_number_id
     assigned_agent_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True),
-        ForeignKey("agents.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
-        comment="Agent currently assigned to this number",
+        comment="Agent currently assigned to this number (informational)",
     )
 
     # Additional metadata
@@ -132,7 +131,8 @@ class PhoneNumber(Base):
 
     # Relationships
     workspace: Mapped["Workspace | None"] = relationship("Workspace", lazy="selectin")
-    assigned_agent: Mapped["Agent | None"] = relationship("Agent", lazy="selectin")
+    # Note: Agent relationship is one-way from Agent.phone_number_id -> PhoneNumber.id
+    # We need a custom query in the API to load this
 
     def __repr__(self) -> str:
         return (

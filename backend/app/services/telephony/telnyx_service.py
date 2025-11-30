@@ -51,12 +51,12 @@ class TelnyxService(TelephonyProvider):
         webhook_url: str,
         agent_id: str | None = None,
     ) -> CallInfo:
-        """Initiate an outbound call via Telnyx TeXML.
+        """Initiate an outbound call via Telnyx Call Control API.
 
         Args:
             to_number: Destination phone number (E.164 format)
             from_number: Source phone number (E.164 format)
-            webhook_url: URL for TeXML instructions when call connects
+            webhook_url: URL for call event webhooks
             agent_id: Optional agent ID for context
 
         Returns:
@@ -70,75 +70,29 @@ class TelnyxService(TelephonyProvider):
             agent_id=agent_id,
         )
 
+        # Get connection ID for the call
+        connection_id = await self._get_connection_id()
+
+        # Dial the call using the Telnyx Call Control API
         client = await self._get_http_client()
-
-        # Use Telnyx TeXML API for call initiation
-        payload = {
-            "to": to_number,
-            "from": from_number,
-            "connection_id": await self._get_connection_id(),
-            "texml_url": webhook_url,
-        }
-
-        response = await client.post("/texml/calls", json=payload)
+        response = await client.post(
+            "/calls",
+            json={
+                "to": to_number,
+                "from": from_number,
+                "webhook_url": webhook_url,
+                "connection_id": connection_id,
+            },
+        )
         response.raise_for_status()
-        data = response.json()
-
-        call_data = data.get("data", {})
+        call_data = response.json().get("data", {})
         call_control_id = call_data.get("call_control_id", "")
-        call_sid = call_data.get("sid", call_control_id)
 
         self.logger.info("call_initiated", call_control_id=call_control_id)
 
         return CallInfo(
-            call_id=call_sid,
+            call_id=call_control_id,
             call_control_id=call_control_id,
-            from_number=from_number,
-            to_number=to_number,
-            direction=CallDirection.OUTBOUND,
-            status=CallStatus.INITIATED,
-            agent_id=agent_id,
-        )
-
-    async def initiate_call_via_call_control(
-        self,
-        to_number: str,
-        from_number: str,
-        connection_id: str,
-        webhook_url: str,
-        agent_id: str | None = None,
-    ) -> CallInfo:
-        """Initiate an outbound call via Telnyx Call Control API.
-
-        Args:
-            to_number: Destination phone number (E.164 format)
-            from_number: Source phone number (E.164 format)
-            connection_id: Telnyx connection ID
-            webhook_url: URL for call event webhooks
-            agent_id: Optional agent ID for context
-
-        Returns:
-            CallInfo with call details
-        """
-        self.logger.info(
-            "initiating_call_via_call_control",
-            to=to_number,
-            from_=from_number,
-            connection_id=connection_id,
-        )
-
-        call = telnyx.Call.create(  # type: ignore[attr-defined]
-            connection_id=connection_id,
-            to=to_number,
-            from_=from_number,
-            webhook_url=webhook_url,
-        )
-
-        self.logger.info("call_initiated", call_control_id=call.call_control_id)
-
-        return CallInfo(
-            call_id=call.call_control_id,
-            call_control_id=call.call_control_id,
             from_number=from_number,
             to_number=to_number,
             direction=CallDirection.OUTBOUND,

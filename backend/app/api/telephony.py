@@ -186,60 +186,61 @@ async def get_agent_workspace_id(agent_id: uuid.UUID, db: AsyncSession) -> uuid.
 async def list_phone_numbers(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
-    provider: str = Query("twilio", description="Provider: twilio or telnyx"),
-    workspace_id: str = Query(..., description="Workspace ID for API key isolation"),
+    provider: str = Query("telnyx", description="Provider filter: telnyx or twilio"),
 ) -> list[PhoneNumberResponse]:
-    """List all phone numbers for the user's account.
+    """List all phone numbers registered in Voice Noob for the user.
+
+    Returns phone numbers from Voice Noob's database, filtered by provider.
+    This is the source of truth for phone numbers available for making/receiving calls.
 
     Args:
-        provider: Telephony provider (twilio or telnyx)
         current_user: Authenticated user
         db: Database session
-        workspace_id: Workspace ID for workspace-specific API keys
+        provider: Filter by provider (telnyx or twilio)
 
     Returns:
-        List of phone numbers
+        List of phone numbers registered in Voice Noob
     """
-    log = logger.bind(user_id=current_user.id, provider=provider, workspace_id=workspace_id)
-    log.info("listing_phone_numbers")
+    log = logger.bind(user_id=current_user.id, provider=provider)
+    log.info("listing_phone_numbers_from_db")
 
-    # Parse workspace_id
-    try:
-        workspace_uuid = uuid.UUID(workspace_id)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail="Invalid workspace_id format") from e
+    from app.core.auth import user_id_to_uuid
+    from app.models.agent import Agent
+    from app.models.phone_number import PhoneNumber as PhoneNumberModel
 
-    numbers: list[PhoneNumber] = []
+    # Get user UUID for database queries
+    user_uuid = user_id_to_uuid(current_user.id)
 
-    if provider == "twilio":
-        twilio_service = await get_twilio_service(current_user.id, db, workspace_id=workspace_uuid)
-        if not twilio_service:
-            # Return empty list when credentials not configured (not an error)
-            return []
-        numbers = await twilio_service.list_phone_numbers()
+    # Query phone numbers from Voice Noob database owned by this user
+    query = select(PhoneNumberModel).where(
+        PhoneNumberModel.user_id == user_uuid,
+        PhoneNumberModel.provider == provider,
+    )
 
-    elif provider == "telnyx":
-        telnyx_service = await get_telnyx_service(current_user.id, db, workspace_id=workspace_uuid)
-        if not telnyx_service:
-            # Return empty list when credentials not configured (not an error)
-            return []
-        numbers = await telnyx_service.list_phone_numbers()
+    result = await db.execute(query)
+    db_phone_numbers = result.scalars().all()
 
-    else:
-        raise HTTPException(status_code=400, detail="Invalid provider. Use 'twilio' or 'telnyx'.")
+    # Build response with agent assignments
+    response = []
+    for phone in db_phone_numbers:
+        # Look up assigned agent
+        agent_result = await db.execute(select(Agent).where(Agent.phone_number_id == str(phone.id)))
+        agent = agent_result.scalar_one_or_none()
 
-    # Map to response model
-    return [
-        PhoneNumberResponse(
-            id=n.id,
-            phone_number=n.phone_number,
-            friendly_name=n.friendly_name,
-            provider=n.provider,
-            capabilities=n.capabilities,
-            assigned_agent_id=n.assigned_agent_id,
+        response.append(
+            PhoneNumberResponse(
+                id=str(phone.id),
+                phone_number=phone.phone_number,
+                friendly_name=phone.friendly_name,
+                provider=phone.provider,
+                capabilities={
+                    "voice": phone.can_receive_calls or phone.can_make_calls,
+                    "sms": phone.can_receive_sms or phone.can_send_sms,
+                },
+                assigned_agent_id=str(agent.id) if agent else None,
+            )
         )
-        for n in numbers
-    ]
+    return response
 
 
 @router.post("/phone-numbers/search", response_model=list[PhoneNumberResponse])
@@ -448,7 +449,7 @@ async def initiate_call(
     request: Request,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
-    workspace_id: str = Query(..., description="Workspace ID for API key isolation"),
+    workspace_id: str | None = Query(None, description="Workspace ID for API key isolation"),
 ) -> CallResponse:
     """Initiate an outbound call.
 
@@ -467,18 +468,25 @@ async def initiate_call(
     )
     log.info("initiating_call", to=call_request.to_number, from_=call_request.from_number)
 
-    # Parse workspace_id
-    try:
-        workspace_uuid = uuid.UUID(workspace_id)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail="Invalid workspace_id format") from e
-
-    # Load agent to get provider preference
+    # Load agent to get provider preference and workspace
     result = await db.execute(select(Agent).where(Agent.id == uuid.UUID(call_request.agent_id)))
     agent = result.scalar_one_or_none()
 
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
+
+    # Get workspace_id from agent if not provided
+    if not workspace_id:
+        agent_workspace_id = await get_agent_workspace_id(agent.id, db)
+        if not agent_workspace_id:
+            raise HTTPException(status_code=400, detail="Agent does not belong to any workspace")
+        workspace_uuid = agent_workspace_id
+    else:
+        # Parse workspace_id
+        try:
+            workspace_uuid = uuid.UUID(workspace_id)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail="Invalid workspace_id format") from e
 
     # Determine provider from agent's phone number configuration
     # Default to Telnyx if not specified

@@ -76,6 +76,7 @@ export interface InitiateCallRequest {
   to_number: string;
   from_number: string;
   agent_id: string;
+  workspace_id?: string;
 }
 
 export interface CallResponse {
@@ -179,12 +180,21 @@ export async function releasePhoneNumber(phoneNumberId: string, provider: Provid
  * Initiate an outbound call
  */
 export async function initiateCall(request: InitiateCallRequest): Promise<CallResponse> {
-  const response = await fetchWithTimeout(`${API_BASE}/api/v1/telephony/calls`, {
+  const url = new URL(`${API_BASE}/api/v1/telephony/calls`);
+  if (request.workspace_id) {
+    url.searchParams.set("workspace_id", request.workspace_id);
+  }
+
+  const response = await fetchWithTimeout(url.toString(), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(request),
+    body: JSON.stringify({
+      to_number: request.to_number,
+      from_number: request.from_number,
+      agent_id: request.agent_id,
+    }),
   });
 
   if (!response.ok) {

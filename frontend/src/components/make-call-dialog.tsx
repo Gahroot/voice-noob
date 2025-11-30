@@ -29,11 +29,12 @@ interface MakeCallDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   agent: Agent;
+  workspaceId?: string;
 }
 
 type CallState = "idle" | "dialing" | "ringing" | "in_progress" | "ended";
 
-export function MakeCallDialog({ open, onOpenChange, agent }: MakeCallDialogProps) {
+export function MakeCallDialog({ open, onOpenChange, agent, workspaceId }: MakeCallDialogProps) {
   const [phoneNumber, setPhoneNumber] = useState("");
   const [selectedFromNumber, setSelectedFromNumber] = useState<string>("");
   const [callState, setCallState] = useState<CallState>("idle");
@@ -126,6 +127,7 @@ export function MakeCallDialog({ open, onOpenChange, agent }: MakeCallDialogProp
       to_number: phoneNumber,
       from_number: selectedFromNumber,
       agent_id: agent.id,
+      workspace_id: workspaceId,
     });
   };
 
