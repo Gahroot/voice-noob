@@ -44,6 +44,106 @@ class TelnyxService(TelephonyProvider):
             )
         return self._http_client
 
+    async def _make_request(
+        self,
+        method: str,
+        endpoint: str,
+        json_data: dict | None = None,  # type: ignore[type-arg]
+        params: dict | None = None,  # type: ignore[type-arg]
+    ) -> dict:  # type: ignore[type-arg]
+        """Make HTTP request to Telnyx API with comprehensive logging and error details.
+
+        Args:
+            method: HTTP method (GET, POST, PATCH, DELETE)
+            endpoint: API endpoint (e.g., '/calls', '/call_control_applications')
+            json_data: Request body
+            params: Query parameters
+
+        Returns:
+            Response data dictionary
+
+        Raises:
+            ValueError: If request fails with details from Telnyx
+        """
+        client = await self._get_http_client()
+
+        self.logger.info(
+            "telnyx_api_request_start",
+            method=method,
+            endpoint=endpoint,
+            has_json=json_data is not None,
+            has_params=params is not None,
+        )
+
+        # Log sanitized request details (don't log sensitive data)
+        if json_data:
+            sanitized_data = {k: ("***" if k == "webhook_url" else v) for k, v in json_data.items()}
+            self.logger.debug("request_payload", payload=sanitized_data)
+
+        try:
+            response = await client.request(method, endpoint, json=json_data, params=params)
+
+            # Log response status and headers
+            self.logger.debug(
+                "telnyx_api_response",
+                status=response.status_code,
+                content_length=len(response.content),
+            )
+
+            # Try to parse response body
+            try:
+                response_body = response.json()
+            except Exception:
+                response_body = {"raw_content": response.text[:500]}
+
+            # Check for errors
+            http_error_status = 400
+            if response.status_code >= http_error_status:
+                error_msg = "Telnyx API Error"
+
+                # Extract error details from Telnyx response
+                if "errors" in response_body:
+                    errors = response_body.get("errors", [])
+                    error_details = []
+                    for error in errors:
+                        if isinstance(error, dict):
+                            error_details.append(
+                                f"{error.get('code', 'UNKNOWN')}: {error.get('detail', error.get('message', 'Unknown error'))}"
+                            )
+                        else:
+                            error_details.append(str(error))
+                    error_msg = " | ".join(error_details) if error_details else error_msg
+
+                self.logger.error(
+                    "telnyx_api_error",
+                    status=response.status_code,
+                    error_message=error_msg,
+                    request_id=response_body.get("request_id", "unknown"),
+                    full_response=response_body,
+                )
+
+                error_detail = (
+                    f"Telnyx API {response.status_code}: {error_msg}\n"
+                    f"Request ID: {response_body.get('request_id', 'unknown')}\n"
+                    f"Full response: {response_body}"
+                )
+                raise ValueError(error_detail) from None  # noqa: TRY301
+
+            response.raise_for_status()
+            self.logger.debug("telnyx_api_success", endpoint=endpoint, status=response.status_code)
+            return response_body  # type: ignore[no-any-return]
+
+        except httpx.HTTPError as e:
+            self.logger.exception(
+                "telnyx_http_error", method=method, endpoint=endpoint, error=str(e)
+            )
+            raise ValueError(f"HTTP error calling Telnyx {endpoint}: {e!s}") from e
+        except ValueError:
+            raise
+        except Exception as e:
+            self.logger.exception("telnyx_unexpected_error", method=method, endpoint=endpoint)
+            raise ValueError(f"Unexpected error calling Telnyx {endpoint}: {e!s}") from e
+
     async def initiate_call(
         self,
         to_number: str,
@@ -77,12 +177,26 @@ class TelnyxService(TelephonyProvider):
             agent_id=agent_id,
         )
 
+        # Validate configuration before proceeding
+        self._validate_api_key()
+
+        # Additional validation
+        if not to_number:
+            msg = "Destination phone number is required"
+            self.logger.error("missing_to_number")
+            raise ValueError(msg) from None
+        if not from_number:
+            msg = "Source phone number is required"
+            self.logger.error("missing_from_number")
+            raise ValueError(msg) from None
+
         try:
+            self.logger.info("getting_call_control_application")
             # Get call control application ID for the call
             call_control_app_id = await self._get_call_control_application_id()
+            self.logger.debug("call_control_application_id_obtained", app_id=call_control_app_id)
 
             # Dial the call using the Telnyx Call Control API
-            client = await self._get_http_client()
             payload = {
                 "to": to_number,
                 "from": from_number,
@@ -93,17 +207,24 @@ class TelnyxService(TelephonyProvider):
             if webhook_url:
                 payload["webhook_url"] = webhook_url
 
-            self.logger.debug("sending_call_request", payload=payload)
-            response = await client.post("/calls", json=payload)
-            response.raise_for_status()
-            call_data = response.json().get("data", {})
+            self.logger.info(
+                "sending_call_request", to=to_number, from_=from_number, app_id=call_control_app_id
+            )
+            call_response = await self._make_request("POST", "/calls", json_data=payload)
+            call_data = call_response.get("data", {})
             call_control_id = call_data.get("call_control_id", "")
 
             if not call_control_id:
                 msg = "No call_control_id returned from Telnyx API"
+                self.logger.error("no_call_control_id", response_data=call_response)
                 raise ValueError(msg) from None  # noqa: TRY301
 
-            self.logger.info("call_initiated", call_control_id=call_control_id)
+            self.logger.info(
+                "call_initiated",
+                call_control_id=call_control_id,
+                to=to_number,
+                from_=from_number,
+            )
 
             return CallInfo(
                 call_id=call_control_id,
@@ -115,6 +236,8 @@ class TelnyxService(TelephonyProvider):
                 agent_id=agent_id,
             )
 
+        except ValueError:
+            raise
         except Exception as e:
             self.logger.exception(
                 "call_initiation_failed",
@@ -404,6 +527,17 @@ class TelnyxService(TelephonyProvider):
             self.logger.exception("configure_failed", id=phone_number_id, error=str(e))
             return False
 
+    def _validate_api_key(self) -> None:
+        """Validate that API key is configured.
+
+        Raises:
+            ValueError: If API key is not configured
+        """
+        if not self.api_key:
+            msg = "Telnyx API key is not configured"
+            self.logger.error("api_key_not_configured")
+            raise ValueError(msg) from None
+
     def _normalize_e164(self, phone_number: str) -> str:
         """Normalize a phone number to E.164 format.
 
@@ -464,32 +598,34 @@ class TelnyxService(TelephonyProvider):
         Raises:
             ValueError: If no application ID is found or created
         """
-        client = await self._get_http_client()
-
         try:
+            self.logger.info("fetching_call_control_applications")
             # List existing Call Control Applications
-            response = await client.get("/call_control_applications")
-            response.raise_for_status()
-            data = response.json()
+            data = await self._make_request("GET", "/call_control_applications")
 
             applications = data.get("data", [])
+            self.logger.debug("applications_list_count", count=len(applications))
+
             if applications:
                 app_id = applications[0].get("id")
                 if app_id:
-                    self.logger.info("using_existing_call_control_application", app_id=app_id)
+                    self.logger.info(
+                        "using_existing_call_control_application",
+                        app_id=app_id,
+                        application_name=applications[0].get("application_name", "unknown"),
+                    )
                     return str(app_id)
 
             # Create a new Call Control Application if none exists
             self.logger.info("creating_new_call_control_application")
-            response = await client.post(
+            new_data = await self._make_request(
+                "POST",
                 "/call_control_applications",
-                json={
+                json_data={
                     "application_name": "voice-agent-application",
                     "active": True,
                 },
             )
-            response.raise_for_status()
-            new_data = response.json()
             app_id = new_data.get("data", {}).get("id")
 
             if not app_id:
@@ -499,6 +635,8 @@ class TelnyxService(TelephonyProvider):
             self.logger.info("call_control_application_created", app_id=app_id)
             return str(app_id)
 
+        except ValueError:
+            raise
         except Exception as e:
             self.logger.exception("failed_to_get_or_create_call_control_application", error=str(e))
             raise ValueError(
