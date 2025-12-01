@@ -14,6 +14,9 @@ from app.services.telephony.base import (
 
 logger = structlog.get_logger()
 
+# HTTP status codes
+UNPROCESSABLE_ENTITY = 422
+
 
 class TelnyxService(TelephonyProvider):
     """Telnyx telephony service for voice calls and phone number management."""
@@ -191,25 +194,19 @@ class TelnyxService(TelephonyProvider):
             raise ValueError(msg) from None
 
         try:
-            self.logger.info("getting_call_control_application")
-            # Get call control application ID for the call
-            # Pass webhook_url so it can be configured when creating the application
-            call_control_app_id = await self._get_call_control_application_id(webhook_url)
-            self.logger.debug("call_control_application_id_obtained", app_id=call_control_app_id)
+            self.logger.info("initiating_voice_api_call")
+            # Get or create Call Control Application with webhook
+            connection_id = await self._get_call_control_application_id(webhook_url)
+            self.logger.debug("using_connection_id", connection_id=connection_id)
 
-            # Dial the call using the Telnyx Call Control API
             payload = {
                 "to": to_number,
                 "from": from_number,
-                "call_control_application_id": call_control_app_id,
+                "connection_id": connection_id,
             }
 
-            # Add webhook_url if provided (optional)
-            if webhook_url:
-                payload["webhook_url"] = webhook_url
-
             self.logger.info(
-                "sending_call_request", to=to_number, from_=from_number, app_id=call_control_app_id
+                "sending_call_request", to=to_number, from_=from_number, connection_id=connection_id
             )
             call_response = await self._make_request("POST", "/calls", json_data=payload)
             call_data = call_response.get("data", {})
@@ -262,6 +259,10 @@ class TelnyxService(TelephonyProvider):
         try:
             client = await self._get_http_client()
             response = await client.post(f"/calls/{call_id}/actions/hangup", json={})
+            # 422 means the call is already disconnected, which is fine
+            if response.status_code == UNPROCESSABLE_ENTITY:
+                self.logger.info("hangup_call_already_disconnected", call_control_id=call_id)
+                return True
             response.raise_for_status()
             return True
         except Exception:
@@ -587,6 +588,101 @@ class TelnyxService(TelephonyProvider):
         # Already has country code
         return f"+{digits}"
 
+    async def _ensure_outbound_profile(self) -> str:
+        """Get or create an Outbound Voice Profile for making outbound calls.
+
+        Outbound Voice Profiles are REQUIRED by Telnyx for Call Control API outbound calls.
+        They manage billing, destination whitelisting, and concurrency limits.
+
+        Returns:
+            Outbound Voice Profile ID string
+
+        Raises:
+            ValueError: If profile cannot be created or retrieved
+        """
+        try:
+            self.logger.info("checking_for_existing_outbound_profiles")
+            # List existing profiles
+            data = await self._make_request("GET", "/outbound_voice_profiles")
+            profiles = data.get("data", [])
+
+            if profiles:
+                # Use the first enabled profile
+                for profile in profiles:
+                    if profile.get("enabled", False):
+                        profile_id = profile.get("id")
+                        self.logger.info("using_existing_outbound_profile", profile_id=profile_id)
+                        return str(profile_id)
+
+            # Create new profile if none exist
+            self.logger.info("creating_new_outbound_voice_profile")
+            profile_response = await self._make_request(
+                "POST",
+                "/outbound_voice_profiles",
+                json_data={
+                    "name": "voice-agent-outbound-profile",
+                    "enabled": True,
+                },
+            )
+
+            profile_id = profile_response.get("data", {}).get("id")
+            if not profile_id:
+                msg = "No outbound voice profile ID returned from Telnyx API"
+                self.logger.error("no_profile_id_returned")
+                raise ValueError(msg) from None
+
+            self.logger.info("outbound_voice_profile_created", profile_id=profile_id)
+            return str(profile_id)
+
+        except ValueError:
+            raise
+        except Exception as e:
+            self.logger.exception("failed_to_ensure_outbound_profile", error=str(e))
+            raise ValueError(f"Failed to manage Outbound Voice Profile: {e!s}") from e
+
+    async def _assign_outbound_profile_to_app(
+        self, app_id: str, profile_id: str, channel_limit: int = 10
+    ) -> None:
+        """Assign an Outbound Voice Profile to a Call Control Application.
+
+        Args:
+            app_id: Call Control Application ID
+            profile_id: Outbound Voice Profile ID
+            channel_limit: Max concurrent outbound calls (default: 10)
+
+        Raises:
+            ValueError: If assignment fails
+        """
+        try:
+            self.logger.info(
+                "assigning_outbound_profile_to_app",
+                app_id=app_id,
+                profile_id=profile_id,
+                channel_limit=channel_limit,
+            )
+
+            await self._make_request(
+                "PATCH",
+                f"/call_control_applications/{app_id}",
+                json_data={
+                    "outbound": {
+                        "outbound_voice_profile_id": profile_id,
+                        "channel_limit": channel_limit,
+                    }
+                },
+            )
+
+            self.logger.info("outbound_profile_assigned_successfully", app_id=app_id)
+
+        except Exception as e:
+            self.logger.exception(
+                "failed_to_assign_outbound_profile",
+                app_id=app_id,
+                profile_id=profile_id,
+                error=str(e),
+            )
+            raise ValueError(f"Failed to assign outbound profile: {e!s}") from e
+
     async def _get_call_control_application_id(self, webhook_event_url: str | None = None) -> str:
         """Get or create a Telnyx Call Control Application for outbound calls.
 
@@ -604,7 +700,7 @@ class TelnyxService(TelephonyProvider):
             ValueError: If no application ID is found or created
         """
         try:
-            self.logger.info("fetching_call_control_applications")
+            self.logger.info("fetching_call_control_applications", webhook_url=webhook_event_url)
             # List existing Call Control Applications
             data = await self._make_request("GET", "/call_control_applications")
 
@@ -612,28 +708,57 @@ class TelnyxService(TelephonyProvider):
             self.logger.debug("applications_list_count", count=len(applications))
 
             if applications:
-                app_id = applications[0].get("id")
-                if app_id:
-                    self.logger.info(
-                        "using_existing_call_control_application",
-                        app_id=app_id,
-                        application_name=applications[0].get("application_name", "unknown"),
-                    )
-                    return str(app_id)
+                # Find the first application with a valid webhook_event_url
+                self.logger.info("checking_existing_applications", count=len(applications))
+                for i, app in enumerate(applications):
+                    app_id = app.get("id")
+                    webhook_url = app.get("webhook_event_url")
 
-            # Create a new Call Control Application if none exists
+                    self.logger.debug(
+                        "application_details",
+                        index=i,
+                        app_id=app_id,
+                        webhook_url=webhook_url,
+                        application_name=app.get("application_name", "unknown"),
+                    )
+
+                    if app_id and webhook_url:
+                        self.logger.info(
+                            "using_existing_call_control_application",
+                            app_id=app_id,
+                            application_name=app.get("application_name", "unknown"),
+                            has_webhook=True,
+                        )
+                        # Ensure outbound profile is assigned to this app
+                        profile_id = await self._ensure_outbound_profile()
+                        await self._assign_outbound_profile_to_app(app_id, profile_id)
+                        return str(app_id)
+
+                # If we found apps but none have valid webhooks, we need to create a new one
+                # (or update the existing one - but creation is safer)
+                self.logger.warning(
+                    "existing_applications_found_but_no_valid_webhook",
+                    count=len(applications),
+                )
+
+            # Create a new Call Control Application if none exists or none have valid webhooks
             self.logger.info("creating_new_call_control_application", webhook_url=webhook_event_url)
             app_payload = {
                 "application_name": "voice-agent-application",
                 "active": True,
             }
 
-            # Add webhook_event_url if provided (required by Telnyx)
+            # Add webhook_event_url if provided (REQUIRED by Telnyx for Call Control API)
             if webhook_event_url:
-                app_payload["webhook_event_url"] = webhook_event_url
-                self.logger.debug("webhook_event_url_added", url=webhook_event_url)
+                # Extract just the base path for webhook URL (remove query parameters)
+                # Telnyx requires the webhook URL to be clean without query params
+                base_webhook_url = webhook_event_url.split("?")[0] if "?" in webhook_event_url else webhook_event_url
+                app_payload["webhook_event_url"] = base_webhook_url
+                self.logger.debug("webhook_event_url_added", url=base_webhook_url)
             else:
-                self.logger.warning("webhook_event_url_not_provided")
+                msg = "webhook_event_url is required for Call Control Application creation"
+                self.logger.error("webhook_event_url_missing")
+                raise ValueError(msg) from None
 
             new_data = await self._make_request(
                 "POST",
@@ -647,6 +772,11 @@ class TelnyxService(TelephonyProvider):
                 raise ValueError(msg) from None  # noqa: TRY301
 
             self.logger.info("call_control_application_created", app_id=app_id)
+
+            # Ensure outbound profile is assigned to this new app
+            profile_id = await self._ensure_outbound_profile()
+            await self._assign_outbound_profile_to_app(app_id, profile_id)
+
             return str(app_id)
 
         except ValueError:
