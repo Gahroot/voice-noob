@@ -886,11 +886,17 @@ async def telnyx_voice_webhook(
 async def telnyx_answer_webhook(
     request: Request,
     agent_id: str = Query(default=""),
+    db: AsyncSession = Depends(get_db),
 ) -> Response:
     """Handle Telnyx outbound call connection.
 
     Called when an outbound call is answered by the recipient.
     Returns TeXML to connect to our WebSocket.
+
+    Args:
+        request: HTTP request from Telnyx
+        agent_id: Agent UUID from query parameter
+        db: Database session
     """
     # Validate Telnyx signature
     await verify_telnyx_webhook(request)
@@ -898,10 +904,51 @@ async def telnyx_answer_webhook(
     log = logger.bind(webhook="telnyx_answer", agent_id=agent_id)
     log.info("telnyx_outbound_answered")
 
-    # Build WebSocket URL
+    # Get agent and workspace_id
+    try:
+        agent_uuid = uuid.UUID(agent_id)
+    except ValueError:
+        log.exception("invalid_agent_id_format")
+        telnyx_service = TelnyxService("")
+        texml = telnyx_service.generate_answer_response(
+            f"wss://{request.base_url.netloc}/ws/telephony/telnyx/{agent_id}",
+            agent_id,
+        )
+        return Response(content=texml, media_type="application/xml")
+
+    result = await db.execute(select(Agent).where(Agent.id == agent_uuid))
+    agent = result.scalar_one_or_none()
+
+    if not agent:
+        log.error("agent_not_found")
+        # Still return valid TeXML to Telnyx (otherwise call fails)
+        telnyx_service = TelnyxService("")
+        texml = telnyx_service.generate_answer_response(
+            f"wss://{request.base_url.netloc}/ws/telephony/telnyx/{agent_id}",
+            agent_id,
+        )
+        return Response(content=texml, media_type="application/xml")
+
+    # Get workspace_id for the agent
+    workspace_id = await get_agent_workspace_id(agent.id, db)
+    if not workspace_id:
+        log.warning("agent_workspace_not_found")
+        # Continue without workspace_id fallback for backward compatibility
+
+    # Build WebSocket URL with workspace_id
     base_url = str(request.base_url).rstrip("/")
     ws_url = base_url.replace("http://", "wss://").replace("https://", "wss://")
-    stream_url = f"{ws_url}/ws/telephony/telnyx/{agent_id}"
+
+    if workspace_id:
+        stream_url = f"{ws_url}/ws/telephony/telnyx/{agent_id}?workspace_id={workspace_id}"
+    else:
+        stream_url = f"{ws_url}/ws/telephony/telnyx/{agent_id}"
+
+    log.info(
+        "websocket_url_constructed",
+        stream_url=stream_url,
+        has_workspace_id=bool(workspace_id),
+    )
 
     telnyx_service = TelnyxService("")
     texml = telnyx_service.generate_answer_response(stream_url, agent_id)
