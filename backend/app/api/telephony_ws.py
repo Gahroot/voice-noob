@@ -227,6 +227,7 @@ async def _handle_twilio_stream(  # noqa: PLR0915
 async def telnyx_media_stream(
     websocket: WebSocket,
     agent_id: str,
+    workspace_id: str = "",
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """WebSocket endpoint for Telnyx Media Streams.
@@ -238,11 +239,18 @@ async def telnyx_media_stream(
     - {"event": "start", "stream_id": "...", "call_control_id": "..."}
     - {"event": "media", "media": {"payload": "base64_audio"}}
     - {"event": "stop"}
+
+    Args:
+        websocket: WebSocket connection from Telnyx
+        agent_id: Agent UUID
+        workspace_id: Workspace UUID (required for API key isolation)
+        db: Database session
     """
     session_id = str(uuid.uuid4())
     log = logger.bind(
         endpoint="telnyx_media_stream",
         agent_id=agent_id,
+        workspace_id=workspace_id,
         session_id=session_id,
     )
 
@@ -253,6 +261,16 @@ async def telnyx_media_stream(
     call_control_id: str = ""
 
     try:
+        # Parse and validate workspace_id
+        workspace_uuid: uuid.UUID | None = None
+        if workspace_id:
+            try:
+                workspace_uuid = uuid.UUID(workspace_id)
+            except ValueError:
+                log.exception("invalid_workspace_id_format")
+                await websocket.close(code=4000, reason="Invalid workspace ID format")
+                return
+
         # Load agent configuration
         result = await db.execute(select(Agent).where(Agent.id == uuid.UUID(agent_id)))
         agent = result.scalar_one_or_none()
@@ -284,12 +302,13 @@ async def telnyx_media_stream(
             "voice": agent.voice or "shimmer",
         }
 
-        # Initialize GPT Realtime session
+        # Initialize GPT Realtime session with workspace context for API key isolation
         async with GPTRealtimeSession(
             db=db,
             user_id=user_id_int,
             agent_config=agent_config,
             session_id=session_id,
+            workspace_id=workspace_uuid,
         ) as realtime_session:
             # Handle Telnyx media stream
             await _handle_telnyx_stream(
