@@ -297,6 +297,63 @@ class TelnyxService(TelephonyProvider):
             self.logger.exception("answer_failed", call_control_id=call_control_id)
             return False
 
+    async def start_streaming(self, call_control_id: str, stream_url: str) -> bool:
+        """Start media streaming on a call to a WebSocket URL.
+
+        This is for Call Control API - sends audio to a WebSocket endpoint.
+
+        Args:
+            call_control_id: Telnyx Call Control ID
+            stream_url: WebSocket URL to stream audio to (wss://...)
+
+        Returns:
+            True if streaming started successfully
+        """
+        self.logger.info(
+            "starting_streaming",
+            call_control_id=call_control_id,
+            stream_url=stream_url,
+        )
+
+        try:
+            client = await self._get_http_client()
+            payload = {
+                "stream_url": stream_url,
+                "stream_track": "inbound_track",  # Only receive caller's audio (prevents AI hearing itself)
+                "stream_bidirectional_mode": "rtp",  # Enable sending audio back to caller
+                "stream_bidirectional_codec": "PCMU",  # Use PCMU codec (mulaw) at 8kHz
+            }
+
+            self.logger.debug("streaming_start_payload", payload=payload)
+
+            response = await client.post(
+                f"/calls/{call_control_id}/actions/streaming_start",
+                json=payload,
+            )
+
+            if response.status_code == UNPROCESSABLE_ENTITY:
+                # Call might already be disconnected
+                self.logger.warning(
+                    "streaming_start_failed_422",
+                    call_control_id=call_control_id,
+                    response_text=response.text,
+                )
+                return False
+
+            response.raise_for_status()
+            self.logger.info(
+                "streaming_started_successfully",
+                call_control_id=call_control_id,
+            )
+            return True
+        except Exception as e:
+            self.logger.exception(
+                "streaming_start_failed",
+                call_control_id=call_control_id,
+                error=str(e),
+            )
+            return False
+
     async def stream_audio(
         self,
         call_control_id: str,
@@ -752,7 +809,11 @@ class TelnyxService(TelephonyProvider):
             if webhook_event_url:
                 # Extract just the base path for webhook URL (remove query parameters)
                 # Telnyx requires the webhook URL to be clean without query params
-                base_webhook_url = webhook_event_url.split("?")[0] if "?" in webhook_event_url else webhook_event_url
+                base_webhook_url = (
+                    webhook_event_url.split("?")[0]
+                    if "?" in webhook_event_url
+                    else webhook_event_url
+                )
                 app_payload["webhook_event_url"] = base_webhook_url
                 self.logger.debug("webhook_event_url_added", url=base_webhook_url)
             else:

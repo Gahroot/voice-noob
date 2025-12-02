@@ -302,6 +302,14 @@ async def telnyx_media_stream(
             "voice": agent.voice or "shimmer",
         }
 
+        log.info(
+            "initializing_gpt_realtime_session",
+            agent_name=agent.name,
+            language=agent.language,
+            voice=agent.voice or "shimmer",
+            enabled_tools=agent.enabled_tools,
+        )
+
         # Initialize GPT Realtime session with workspace context for API key isolation
         async with GPTRealtimeSession(
             db=db,
@@ -310,11 +318,12 @@ async def telnyx_media_stream(
             session_id=session_id,
             workspace_id=workspace_uuid,
         ) as realtime_session:
-            # Handle Telnyx media stream
+            # Handle Telnyx media stream with initial greeting for outbound calls
             await _handle_telnyx_stream(
                 websocket=websocket,
                 realtime_session=realtime_session,
                 log=log,
+                initial_greeting=agent.initial_greeting,
             )
 
     except WebSocketDisconnect:
@@ -325,10 +334,11 @@ async def telnyx_media_stream(
         log.info("telnyx_websocket_closed", stream_id=stream_id, call_control_id=call_control_id)
 
 
-async def _handle_telnyx_stream(
+async def _handle_telnyx_stream(  # noqa: PLR0915
     websocket: WebSocket,
     realtime_session: GPTRealtimeSession,
     log: Any,
+    initial_greeting: str | None = None,
 ) -> None:
     """Handle Telnyx Media Stream messages.
 
@@ -336,21 +346,27 @@ async def _handle_telnyx_stream(
         websocket: WebSocket connection from Telnyx
         realtime_session: GPT Realtime session
         log: Logger instance
+        initial_greeting: Optional greeting for outbound calls
     """
     stream_id = ""
     call_control_id = ""
+    # Event to signal when stream_id is available (for synchronization)
+    stream_ready = asyncio.Event()
 
-    async def telnyx_to_realtime() -> None:
+    async def telnyx_to_realtime() -> None:  # noqa: PLR0915
         """Forward audio from Telnyx to GPT Realtime."""
         nonlocal stream_id, call_control_id
 
         try:
+            audio_chunk_count = 0
+            log.info("telnyx_to_realtime_loop_started")
             while True:
                 message = await websocket.receive_text()
                 data = json.loads(message)
-                event = data.get("event", "")
+                msg_event = data.get("event", "")
+                log.debug("telnyx_message_received", msg_event=msg_event)
 
-                if event == "start":
+                if msg_event == "start":
                     stream_id = data.get("stream_id", "")
                     start_data = data.get("start", {})
                     call_control_id = start_data.get("call_control_id", "")
@@ -359,68 +375,209 @@ async def _handle_telnyx_stream(
                         stream_id=stream_id,
                         call_control_id=call_control_id,
                     )
+                    # Signal that stream is ready for sending audio
+                    stream_ready.set()
 
-                elif event == "media":
-                    # Decode base64 PCMU audio and forward to Realtime
+                    # Brief delay to let initial audio come in before AI speaks
+                    # This allows the AI to hear if the user says something first
+                    log.info("waiting_for_initial_audio")
+                    await asyncio.sleep(0.8)  # 800ms - enough for "Hello?" but not too long
+
+                    # Trigger initial AI response for outbound calls
+                    log.info("triggering_initial_ai_greeting")
+                    await realtime_session.trigger_initial_response(initial_greeting)
+
+                elif msg_event == "media":
+                    # Decode base64 PCMU audio and convert to PCM16 for OpenAI
                     media = data.get("media", {})
                     payload = media.get("payload", "")
                     if payload:
-                        audio_bytes = base64.b64decode(payload)
-                        await realtime_session.send_audio(audio_bytes)
+                        import audioop
 
-                elif event == "stop":
-                    log.info("telnyx_stream_stopped")
+                        try:
+                            pcmu_bytes = base64.b64decode(payload)
+                            log.debug("pcmu_decoded", pcmu_bytes_length=len(pcmu_bytes))
+
+                            # Convert PCMU (mulaw) to PCM16 at 8kHz
+                            pcm16_8k = audioop.ulaw2lin(pcmu_bytes, 2)
+                            log.debug("audio_converted_to_pcm16", pcm16_bytes_length=len(pcm16_8k))
+
+                            # Upsample from 8kHz to 24kHz for OpenAI Realtime API
+                            pcm16_24k, _ = audioop.ratecv(pcm16_8k, 2, 1, 8000, 24000, None)
+                            log.debug(
+                                "audio_upsampled", from_size=len(pcm16_8k), to_size=len(pcm16_24k)
+                            )
+
+                            log.debug("sending_audio_to_realtime", size_bytes=len(pcm16_24k))
+                            await realtime_session.send_audio(pcm16_24k)
+                            log.debug("audio_sent_successfully")
+
+                            audio_chunk_count += 1
+                            # Log periodically to avoid spam
+                            if audio_chunk_count % 50 == 0:
+                                log.info("audio_chunks_sent", count=audio_chunk_count)
+
+                            # NOTE: Don't commit manually - server_vad handles turn detection
+                            # Committing too frequently interrupts OpenAI's speech detection
+                        except Exception as e:
+                            log.exception(
+                                "audio_conversion_error", error=str(e), error_type=type(e).__name__
+                            )
+
+                elif msg_event == "stop":
+                    log.info("telnyx_stream_stopped", total_chunks=audio_chunk_count)
+                    # Final commit to process any remaining audio
+                    if audio_chunk_count > 0:
+                        log.info("final_audio_commit", chunk_count=audio_chunk_count)
+                        await realtime_session.commit_audio()
+                        log.info("final_commit_complete")
                     break
 
         except WebSocketDisconnect:
             log.info("telnyx_to_realtime_disconnected")
         except Exception as e:
-            log.exception("telnyx_to_realtime_error", error=str(e))
+            log.exception("telnyx_to_realtime_error", error=str(e), error_type=type(e).__name__)
 
-    async def realtime_to_telnyx() -> None:
+    async def realtime_to_telnyx() -> None:  # noqa: PLR0912, PLR0915
         """Forward audio from GPT Realtime to Telnyx."""
         try:
             if not realtime_session.connection:
                 log.error("no_realtime_connection")
                 return
 
+            log.info("realtime_to_telnyx_starting")
+
+            # Wait for stream to be ready before processing events
+            # This ensures stream_id is set before we try to send audio
+            log.info("waiting_for_stream_ready")
+            try:
+                await asyncio.wait_for(stream_ready.wait(), timeout=30.0)
+                log.info("stream_ready_received", stream_id=stream_id)
+            except TimeoutError:
+                log.warning("stream_ready_timeout", timeout_seconds=30)
+                return
+
+            audio_event_count = 0
+            total_event_count = 0
+
             async for event in realtime_session.connection:
                 event_type = event.type
+                total_event_count += 1
+                log.debug(
+                    "realtime_event_received", event_type=event_type, total_events=total_event_count
+                )
 
-                # Handle audio output
-                if event_type == "response.audio.delta":
-                    if hasattr(event, "delta") and event.delta:
-                        audio_bytes = base64.b64decode(event.delta)
-                        payload = base64.b64encode(audio_bytes).decode("utf-8")
-                        await websocket.send_text(
-                            json.dumps(
-                                {
-                                    "event": "media",
-                                    "stream_id": stream_id,
-                                    "media": {"payload": payload},
-                                }
-                            )
+                try:
+                    # Handle tool calls
+                    if event_type == "response.function_call_arguments.done":
+                        log.info(
+                            "handling_function_call",
+                            call_id=event.call_id,
+                            name=event.name,
+                        )
+                        await realtime_session.handle_function_call_event(event)
+
+                    # Handle audio output - convert from PCM16 to PCMU for Telnyx
+                    elif event_type == "response.audio.delta":
+                        if hasattr(event, "delta") and event.delta:
+                            import audioop
+
+                            try:
+                                log.debug(
+                                    "audio_delta_event_received",
+                                    delta_length=len(event.delta) if event.delta else 0,
+                                )
+
+                                # Decode base64 PCM16 from OpenAI (24kHz)
+                                pcm16_24k = base64.b64decode(event.delta)
+                                log.debug("pcm16_decoded", pcm16_bytes_length=len(pcm16_24k))
+
+                                # Resample from 24kHz to 8kHz for Telnyx
+                                pcm16_8k, _ = audioop.ratecv(pcm16_24k, 2, 1, 24000, 8000, None)
+                                log.debug(
+                                    "audio_resampled",
+                                    from_size=len(pcm16_24k),
+                                    to_size=len(pcm16_8k),
+                                )
+
+                                # Convert PCM16 to PCMU (mulaw) for Telnyx
+                                pcmu_bytes = audioop.lin2ulaw(pcm16_8k, 2)
+                                log.debug(
+                                    "audio_converted_to_pcmu", pcmu_bytes_length=len(pcmu_bytes)
+                                )
+
+                                # Encode back to base64 for Telnyx
+                                payload = base64.b64encode(pcmu_bytes).decode("utf-8")
+                                log.debug("payload_encoded", payload_length=len(payload))
+
+                                # Verify stream_id is set before sending
+                                if not stream_id:
+                                    log.warning("stream_id_not_set_skipping_audio")
+                                    continue
+
+                                log.debug("sending_media_to_telnyx", stream_id=stream_id)
+                                # Telnyx bidirectional streaming format - no stream_id needed for outbound
+                                await websocket.send_text(
+                                    json.dumps(
+                                        {
+                                            "event": "media",
+                                            "media": {"payload": payload},
+                                        }
+                                    )
+                                )
+                                log.debug("media_sent_to_telnyx")
+
+                                audio_event_count += 1
+                                if audio_event_count == 1:
+                                    log.info(
+                                        "first_audio_delta_sent_to_telnyx",
+                                        pcm16_bytes=len(pcm16_24k),
+                                        stream_id=stream_id,
+                                    )
+                                elif audio_event_count % 10 == 0:
+                                    log.info("audio_delta_batch", audio_events=audio_event_count)
+                            except Exception as e:
+                                log.exception(
+                                    "audio_delta_error", error=str(e), error_type=type(e).__name__
+                                )
+
+                    # Handle error events from OpenAI - log the actual error
+                    elif event_type == "error":
+                        error_msg = getattr(event, "error", None)
+                        error_code = (
+                            getattr(error_msg, "code", "unknown") if error_msg else "unknown"
+                        )
+                        error_message = (
+                            getattr(error_msg, "message", str(event)) if error_msg else str(event)
+                        )
+                        log.error(
+                            "openai_realtime_error",
+                            error_code=error_code,
+                            error_message=error_message,
                         )
 
-                # Handle tool calls
-                elif event_type == "response.function_call_arguments.done":
-                    log.info(
-                        "handling_function_call",
-                        call_id=event.call_id,
-                        name=event.name,
-                    )
-                    await realtime_session.handle_function_call_event(event)
+                    # Log other relevant events for debugging
+                    elif event_type in [
+                        "response.audio.done",
+                        "response.done",
+                        "input_audio_buffer.speech_started",
+                        "input_audio_buffer.speech_stopped",
+                    ]:
+                        log.info("realtime_event", event_type=event_type)
 
-                elif event_type in [
-                    "response.audio.done",
-                    "response.done",
-                    "input_audio_buffer.speech_started",
-                    "input_audio_buffer.speech_stopped",
-                ]:
-                    log.debug("realtime_event", event_type=event_type)
+                    else:
+                        log.debug("unhandled_realtime_event", event_type=event_type)
+
+                except Exception as e:
+                    log.exception(
+                        "event_processing_error",
+                        event_type=event_type,
+                        error=str(e),
+                        error_type=type(e).__name__,
+                    )
 
         except Exception as e:
-            log.exception("realtime_to_telnyx_error", error=str(e))
+            log.exception("realtime_to_telnyx_error", error=str(e), error_type=type(e).__name__)
 
     # Run both directions concurrently
     await asyncio.gather(

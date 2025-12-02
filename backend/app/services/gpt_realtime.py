@@ -146,13 +146,21 @@ class GPTRealtimeSession:
 
     async def initialize(self) -> None:
         """Initialize the Realtime session with internal tools."""
-        self.logger.info("gpt_realtime_session_initializing")
+        self.logger.info("gpt_realtime_session_initializing", workspace_id=str(self.workspace_id))
 
         # Get user's API keys from settings (uses UUID)
         # Workspace isolation: only use workspace-specific API keys, no fallback
+        self.logger.debug("fetching_user_api_keys", user_id_uuid=str(self.user_id_uuid))
         user_settings = await get_user_api_keys(
             self.user_id_uuid, self.db, workspace_id=self.workspace_id
         )
+
+        if user_settings:
+            self.logger.debug(
+                "user_settings_retrieved", has_openai_key=bool(user_settings.openai_api_key)
+            )
+        else:
+            self.logger.warning("no_user_settings_found", user_id_uuid=str(self.user_id_uuid))
 
         # Strictly use workspace API key - no fallback to global key for billing isolation
         if not user_settings or not user_settings.openai_api_key:
@@ -161,25 +169,38 @@ class GPTRealtimeSession:
                 "OpenAI API key not configured for this workspace. Please add it in Settings > Workspace API Keys."
             )
         api_key = user_settings.openai_api_key
-        self.logger.info("using_workspace_openai_key")
+        self.logger.info("using_workspace_openai_key", key_length=len(api_key))
 
         # Initialize OpenAI client with user's or global API key
+        self.logger.debug("initializing_openai_client")
         self.client = AsyncOpenAI(api_key=api_key)
+        self.logger.debug("openai_client_created")
 
         # Get integration credentials for the workspace
         integrations: dict[str, Any] = {}
         if self.workspace_id:
+            self.logger.debug(
+                "fetching_workspace_integrations", workspace_id=str(self.workspace_id)
+            )
             integrations = await get_workspace_integrations(
                 self.user_id_uuid, self.workspace_id, self.db
             )
+            self.logger.debug("workspace_integrations_fetched", integration_count=len(integrations))
 
         # Initialize tool registry with enabled tools and workspace context
+        self.logger.debug("initializing_tool_registry")
         self.tool_registry = ToolRegistry(
             self.db, self.user_id, integrations=integrations, workspace_id=self.workspace_id
         )
+        self.logger.debug("tool_registry_initialized")
 
         # Connect to OpenAI Realtime API
+        self.logger.info("connecting_to_realtime_api")
         await self._connect_realtime_api()
+
+        # Configure session with agent settings, tools, and audio modality
+        self.logger.info("configuring_session_after_connection")
+        await self._configure_session()
 
         self.logger.info("gpt_realtime_session_initialized")
 
@@ -197,11 +218,7 @@ class GPTRealtimeSession:
             self.connection = await self.client.beta.realtime.connect(model=model).__aenter__()
 
             self.logger.info("realtime_connection_established")
-
-            # Configure session with internal tools
-            await self._configure_session()
-
-            self.logger.info("connected_to_openai_realtime")
+            # Note: Session configuration is done in initialize() AFTER tool_registry is set
 
         except Exception as e:
             self.logger.exception(
@@ -249,8 +266,7 @@ class GPTRealtimeSession:
             "modalities": ["text", "audio"],
             "instructions": instructions,
             "voice": voice,
-            "speed": 1.1,  # Slightly faster speech (1.0 = normal, range: 0.25-1.5)
-            "temperature": temperature,  # Lower for consistent, natural delivery
+            "temperature": temperature,
             "input_audio_format": "pcm16",
             "output_audio_format": "pcm16",
             "input_audio_transcription": {"model": "whisper-1"},
@@ -394,18 +410,90 @@ class GPTRealtimeSession:
         try:
             import base64
 
+            self.logger.debug("send_audio_called", audio_bytes=len(audio_data))
+
             # Convert raw bytes to base64 string as required by OpenAI Realtime API
             audio_base64 = base64.b64encode(audio_data).decode("utf-8")
+            self.logger.debug("audio_base64_encoded", base64_length=len(audio_base64))
 
             # Use SDK's input_audio_buffer.append method
+            self.logger.debug("appending_to_input_buffer")
             await self.connection.input_audio_buffer.append(audio=audio_base64)
             self.logger.debug(
-                "audio_sent_to_realtime",
+                "audio_appended_to_realtime",
                 size_bytes=len(audio_data),
                 base64_length=len(audio_base64),
             )
         except Exception as e:
             self.logger.exception("send_audio_error", error=str(e), error_type=type(e).__name__)
+
+    async def commit_audio(self) -> None:
+        """Commit the input audio buffer to trigger OpenAI processing."""
+        if not self.connection:
+            self.logger.error("commit_audio_failed_no_connection")
+            return
+
+        try:
+            self.logger.info("committing_audio_buffer_to_openai")
+            await self.connection.input_audio_buffer.commit()
+            self.logger.info("audio_buffer_committed_successfully")
+        except Exception as e:
+            self.logger.exception("commit_audio_error", error=str(e), error_type=type(e).__name__)
+
+    async def trigger_initial_response(self, greeting: str | None = None) -> None:
+        """Trigger an initial AI response for outbound calls.
+
+        For outbound calls, the AI should speak first rather than waiting for user input.
+        This sends a response.create event to trigger the AI to start speaking.
+
+        Args:
+            greeting: Optional custom greeting message. If not provided, uses a default.
+        """
+        if not self.connection:
+            self.logger.error("trigger_initial_response_failed_no_connection")
+            return
+
+        try:
+            self.logger.info("triggering_initial_response", greeting=greeting)
+
+            # Create a conversation item with the greeting instruction
+            # Note: We add context but let VAD trigger the response naturally
+            # This allows the AI to hear if the user speaks first
+            if greeting:
+                await self.connection.conversation.item.create(
+                    item={
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_text",
+                                "text": f"[System: The outbound call has connected. If the user hasn't spoken yet, greet them with: {greeting}. If they already introduced themselves, acknowledge what they said and continue naturally.]",
+                            }
+                        ],
+                    }
+                )
+            else:
+                await self.connection.conversation.item.create(
+                    item={
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_text",
+                                "text": "[System: The outbound call has connected. If the user hasn't spoken yet, greet them. If they already introduced themselves, acknowledge what they said and continue naturally.]",
+                            }
+                        ],
+                    }
+                )
+
+            # Trigger the AI to respond - it will incorporate any user speech it heard
+            await self.connection.response.create()
+
+            self.logger.info("initial_response_triggered")
+        except Exception as e:
+            self.logger.exception(
+                "trigger_initial_response_error", error=str(e), error_type=type(e).__name__
+            )
 
     async def cleanup(self) -> None:
         """Cleanup resources."""
