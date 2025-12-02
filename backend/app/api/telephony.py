@@ -511,7 +511,13 @@ async def initiate_call(  # noqa: PLR0912, PLR0915
     else:
         base_url = str(request.base_url).rstrip("/")
 
-    webhook_url = f"{base_url}/webhooks/{'telnyx' if telnyx_service else 'twilio'}/answer?agent_id={call_request.agent_id}"
+    # For both Telnyx and Twilio, use simple webhook URLs
+    # Telnyx will send call_control_id in the request body which we use to look up the agent
+    # Twilio will include agent_id in query parameters
+    if telnyx_service:
+        webhook_url = f"{base_url}/webhooks/telnyx/answer"
+    else:
+        webhook_url = f"{base_url}/webhooks/twilio/answer?agent_id={call_request.agent_id}"
     log.info(
         "webhook_url_constructed",
         webhook_url=webhook_url,
@@ -629,6 +635,44 @@ async def hangup_call(
         raise HTTPException(status_code=500, detail="Failed to hang up call")
 
     return {"message": "Call ended successfully"}
+
+
+# =============================================================================
+# Debug Endpoints
+# =============================================================================
+
+
+@webhook_router.get("/debug/ping")
+async def debug_ping() -> dict[str, str]:
+    """Simple ping endpoint to verify webhook routing is working."""
+    logger.info("webhook_debug_ping_received")
+    return {"status": "ok", "message": "Webhook endpoint is reachable"}
+
+
+@webhook_router.post("/debug/echo")
+async def debug_echo(request: Request) -> dict[str, str | int | dict[str, str]]:
+    """Echo back request details for debugging webhooks."""
+    body = await request.body()
+    headers = dict(request.headers)
+
+    logger.info(
+        "webhook_debug_echo_received",
+        body_length=len(body),
+        content_type=headers.get("content-type", "unknown"),
+        headers=headers,
+    )
+
+    # Try to parse body as JSON
+    body_str = body.decode("utf-8", errors="replace")
+
+    return {
+        "status": "received",
+        "body_length": len(body),
+        "body_preview": body_str[:1000] if len(body_str) > 1000 else body_str,
+        "headers": {
+            k: v for k, v in headers.items() if k.lower() not in ["authorization", "cookie"]
+        },
+    }
 
 
 # =============================================================================
@@ -869,23 +913,36 @@ async def telnyx_voice_webhook(
     await db.commit()
     log.info("call_record_created", record_id=str(call_record.id))
 
-    # Build WebSocket URL
-    base_url = str(request.base_url).rstrip("/")
+    # Build WebSocket URL with workspace_id for API key isolation
+    # Use PUBLIC_WEBHOOK_URL for WebSocket URL (required for Telnyx to reach our server)
+    if settings.PUBLIC_WEBHOOK_URL:
+        base_url = settings.PUBLIC_WEBHOOK_URL.rstrip("/")
+    else:
+        base_url = str(request.base_url).rstrip("/")
     ws_url = base_url.replace("http://", "wss://").replace("https://", "wss://")
-    stream_url = f"{ws_url}/ws/telephony/telnyx/{agent_id}"
+
+    if agent_workspace_id:
+        stream_url = f"{ws_url}/ws/telephony/telnyx/{agent_id}?workspace_id={agent_workspace_id}"
+    else:
+        stream_url = f"{ws_url}/ws/telephony/telnyx/{agent_id}"
 
     telnyx_service = TelnyxService("")
     texml = telnyx_service.generate_answer_response(stream_url, agent_id)
 
-    log.info("telnyx_texml_generated", agent_id=agent_id)
+    log.info(
+        "telnyx_texml_generated",
+        agent_id=agent_id,
+        stream_url=stream_url,
+        has_workspace_id=bool(agent_workspace_id),
+        using_public_url=bool(settings.PUBLIC_WEBHOOK_URL),
+    )
 
     return Response(content=texml, media_type="application/xml")
 
 
 @webhook_router.post("/telnyx/answer", response_class=HTMLResponse)
-async def telnyx_answer_webhook(
+async def telnyx_answer_webhook(  # noqa: PLR0911, PLR0912, PLR0915
     request: Request,
-    agent_id: str = Query(default=""),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     """Handle Telnyx outbound call connection.
@@ -893,50 +950,142 @@ async def telnyx_answer_webhook(
     Called when an outbound call is answered by the recipient.
     Returns TeXML to connect to our WebSocket.
 
+    Telnyx sends the call_control_id in the POST body, which we use to look up
+    the agent_id from the CallRecord.
+
     Args:
         request: HTTP request from Telnyx
-        agent_id: Agent UUID from query parameter
         db: Database session
     """
+    # Log raw request details for debugging
+    body = await request.body()
+    headers = dict(request.headers)
+
+    # Create initial log with raw request info
+    debug_log = logger.bind(
+        webhook="telnyx_answer",
+        raw_body_length=len(body),
+        content_type=headers.get("content-type", "unknown"),
+        user_agent=headers.get("user-agent", "unknown"),
+    )
+    debug_log.info("telnyx_answer_webhook_received_raw")
+
+    # Log the raw body for debugging (truncate if too long)
+    body_str = body.decode("utf-8", errors="replace")
+    debug_log.info(
+        "telnyx_answer_webhook_body",
+        body_preview=body_str[:2000] if len(body_str) > 2000 else body_str,
+    )
+
     # Validate Telnyx signature
     await verify_telnyx_webhook(request)
 
-    log = logger.bind(webhook="telnyx_answer", agent_id=agent_id)
-    log.info("telnyx_outbound_answered")
+    # Extract call_control_id and event_type from the request body
+    # Telnyx can send as JSON or form data with various parameter names
+    call_control_id = ""
+    agent_id = ""
+    event_type = ""
+
+    try:
+        # Try JSON first (Telnyx typically sends JSON for modern webhook format)
+        import json
+        import urllib.parse
+
+        data = json.loads(body)
+
+        # Extract event type
+        event_type = data.get("data", {}).get("event_type", data.get("event_type", "unknown"))
+
+        # Try nested payload structure: data.payload.call_control_id
+        payload = data.get("data", {}).get("payload", {})
+        call_control_id = payload.get("call_control_id") or payload.get("CallControlId")
+
+        # If not found in nested structure, try top level
+        if not call_control_id:
+            call_control_id = data.get("call_control_id") or data.get("CallControlId")
+
+        debug_log.info(
+            "telnyx_answer_webhook_parsed",
+            event_type=event_type,
+            call_control_id=call_control_id,
+            has_payload=bool(payload),
+            payload_keys=list(payload.keys()) if payload else [],
+        )
+
+    except (json.JSONDecodeError, ValueError, TypeError) as e:
+        debug_log.warning("telnyx_answer_json_parse_failed", error=str(e))
+        # Fall back to form data parsing (older webhook format)
+        try:
+            params = urllib.parse.parse_qs(body.decode("utf-8"))
+            # Telnyx sends various possible parameter names
+            call_control_id = params.get("call_control_id", params.get("CallControlId", [""]))[0]
+            debug_log.info("telnyx_answer_form_parsed", call_control_id=call_control_id)
+        except Exception as form_error:
+            # Form parsing also failed - will log after log is initialized
+            debug_log.warning("telnyx_answer_form_parse_failed", error=str(form_error))
+
+    log = logger.bind(
+        webhook="telnyx_answer", call_control_id=call_control_id, event_type=event_type
+    )
+    log.info("telnyx_outbound_answered", event_type=event_type)
+
+    # Only process call.answered events - return empty response for others
+    if event_type and event_type != "call.answered":
+        log.info("telnyx_answer_ignoring_event", event_type=event_type)
+        return Response(content="", status_code=200)
+
+    # Look up the agent and workspace from the CallRecord using call_control_id
+    call_record = None
+    workspace_uuid = None
+
+    if call_control_id:
+        result = await db.execute(
+            select(CallRecord).where(CallRecord.provider_call_id == call_control_id)
+        )
+        call_record = result.scalar_one_or_none()
+
+        if call_record and call_record.agent_id:
+            agent_id = str(call_record.agent_id)
+            workspace_uuid = call_record.workspace_id
+            log = logger.bind(
+                webhook="telnyx_answer",
+                call_control_id=call_control_id,
+                agent_id=agent_id,
+                workspace_id=str(workspace_uuid) if workspace_uuid else None,
+            )
+            log.info("agent_id_found_from_call_record")
+        else:
+            log.error("call_record_not_found")
+            return Response(content="", status_code=200)
+    else:
+        log.warning("call_control_id_not_found_in_request", body_length=len(body))
+        return Response(content="", status_code=200)
 
     # Get agent and workspace_id
     try:
         agent_uuid = uuid.UUID(agent_id)
     except ValueError:
         log.exception("invalid_agent_id_format")
-        telnyx_service = TelnyxService("")
-        texml = telnyx_service.generate_answer_response(
-            f"wss://{request.base_url.netloc}/ws/telephony/telnyx/{agent_id}",
-            agent_id,
-        )
-        return Response(content=texml, media_type="application/xml")
+        return Response(content="", status_code=200)
 
     result = await db.execute(select(Agent).where(Agent.id == agent_uuid))
     agent = result.scalar_one_or_none()
 
     if not agent:
         log.error("agent_not_found")
-        # Still return valid TeXML to Telnyx (otherwise call fails)
-        telnyx_service = TelnyxService("")
-        texml = telnyx_service.generate_answer_response(
-            f"wss://{request.base_url.netloc}/ws/telephony/telnyx/{agent_id}",
-            agent_id,
-        )
-        return Response(content=texml, media_type="application/xml")
+        return Response(content="", status_code=200)
 
-    # Get workspace_id for the agent
-    workspace_id = await get_agent_workspace_id(agent.id, db)
+    # Get workspace_id for the agent (use from call_record if available)
+    workspace_id = workspace_uuid or await get_agent_workspace_id(agent.id, db)
     if not workspace_id:
         log.warning("agent_workspace_not_found")
-        # Continue without workspace_id fallback for backward compatibility
 
     # Build WebSocket URL with workspace_id
-    base_url = str(request.base_url).rstrip("/")
+    # Use PUBLIC_WEBHOOK_URL for WebSocket URL (required for Telnyx to reach our server)
+    if settings.PUBLIC_WEBHOOK_URL:
+        base_url = settings.PUBLIC_WEBHOOK_URL.rstrip("/")
+    else:
+        base_url = str(request.base_url).rstrip("/")
     ws_url = base_url.replace("http://", "wss://").replace("https://", "wss://")
 
     if workspace_id:
@@ -948,12 +1097,41 @@ async def telnyx_answer_webhook(
         "websocket_url_constructed",
         stream_url=stream_url,
         has_workspace_id=bool(workspace_id),
+        using_public_url=bool(settings.PUBLIC_WEBHOOK_URL),
     )
 
-    telnyx_service = TelnyxService("")
-    texml = telnyx_service.generate_answer_response(stream_url, agent_id)
+    # Use Call Control API to start streaming (NOT TeXML)
+    # Get TelnyxService with proper API key from workspace
+    try:
+        # Get user_id from agent (agent.user_id is a UUID)
+        from app.core.auth import get_user_id_from_uuid
 
-    return Response(content=texml, media_type="application/xml")
+        user_id_int = await get_user_id_from_uuid(agent.user_id, db)
+        if user_id_int is None:
+            log.error("could_not_get_user_id_for_telnyx_service")
+            return Response(content="", status_code=200)
+
+        telnyx_service = await get_telnyx_service(user_id_int, db, workspace_id=workspace_id)
+        if not telnyx_service:
+            log.error("could_not_get_telnyx_service")
+            return Response(content="", status_code=200)
+
+        # Start streaming to our WebSocket
+        log.info(
+            "starting_telnyx_streaming", call_control_id=call_control_id, stream_url=stream_url
+        )
+        success = await telnyx_service.start_streaming(call_control_id, stream_url)
+
+        if success:
+            log.info("telnyx_streaming_started_successfully")
+        else:
+            log.error("telnyx_streaming_start_failed")
+
+    except Exception as e:
+        log.exception("telnyx_streaming_error", error=str(e))
+
+    # Return 200 OK to acknowledge the webhook
+    return Response(content="", status_code=200)
 
 
 @webhook_router.post("/telnyx/status")
