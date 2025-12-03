@@ -169,6 +169,9 @@ async def _handle_twilio_stream(  # noqa: PLR0915
 
     async def realtime_to_twilio() -> None:
         """Forward audio from GPT Realtime to Twilio."""
+        # Track if end_call was requested
+        end_call_requested = False
+
         try:
             if not realtime_session.connection:
                 log.error("no_realtime_connection")
@@ -201,7 +204,13 @@ async def _handle_twilio_stream(  # noqa: PLR0915
                         call_id=event.call_id,
                         name=event.name,
                     )
-                    await realtime_session.handle_function_call_event(event)
+                    result = await realtime_session.handle_function_call_event(event)
+
+                    # Check if end_call was requested
+                    if result.get("action") == "end_call":
+                        log.info("end_call_action_detected", reason=result.get("reason"))
+                        end_call_requested = True
+                        # Continue processing to let the AI finish its response
 
                 # Log other events
                 elif event_type in [
@@ -211,6 +220,16 @@ async def _handle_twilio_stream(  # noqa: PLR0915
                     "input_audio_buffer.speech_stopped",
                 ]:
                     log.debug("realtime_event", event_type=event_type)
+
+                    # If end_call was requested and the response is done, close connection
+                    if end_call_requested and event_type == "response.done":
+                        log.info(
+                            "response_complete_after_end_call_closing_stream",
+                            call_sid=call_sid,
+                        )
+                        # For Twilio, we just close the media stream
+                        # Twilio will hangup when the TwiML stream ends
+                        break
 
         except Exception as e:
             log.exception("realtime_to_twilio_error", error=str(e))
@@ -324,6 +343,9 @@ async def telnyx_media_stream(
                 realtime_session=realtime_session,
                 log=log,
                 initial_greeting=agent.initial_greeting,
+                agent_id=agent_id,
+                workspace_id=workspace_id,
+                db=db,
             )
 
     except WebSocketDisconnect:
@@ -339,6 +361,9 @@ async def _handle_telnyx_stream(  # noqa: PLR0915
     realtime_session: GPTRealtimeSession,
     log: Any,
     initial_greeting: str | None = None,
+    agent_id: str | None = None,
+    workspace_id: str | None = None,
+    db: AsyncSession | None = None,
 ) -> None:
     """Handle Telnyx Media Stream messages.
 
@@ -347,6 +372,9 @@ async def _handle_telnyx_stream(  # noqa: PLR0915
         realtime_session: GPT Realtime session
         log: Logger instance
         initial_greeting: Optional greeting for outbound calls
+        agent_id: Agent UUID (for hangup)
+        workspace_id: Workspace ID (for hangup)
+        db: Database session (for hangup)
     """
     stream_id = ""
     call_control_id = ""
@@ -441,6 +469,10 @@ async def _handle_telnyx_stream(  # noqa: PLR0915
     async def realtime_to_telnyx() -> None:  # noqa: PLR0912, PLR0915
         """Forward audio from GPT Realtime to Telnyx."""
         log.info("realtime_to_telnyx_coroutine_started")
+
+        # Track if end_call was requested
+        end_call_requested = False
+
         try:
             if not realtime_session.connection:
                 log.error("no_realtime_connection")
@@ -482,7 +514,13 @@ async def _handle_telnyx_stream(  # noqa: PLR0915
                             call_id=event.call_id,
                             name=event.name,
                         )
-                        await realtime_session.handle_function_call_event(event)
+                        result = await realtime_session.handle_function_call_event(event)
+
+                        # Check if end_call was requested
+                        if result.get("action") == "end_call":
+                            log.info("end_call_action_detected", reason=result.get("reason"))
+                            end_call_requested = True
+                            # Continue processing to let the AI finish its response
 
                     # Handle audio output - convert from PCM16 to PCMU for Telnyx
                     elif event_type == "response.audio.delta":
@@ -571,6 +609,58 @@ async def _handle_telnyx_stream(  # noqa: PLR0915
                         "input_audio_buffer.speech_stopped",
                     ]:
                         log.info("realtime_event", event_type=event_type)
+
+                        # If end_call was requested and the response is done, hangup
+                        if end_call_requested and event_type == "response.done":
+                            log.info(
+                                "response_complete_after_end_call_hanging_up",
+                                call_control_id=call_control_id,
+                            )
+                            # Hangup the call via Telnyx API
+                            if call_control_id and agent_id and db:
+                                try:
+                                    from app.core.auth import get_user_id_from_uuid
+                                    from app.models.agent import Agent
+
+                                    # Get agent to find user
+                                    result_agent = await db.execute(
+                                        select(Agent).where(Agent.id == uuid.UUID(agent_id))
+                                    )
+                                    agent_obj = result_agent.scalar_one_or_none()
+
+                                    if agent_obj:
+                                        user_id_int = await get_user_id_from_uuid(
+                                            agent_obj.user_id, db
+                                        )
+                                        if user_id_int:
+                                            from app.api.telephony import get_telnyx_service
+
+                                            workspace_uuid_for_hangup = (
+                                                uuid.UUID(workspace_id) if workspace_id else None
+                                            )
+                                            telnyx_service = await get_telnyx_service(
+                                                user_id_int, db, workspace_uuid_for_hangup
+                                            )
+                                            if telnyx_service:
+                                                await telnyx_service.hangup_call(call_control_id)
+                                                log.info(
+                                                    "call_hangup_sent",
+                                                    call_control_id=call_control_id,
+                                                )
+                                            else:
+                                                log.warning("no_telnyx_service_for_hangup")
+                                        else:
+                                            log.warning("user_id_not_found_for_hangup")
+                                    else:
+                                        log.warning("agent_not_found_for_hangup")
+                                except Exception as hangup_error:
+                                    log.exception(
+                                        "hangup_call_error",
+                                        error=str(hangup_error),
+                                        error_type=type(hangup_error).__name__,
+                                    )
+                            # Break the loop to end the call
+                            break
 
                     else:
                         log.debug("unhandled_realtime_event", event_type=event_type)
