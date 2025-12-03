@@ -163,7 +163,11 @@ export async function purchasePhoneNumber(
 /**
  * Release a phone number
  */
-export async function releasePhoneNumber(phoneNumberId: string, provider: Provider, workspaceId?: string): Promise<void> {
+export async function releasePhoneNumber(
+  phoneNumberId: string,
+  provider: Provider,
+  workspaceId?: string
+): Promise<void> {
   const url = new URL(`${API_BASE}/api/v1/telephony/phone-numbers/${phoneNumberId}`);
   url.searchParams.set("provider", provider);
   if (workspaceId) {
@@ -212,7 +216,11 @@ export async function initiateCall(request: InitiateCallRequest): Promise<CallRe
 /**
  * Hang up an active call
  */
-export async function hangupCall(callId: string, provider: Provider, workspaceId?: string): Promise<void> {
+export async function hangupCall(
+  callId: string,
+  provider: Provider,
+  workspaceId?: string
+): Promise<void> {
   const url = new URL(`${API_BASE}/api/v1/telephony/calls/${callId}/hangup`);
   url.searchParams.set("provider", provider);
   if (workspaceId) {

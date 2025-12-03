@@ -4,7 +4,7 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,6 +13,9 @@ from app.core.limiter import limiter
 from app.core.public_id import generate_public_id
 from app.db.session import get_db
 from app.models.agent import Agent
+
+# Sentinel value to distinguish "not provided" from "explicitly set to None"
+_UNSET = object()
 
 router = APIRouter(prefix="/api/v1/agents", tags=["agents"])
 
@@ -34,6 +37,10 @@ class CreateAgentRequest(BaseModel):
     enabled_tool_ids: dict[str, list[str]] = Field(
         default_factory=dict,
         description="Granular tool selection: {integration_id: [tool_id1, tool_id2]}",
+    )
+    integration_settings: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Per-integration settings (e.g., {'cal-com': {'default_event_type_id': 123}})",
     )
     phone_number_id: str | None = None
     enable_recording: bool = False
@@ -67,6 +74,10 @@ class UpdateAgentRequest(BaseModel):
         default=None,
         description="Granular tool selection: {integration_id: [tool_id1, tool_id2]}",
     )
+    integration_settings: dict[str, Any] | None = Field(
+        default=None,
+        description="Per-integration settings (e.g., {'cal-com': {'default_event_type_id': 123}})",
+    )
     phone_number_id: str | None = None
     enable_recording: bool | None = None
     enable_transcript: bool | None = None
@@ -85,6 +96,22 @@ class UpdateAgentRequest(BaseModel):
         description="Optional initial greeting the agent speaks when call starts",
     )
 
+    # Track which fields were explicitly set in the request (including null values)
+    _explicitly_set_fields: set[str] = set()
+
+    @model_validator(mode="before")
+    @classmethod
+    def track_explicit_fields(cls, data: Any) -> Any:
+        """Track which fields were explicitly provided in the request."""
+        if isinstance(data, dict):
+            # Store the keys that were actually in the request payload
+            data["_explicitly_set_fields"] = set(data.keys())
+        return data
+
+    def is_field_set(self, field_name: str) -> bool:
+        """Check if a field was explicitly set in the request (even if to None)."""
+        return field_name in self._explicitly_set_fields
+
 
 class AgentResponse(BaseModel):
     """Agent response."""
@@ -98,6 +125,7 @@ class AgentResponse(BaseModel):
     voice: str
     enabled_tools: list[str]
     enabled_tool_ids: dict[str, list[str]]
+    integration_settings: dict[str, Any]
     phone_number_id: str | None
     enable_recording: bool
     enable_transcript: bool
@@ -151,6 +179,7 @@ async def create_agent(
         voice=agent_request.voice,
         enabled_tools=agent_request.enabled_tools,
         enabled_tool_ids=agent_request.enabled_tool_ids,
+        integration_settings=agent_request.integration_settings,
         phone_number_id=agent_request.phone_number_id,
         enable_recording=agent_request.enable_recording,
         enable_transcript=agent_request.enable_transcript,
@@ -354,6 +383,7 @@ def _apply_agent_updates(agent: Agent, request: UpdateAgentRequest) -> None:
         "voice",
         "enabled_tools",
         "enabled_tool_ids",
+        "integration_settings",
         "phone_number_id",
         "enable_recording",
         "enable_transcript",
@@ -367,13 +397,19 @@ def _apply_agent_updates(agent: Agent, request: UpdateAgentRequest) -> None:
         "initial_greeting",
     ]
 
+    # Fields that can be explicitly set to None (cleared)
+    nullable_fields = {"phone_number_id", "description", "initial_greeting"}
+
     for field in simple_fields:
-        value = getattr(request, field)
-        if value is not None:
-            setattr(agent, field, value)
+        # Check if field was explicitly provided in the request
+        if request.is_field_set(field):
+            value = getattr(request, field)
+            # Allow setting nullable fields to None, otherwise only set non-None values
+            if field in nullable_fields or value is not None:
+                setattr(agent, field, value)
 
     # Handle pricing_tier specially (updates provider_config too)
-    if request.pricing_tier is not None:
+    if request.is_field_set("pricing_tier") and request.pricing_tier is not None:
         agent.pricing_tier = request.pricing_tier
         agent.provider_config = _get_provider_config(request.pricing_tier)
 
@@ -449,6 +485,7 @@ def _agent_to_response(agent: Agent) -> AgentResponse:
         voice=agent.voice,
         enabled_tools=agent.enabled_tools,
         enabled_tool_ids=agent.enabled_tool_ids,
+        integration_settings=agent.integration_settings,
         phone_number_id=agent.phone_number_id,
         enable_recording=agent.enable_recording,
         enable_transcript=agent.enable_transcript,

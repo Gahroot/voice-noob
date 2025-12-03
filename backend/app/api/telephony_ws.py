@@ -440,12 +440,13 @@ async def _handle_telnyx_stream(  # noqa: PLR0915
 
     async def realtime_to_telnyx() -> None:  # noqa: PLR0912, PLR0915
         """Forward audio from GPT Realtime to Telnyx."""
+        log.info("realtime_to_telnyx_coroutine_started")
         try:
             if not realtime_session.connection:
                 log.error("no_realtime_connection")
                 return
 
-            log.info("realtime_to_telnyx_starting")
+            log.info("realtime_to_telnyx_has_connection")
 
             # Wait for stream to be ready before processing events
             # This ensures stream_id is set before we try to send audio
@@ -459,8 +460,14 @@ async def _handle_telnyx_stream(  # noqa: PLR0915
 
             audio_event_count = 0
             total_event_count = 0
+            log.info(
+                "starting_realtime_event_loop",
+                connection_type=type(realtime_session.connection).__name__,
+            )
 
             async for event in realtime_session.connection:
+                if total_event_count == 0:
+                    log.info("first_realtime_event_received", event_type=event.type)
                 event_type = event.type
                 total_event_count += 1
                 log.debug(
@@ -580,8 +587,10 @@ async def _handle_telnyx_stream(  # noqa: PLR0915
             log.exception("realtime_to_telnyx_error", error=str(e), error_type=type(e).__name__)
 
     # Run both directions concurrently
-    await asyncio.gather(
+    log.info("starting_bidirectional_stream_tasks")
+    results = await asyncio.gather(
         telnyx_to_realtime(),
         realtime_to_telnyx(),
         return_exceptions=True,
     )
+    log.info("bidirectional_stream_tasks_completed", results=str(results))

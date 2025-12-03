@@ -119,6 +119,12 @@ class Agent(Base):
         default=dict,
         comment="Granular tool selection: {integration_id: [tool_id1, tool_id2]}",
     )
+    integration_settings: Mapped[dict[str, Any]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=dict,
+        comment="Per-integration settings (e.g., {'cal-com': {'default_event_type_id': 123}})",
+    )
 
     # Phone settings
     phone_number_id: Mapped[str | None] = mapped_column(

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, memo, useCallback } from "react";
+import { useState, useMemo, memo, useCallback, useEffect } from "react";
 import { useDebounce } from "use-debounce";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -374,6 +374,12 @@ const IntegrationConfigForm = memo(function IntegrationConfigForm({
   const [showPasswords, setShowPasswords] = useState<Record<string, boolean>>({});
   const [showDisconnectDialog, setShowDisconnectDialog] = useState(false);
 
+  // Cal.com specific: fetch event types when API key is entered
+  const [calcomEventTypes, setCalcomEventTypes] = useState<Array<{ id: number; title: string }>>(
+    []
+  );
+  const [fetchingEventTypes, setFetchingEventTypes] = useState(false);
+
   // Connect mutation
   const connectMutation = useMutation({
     mutationFn: async () => {
@@ -432,6 +438,58 @@ const IntegrationConfigForm = memo(function IntegrationConfigForm({
   const togglePasswordVisibility = useCallback((fieldName: string) => {
     setShowPasswords((prev) => ({ ...prev, [fieldName]: !prev[fieldName] }));
   }, []);
+
+  // Fetch Cal.com event types when API key is entered
+  useEffect(() => {
+    if (integration.id !== "cal-com") return;
+
+    const apiKey = credentials.api_key;
+    if (!apiKey || apiKey.length < 10) {
+      setCalcomEventTypes([]);
+      return;
+    }
+
+    const fetchEventTypes = async () => {
+      setFetchingEventTypes(true);
+      try {
+        const response = await fetch("https://api.cal.com/v2/event-types", {
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "cal-api-version": "2024-08-13",
+          },
+        });
+
+        if (response.ok) {
+          const data = (await response.json()) as {
+            data?: Array<{
+              id: number;
+              title?: string;
+              slug: string;
+              lengthInMinutes?: number;
+              length?: number;
+            }>;
+          };
+          const eventTypes =
+            data.data?.map((et) => ({
+              id: et.id,
+              title: et.title ?? et.slug,
+              length: et.lengthInMinutes ?? et.length,
+            })) ?? [];
+          setCalcomEventTypes(eventTypes);
+        } else {
+          setCalcomEventTypes([]);
+        }
+      } catch (error) {
+        console.error("Failed to fetch Cal.com event types:", error);
+        setCalcomEventTypes([]);
+      } finally {
+        setFetchingEventTypes(false);
+      }
+    };
+
+    const debounceTimer = setTimeout(() => void fetchEventTypes(), 500);
+    return () => clearTimeout(debounceTimer);
+  }, [credentials.api_key, integration.id]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -516,40 +574,90 @@ const IntegrationConfigForm = memo(function IntegrationConfigForm({
         )}
 
         {/* Credential fields */}
-        {integration.fields.map((field) => (
-          <div key={field.name} className="space-y-2">
-            <Label htmlFor={field.name} className="text-sm">
-              {field.label}
-              {field.required && <span className="ml-1 text-destructive">*</span>}
-            </Label>
-            <div className="relative">
-              <Input
-                id={field.name}
-                type={field.type === "password" && !showPasswords[field.name] ? "password" : "text"}
-                placeholder={field.placeholder ?? `Enter ${field.label.toLowerCase()}`}
-                value={credentials[field.name] ?? ""}
-                onChange={(e) => handleFieldChange(field.name, e.target.value)}
-                className="pr-10"
-              />
-              {field.type === "password" && (
-                <button
-                  type="button"
-                  onClick={() => togglePasswordVisibility(field.name)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                >
-                  {showPasswords[field.name] ? (
-                    <EyeOff className="h-4 w-4" />
-                  ) : (
-                    <Eye className="h-4 w-4" />
+        {integration.fields.map((field) => {
+          // Special handling for Cal.com event_type_id - show dropdown if event types loaded
+          const isCalcomEventTypeField =
+            integration.id === "cal-com" && field.name === "event_type_id";
+          const showEventTypeSelect = isCalcomEventTypeField && calcomEventTypes.length > 0;
+
+          return (
+            <div key={field.name} className="space-y-2">
+              <Label htmlFor={field.name} className="text-sm">
+                {field.label}
+                {field.required && <span className="ml-1 text-destructive">*</span>}
+              </Label>
+
+              {showEventTypeSelect ? (
+                // Show Select dropdown for Cal.com event types
+                <div className="space-y-2">
+                  <Select
+                    value={credentials[field.name] ?? ""}
+                    onValueChange={(value) => handleFieldChange(field.name, value)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select event type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {calcomEventTypes.map((eventType) => (
+                        <SelectItem key={eventType.id} value={String(eventType.id)}>
+                          {eventType.title}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    {calcomEventTypes.length} event type(s) found • Agents will use this for
+                    bookings
+                  </p>
+                </div>
+              ) : (
+                // Standard input field
+                <div className="relative">
+                  <Input
+                    id={field.name}
+                    type={
+                      field.type === "password" && !showPasswords[field.name] ? "password" : "text"
+                    }
+                    placeholder={field.placeholder ?? `Enter ${field.label.toLowerCase()}`}
+                    value={credentials[field.name] ?? ""}
+                    onChange={(e) => handleFieldChange(field.name, e.target.value)}
+                    className="pr-10"
+                    disabled={isCalcomEventTypeField && fetchingEventTypes}
+                  />
+                  {field.type === "password" && (
+                    <button
+                      type="button"
+                      onClick={() => togglePasswordVisibility(field.name)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    >
+                      {showPasswords[field.name] ? (
+                        <EyeOff className="h-4 w-4" />
+                      ) : (
+                        <Eye className="h-4 w-4" />
+                      )}
+                    </button>
                   )}
-                </button>
+                  {isCalcomEventTypeField && fetchingEventTypes && (
+                    <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />
+                  )}
+                </div>
               )}
+
+              {field.description && !showEventTypeSelect && (
+                <p className="text-xs text-muted-foreground">{field.description}</p>
+              )}
+
+              {isCalcomEventTypeField &&
+                credentials.api_key &&
+                !fetchingEventTypes &&
+                calcomEventTypes.length === 0 && (
+                  <p className="text-xs text-yellow-600 dark:text-yellow-400">
+                    Enter a valid API key above to load your event types
+                  </p>
+                )}
             </div>
-            {field.description && (
-              <p className="text-xs text-muted-foreground">{field.description}</p>
-            )}
-          </div>
-        ))}
+          );
+        })}
 
         {/* Action buttons */}
         <div className="flex gap-2 pt-2">

@@ -487,7 +487,9 @@ class GPTRealtimeSession:
                 )
 
             # Trigger the AI to respond - it will incorporate any user speech it heard
+            self.logger.info("calling_response_create")
             await self.connection.response.create()
+            self.logger.info("response_create_completed")
 
             self.logger.info("initial_response_triggered")
         except Exception as e:

@@ -454,7 +454,9 @@ async def create_webrtc_session(
     tool_registry = ToolRegistry(
         db, user_id, integrations=integrations, workspace_id=workspace_uuid
     )
-    tools = tool_registry.get_all_tool_definitions(agent.enabled_tools, agent.enabled_tool_ids)
+    tools = tool_registry.get_all_tool_definitions(
+        agent.enabled_tools, agent.enabled_tool_ids, agent.integration_settings
+    )
 
     # Build instructions with language directive
     system_prompt = agent.system_prompt or "You are a helpful voice assistant."
