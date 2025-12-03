@@ -365,11 +365,14 @@ class GPTRealtimeSession:
             self.logger.exception("realtime_event_loop_error", error=str(e))
             raise
 
-    async def handle_function_call_event(self, event: Any) -> None:
+    async def handle_function_call_event(self, event: Any) -> dict[str, Any]:
         """Handle function call from GPT Realtime.
 
         Args:
             event: Function call event from SDK
+
+        Returns:
+            Tool execution result (includes action field for call control)
         """
         call_id = event.call_id
         name = event.name
@@ -395,7 +398,10 @@ class GPTRealtimeSession:
             call_id=call_id,
             tool_name=name,
             success=result.get("success"),
+            has_action=bool(result.get("action")),
         )
+
+        return result
 
     async def send_audio(self, audio_data: bytes) -> None:
         """Send audio input to GPT Realtime using SDK.
