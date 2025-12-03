@@ -264,9 +264,17 @@ export default function PhoneNumbersPage() {
 
     setIsAssigning(true);
     try {
-      // Update the agent with the phone number
+      // First, unassign from any agent that currently has this phone number
+      const currentlyAssignedAgent = agents.find((a) => a.phone_number_id === selectedNumber.id);
+      if (currentlyAssignedAgent && currentlyAssignedAgent.id !== agentId) {
+        await updateAgent(currentlyAssignedAgent.id, {
+          phone_number_id: null,
+        });
+      }
+
+      // Update the new agent with the phone number ID (not the phone number string)
       await updateAgent(agentId, {
-        phone_number_id: selectedNumber.phoneNumber,
+        phone_number_id: selectedNumber.id,
       });
       const agent = agents.find((a) => a.id === agentId);
       toast.success(`Assigned ${selectedNumber.phoneNumber} to ${agent?.name}`);

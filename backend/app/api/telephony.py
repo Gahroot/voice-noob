@@ -665,10 +665,13 @@ async def debug_echo(request: Request) -> dict[str, str | int | dict[str, str]]:
     # Try to parse body as JSON
     body_str = body.decode("utf-8", errors="replace")
 
+    max_preview_length = 1000
     return {
         "status": "received",
         "body_length": len(body),
-        "body_preview": body_str[:1000] if len(body_str) > 1000 else body_str,
+        "body_preview": body_str[:max_preview_length]
+        if len(body_str) > max_preview_length
+        else body_str,
         "headers": {
             k: v for k, v in headers.items() if k.lower() not in ["authorization", "cookie"]
         },
@@ -972,9 +975,10 @@ async def telnyx_answer_webhook(  # noqa: PLR0911, PLR0912, PLR0915
 
     # Log the raw body for debugging (truncate if too long)
     body_str = body.decode("utf-8", errors="replace")
+    max_debug_length = 2000
     debug_log.info(
         "telnyx_answer_webhook_body",
-        body_preview=body_str[:2000] if len(body_str) > 2000 else body_str,
+        body_preview=body_str[:max_debug_length] if len(body_str) > max_debug_length else body_str,
     )
 
     # Validate Telnyx signature

@@ -4,6 +4,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.tools.calcom_tools import CalComTools
 from app.services.tools.calendly_tools import CalendlyTools
 from app.services.tools.call_control_tools import CallControlTools
 from app.services.tools.crm_tools import CRMTools
@@ -17,7 +18,7 @@ class ToolRegistry:
 
     Manages:
     - Internal tools (CRM, bookings)
-    - External integrations (GoHighLevel, Calendly, Shopify, SMS, etc.)
+    - External integrations (GoHighLevel, Calendly, Cal.com, Shopify, SMS, etc.)
     - Tool execution routing
     """
 
@@ -44,6 +45,7 @@ class ToolRegistry:
         self.crm_tools = CRMTools(db, user_id, workspace_id=workspace_id)
         self._ghl_tools: GoHighLevelTools | None = None
         self._calendly_tools: CalendlyTools | None = None
+        self._calcom_tools: CalComTools | None = None
         self._shopify_tools: ShopifyTools | None = None
         self._twilio_sms_tools: TwilioSMSTools | None = None
         self._telnyx_sms_tools: TelnyxSMSTools | None = None
@@ -74,6 +76,43 @@ class ToolRegistry:
                 access_token=creds["access_token"],
             )
             return self._calendly_tools
+
+        return None
+
+    def _get_calcom_tools(self, agent_settings: dict[str, Any] | None = None) -> CalComTools | None:
+        """Get Cal.com tools if credentials are available.
+
+        Args:
+            agent_settings: Agent-level integration settings (e.g., {'cal-com': {'default_event_type_id': 123}})
+        """
+        if self._calcom_tools:
+            return self._calcom_tools
+
+        creds = self.integrations.get("cal-com")
+        if creds and creds.get("api_key"):
+            # Extract event_type_id from integration credentials OR agent settings (agent settings take precedence)
+            event_type_id = None
+
+            # First check agent-level settings (from agent.integration_settings)
+            if agent_settings and "cal-com" in agent_settings:
+                event_type_id = agent_settings["cal-com"].get("default_event_type_id")
+
+            # Fall back to integration-level setting if not set in agent
+            if event_type_id is None:
+                event_type_id = creds.get("event_type_id")
+
+            # Convert to int
+            if event_type_id is not None:
+                try:
+                    event_type_id = int(event_type_id)
+                except (ValueError, TypeError):
+                    event_type_id = None
+
+            self._calcom_tools = CalComTools(
+                api_key=creds["api_key"],
+                event_type_id=event_type_id,
+            )
+            return self._calcom_tools
 
         return None
 
@@ -133,6 +172,7 @@ class ToolRegistry:
         self,
         enabled_tools: list[str],
         enabled_tool_ids: dict[str, list[str]] | None = None,
+        agent_settings: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Get tool definitions for enabled tools.
 
@@ -187,6 +227,11 @@ class ToolRegistry:
             calendly_tools = CalendlyTools.get_tool_definitions()
             tools.extend(filter_tools("calendly", calendly_tools))
 
+        # Cal.com tools
+        if "cal-com" in enabled_tools and self._get_calcom_tools(agent_settings):
+            calcom_tools = CalComTools.get_tool_definitions()
+            tools.extend(filter_tools("cal-com", calcom_tools))
+
         # Shopify tools
         if "shopify" in enabled_tools and self._get_shopify_tools():
             shopify_tools = ShopifyTools.get_tool_definitions()
@@ -204,7 +249,7 @@ class ToolRegistry:
 
         return tools
 
-    async def execute_tool(  # noqa: PLR0911
+    async def execute_tool(  # noqa: PLR0911, PLR0912
         self, tool_name: str, arguments: dict[str, Any]
     ) -> dict[str, Any]:
         """Execute a tool by routing to appropriate handler.
@@ -284,6 +329,26 @@ class ToolRegistry:
                 }
             return await calendly_tools.execute_tool(tool_name, arguments)
 
+        # Cal.com tools
+        calcom_tool_names = {
+            "calcom_get_event_types",
+            "calcom_get_availability",
+            "calcom_create_booking",
+            "calcom_list_bookings",
+            "calcom_get_booking",
+            "calcom_cancel_booking",
+            "calcom_reschedule_booking",
+        }
+
+        if tool_name in calcom_tool_names:
+            calcom_tools = self._get_calcom_tools()  # Already initialized with agent settings
+            if not calcom_tools:
+                return {
+                    "success": False,
+                    "error": "Cal.com integration not configured. Please add your API credentials.",
+                }
+            return await calcom_tools.execute_tool(tool_name, arguments)
+
         # Shopify tools
         shopify_tool_names = {
             "shopify_search_orders",
@@ -343,6 +408,8 @@ class ToolRegistry:
             await self._ghl_tools.close()
         if self._calendly_tools:
             await self._calendly_tools.close()
+        if self._calcom_tools:
+            await self._calcom_tools.close()
         if self._shopify_tools:
             await self._shopify_tools.close()
         if self._twilio_sms_tools:

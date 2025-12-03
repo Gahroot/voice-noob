@@ -686,7 +686,7 @@ class TelnyxService(TelephonyProvider):
             if not profile_id:
                 msg = "No outbound voice profile ID returned from Telnyx API"
                 self.logger.error("no_profile_id_returned")
-                raise ValueError(msg) from None
+                raise ValueError(msg) from None  # noqa: TRY301
 
             self.logger.info("outbound_voice_profile_created", profile_id=profile_id)
             return str(profile_id)
@@ -819,7 +819,7 @@ class TelnyxService(TelephonyProvider):
             else:
                 msg = "webhook_event_url is required for Call Control Application creation"
                 self.logger.error("webhook_event_url_missing")
-                raise ValueError(msg) from None
+                raise ValueError(msg) from None  # noqa: TRY301
 
             new_data = await self._make_request(
                 "POST",

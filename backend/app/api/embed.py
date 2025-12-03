@@ -625,7 +625,7 @@ async def get_embed_ephemeral_token(  # noqa: PLR0915
                 workspace_id=workspace_id,
             )
             tools = tool_registry.get_all_tool_definitions(
-                agent.enabled_tools or [], agent.enabled_tool_ids
+                agent.enabled_tools or [], agent.enabled_tool_ids, agent.integration_settings
             )
 
             log.info(
@@ -733,7 +733,7 @@ async def execute_embed_tool_call(
 
     # Get the enabled tools for this agent (same method as token endpoint)
     enabled_tool_defs = tool_registry.get_all_tool_definitions(
-        agent.enabled_tools or [], agent.enabled_tool_ids
+        agent.enabled_tools or [], agent.enabled_tool_ids, agent.integration_settings
     )
     enabled_tool_names = {
         t.get("name") or t.get("function", {}).get("name") for t in enabled_tool_defs

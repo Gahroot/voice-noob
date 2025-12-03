@@ -27,6 +27,7 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
+import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -138,6 +139,109 @@ function getRiskLevelBadge(level: "safe" | "moderate" | "high") {
   }
 }
 
+// Cal.com Event Type Selector component
+function CalComEventTypeSelector({
+  form,
+}: {
+  form: ReturnType<typeof useForm<z.infer<typeof agentFormSchema>>>;
+}) {
+  const [eventTypes, setEventTypes] = useState<Array<{ id: number; title: string }>>([]);
+  const [loading, setLoading] = useState(false);
+
+  // Fetch event types from Cal.com
+  useEffect(() => {
+    const fetchEventTypes = async () => {
+      setLoading(true);
+      try {
+        // Get Cal.com API key from user integrations
+        const response = await api.get("/api/v1/integrations/cal-com");
+        const calcomIntegration = response.data;
+
+        if (calcomIntegration?.has_credentials) {
+          // Fetch event types using the stored API key
+          // Note: We can't fetch directly from client due to CORS, so this is a placeholder
+          // In production, you'd need a backend endpoint to proxy this request
+          setEventTypes([{ id: 0, title: "Fetch from your Cal.com account in integrations page" }]);
+        }
+      } catch (error) {
+        console.error("Failed to fetch event types:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    void fetchEventTypes();
+  }, []);
+
+  const currentEventTypeId = form.watch("integrationSettings")?.["cal-com"]?.default_event_type_id;
+
+  return (
+    <div className="space-y-2">
+      <Label htmlFor="calcom-event-type" className="text-sm font-medium">
+        Default Event Type
+      </Label>
+      <Select
+        value={currentEventTypeId?.toString() ?? ""}
+        onValueChange={(value) => {
+          const settings = form.getValues("integrationSettings") ?? {};
+          form.setValue(
+            "integrationSettings",
+            {
+              ...settings,
+              "cal-com": {
+                ...settings["cal-com"],
+                default_event_type_id: value ? parseInt(value) : undefined,
+              },
+            },
+            { shouldDirty: true }
+          );
+        }}
+        disabled={loading}
+      >
+        <SelectTrigger id="calcom-event-type">
+          <SelectValue placeholder="Select default event type" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="">Manual entry (enter ID below)</SelectItem>
+          {eventTypes.map((et) => (
+            <SelectItem key={et.id} value={et.id.toString()}>
+              {et.title}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
+      {/* Manual event type ID input */}
+      {!currentEventTypeId && (
+        <Input
+          type="number"
+          placeholder="Enter Event Type ID manually"
+          onChange={(e) => {
+            const value = e.target.value ? parseInt(e.target.value) : undefined;
+            const settings = form.getValues("integrationSettings") ?? {};
+            form.setValue(
+              "integrationSettings",
+              {
+                ...settings,
+                "cal-com": {
+                  ...settings["cal-com"],
+                  default_event_type_id: value,
+                },
+              },
+              { shouldDirty: true }
+            );
+          }}
+        />
+      )}
+
+      <p className="text-xs text-muted-foreground">
+        Agent will use this event type for bookings. Agent can choose different types based on
+        conversation.
+      </p>
+    </div>
+  );
+}
+
 interface Workspace {
   id: string;
   name: string;
@@ -187,6 +291,7 @@ const agentFormSchema = z.object({
   // Tools & Integrations
   enabledTools: z.array(z.string()).default([]),
   enabledToolIds: z.record(z.string(), z.array(z.string())).default({}),
+  integrationSettings: z.record(z.string(), z.record(z.string(), z.any())).default({}),
 
   // Workspaces
   selectedWorkspaces: z.array(z.string()).default([]),
@@ -1527,6 +1632,13 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
                                         );
                                       })}
                                     </div>
+
+                                    {/* Cal.com specific: Default Event Type selector */}
+                                    {integration.id === "cal-com" && (
+                                      <div className="mt-4 border-t pt-4">
+                                        <CalComEventTypeSelector form={form} />
+                                      </div>
+                                    )}
                                   </div>
                                 </CollapsibleContent>
                               )}
