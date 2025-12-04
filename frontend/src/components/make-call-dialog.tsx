@@ -29,11 +29,12 @@ interface MakeCallDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   agent: Agent;
+  workspaceId?: string;
 }
 
 type CallState = "idle" | "dialing" | "ringing" | "in_progress" | "ended";
 
-export function MakeCallDialog({ open, onOpenChange, agent }: MakeCallDialogProps) {
+export function MakeCallDialog({ open, onOpenChange, agent, workspaceId }: MakeCallDialogProps) {
   const [phoneNumber, setPhoneNumber] = useState("");
   const [selectedFromNumber, setSelectedFromNumber] = useState<string>("");
   const [callState, setCallState] = useState<CallState>("idle");
@@ -43,9 +44,9 @@ export function MakeCallDialog({ open, onOpenChange, agent }: MakeCallDialogProp
 
   // Fetch available phone numbers
   const { data: phoneNumbers = [] } = useQuery({
-    queryKey: ["phone-numbers", provider],
-    queryFn: () => listPhoneNumbers(provider),
-    enabled: open,
+    queryKey: ["phone-numbers", provider, workspaceId],
+    queryFn: () => (workspaceId ? listPhoneNumbers(provider, workspaceId) : Promise.resolve([])),
+    enabled: open && !!workspaceId,
   });
 
   // Set default from number when phone numbers load

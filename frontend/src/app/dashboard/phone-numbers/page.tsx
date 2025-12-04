@@ -109,25 +109,57 @@ export default function PhoneNumbersPage() {
   // Load phone numbers and agents on mount
   useEffect(() => {
     void loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Get the active workspace ID for API calls
+  const getActiveWorkspaceId = (): string | null => {
+    if (selectedWorkspaceId !== "all") {
+      return selectedWorkspaceId;
+    }
+    // Use default workspace or first workspace
+    const defaultWs = workspaces.find((ws) => ws.is_default);
+    return defaultWs?.id ?? workspaces[0]?.id ?? null;
+  };
 
   const loadData = async () => {
     setIsLoading(true);
     try {
-      // Load phone numbers from both providers and workspaces
-      const [telnyxNumbers, twilioNumbers, agentsList, workspacesResult] = await Promise.allSettled(
-        [
-          listPhoneNumbers("telnyx"),
-          listPhoneNumbers("twilio"),
-          fetchAgents(),
-          api.get("/api/v1/workspaces"),
-        ]
-      );
+      // First load workspaces and agents
+      const [workspacesResult, agentsList] = await Promise.allSettled([
+        api.get("/api/v1/workspaces"),
+        fetchAgents(),
+      ]);
 
       // Set workspaces
+      let loadedWorkspaces: Workspace[] = [];
       if (workspacesResult.status === "fulfilled") {
-        setWorkspaces(workspacesResult.value.data as Workspace[]);
+        loadedWorkspaces = workspacesResult.value.data as Workspace[];
+        setWorkspaces(loadedWorkspaces);
       }
+
+      // Get agents list
+      const agentsData = agentsList.status === "fulfilled" ? agentsList.value : [];
+      setAgents(agentsData);
+
+      // Determine which workspace to use for phone number queries
+      const defaultWs = loadedWorkspaces.find((ws) => ws.is_default);
+      const workspaceId =
+        selectedWorkspaceId !== "all"
+          ? selectedWorkspaceId
+          : (defaultWs?.id ?? loadedWorkspaces[0]?.id);
+
+      if (!workspaceId) {
+        // No workspaces available
+        setPhoneNumbers([]);
+        return;
+      }
+
+      // Load phone numbers from both providers
+      const [telnyxNumbers, twilioNumbers] = await Promise.allSettled([
+        listPhoneNumbers("telnyx", workspaceId),
+        listPhoneNumbers("twilio", workspaceId),
+      ]);
 
       const numbers: PhoneNumber[] = [];
 
@@ -156,10 +188,6 @@ export default function PhoneNumbersPage() {
           }))
         );
       }
-
-      // Get agents list
-      const agentsData = agentsList.status === "fulfilled" ? agentsList.value : [];
-      setAgents(agentsData);
 
       // Map agent names to phone numbers
       const numbersWithAgents = numbers.map((num) => {
@@ -199,13 +227,22 @@ export default function PhoneNumbersPage() {
       return;
     }
 
+    const workspaceId = getActiveWorkspaceId();
+    if (!workspaceId) {
+      toast.error("No workspace available. Please create a workspace first.");
+      return;
+    }
+
     setIsSearching(true);
     try {
-      const numbers = await searchPhoneNumbers({
-        provider: selectedProvider,
-        area_code: searchAreaCode,
-        limit: 10,
-      });
+      const numbers = await searchPhoneNumbers(
+        {
+          provider: selectedProvider,
+          area_code: searchAreaCode,
+          limit: 10,
+        },
+        workspaceId
+      );
 
       setAvailableNumbers(
         numbers.map((n) => ({
@@ -231,12 +268,21 @@ export default function PhoneNumbersPage() {
       return;
     }
 
+    const workspaceId = getActiveWorkspaceId();
+    if (!workspaceId) {
+      toast.error("No workspace available. Please create a workspace first.");
+      return;
+    }
+
     setIsPurchasing(true);
     try {
-      await purchasePhoneNumber({
-        provider: selectedProvider,
-        phone_number: selectedAvailableNumber,
-      });
+      await purchasePhoneNumber(
+        {
+          provider: selectedProvider,
+          phone_number: selectedAvailableNumber,
+        },
+        workspaceId
+      );
       toast.success(`Successfully purchased ${selectedAvailableNumber}`);
       setIsPurchaseModalOpen(false);
       // Reload data to show new number
@@ -289,8 +335,18 @@ export default function PhoneNumbersPage() {
   const confirmReleaseNumber = async () => {
     if (!numberToRelease) return;
 
+    const workspaceId = getActiveWorkspaceId();
+    if (!workspaceId) {
+      toast.error("No workspace available.");
+      return;
+    }
+
     try {
-      await releasePhoneNumber(numberToRelease.id, numberToRelease.provider as Provider);
+      await releasePhoneNumber(
+        numberToRelease.id,
+        numberToRelease.provider as Provider,
+        workspaceId
+      );
       toast.success(`Released ${numberToRelease.phoneNumber}`);
       // Reload to reflect changes
       await loadData();
