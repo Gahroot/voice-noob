@@ -22,6 +22,7 @@ from sqlalchemy.orm import selectinload
 
 from app.api.settings import get_user_api_keys
 from app.core.auth import CurrentUser, user_id_to_uuid
+from app.core.config import settings
 from app.core.limiter import limiter
 from app.core.webhook_security import verify_telnyx_webhook, verify_twilio_webhook
 from app.db.session import get_db
@@ -422,6 +423,28 @@ async def search_phone_numbers(
     ]
 
 
+async def _configure_webhook_for_provider(
+    service: TwilioService | TelnyxService,
+    number_id: str,
+    provider: str,
+    log: structlog.stdlib.BoundLogger,
+) -> None:
+    """Configure webhook for a purchased phone number."""
+    public_url = settings.PUBLIC_URL
+    if not public_url or not number_id:
+        return
+
+    voice_url = f"{public_url}/webhooks/{provider}/voice"
+    webhook_success = await service.configure_phone_number_webhook(
+        phone_number_id=number_id,
+        voice_url=voice_url,
+    )
+    if webhook_success:
+        log.info("webhook_configured", provider=provider, voice_url=voice_url)
+    else:
+        log.warning("webhook_config_failed", provider=provider, phone_number_id=number_id)
+
+
 @router.post("/phone-numbers/purchase", response_model=PhoneNumberResponse)
 @limiter.limit("5/minute")  # Strict rate limit for phone number purchases (costs money!)
 async def purchase_phone_number(
@@ -456,6 +479,10 @@ async def purchase_phone_number(
 
     number: PhoneNumber
 
+    # Get public URL for webhook configuration
+    if not settings.PUBLIC_URL:
+        log.warning("PUBLIC_URL not configured, webhooks will not be set up automatically")
+
     if purchase_request.provider == "twilio":
         twilio_service = await get_twilio_service(current_user.id, db, workspace_id=workspace_uuid)
         if not twilio_service:
@@ -464,6 +491,7 @@ async def purchase_phone_number(
                 detail="Twilio credentials not configured. Please add them in Settings.",
             )
         number = await twilio_service.purchase_phone_number(purchase_request.phone_number)
+        await _configure_webhook_for_provider(twilio_service, number.id, "twilio", log)
 
     elif purchase_request.provider == "telnyx":
         telnyx_service = await get_telnyx_service(current_user.id, db, workspace_id=workspace_uuid)
@@ -473,6 +501,7 @@ async def purchase_phone_number(
                 detail="Telnyx credentials not configured. Please add them in Settings.",
             )
         number = await telnyx_service.purchase_phone_number(purchase_request.phone_number)
+        await _configure_webhook_for_provider(telnyx_service, number.id, "telnyx", log)
 
     else:
         raise HTTPException(status_code=400, detail="Invalid provider. Use 'twilio' or 'telnyx'.")

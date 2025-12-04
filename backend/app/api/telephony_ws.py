@@ -16,7 +16,6 @@ from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import get_user_id_from_uuid
 from app.db.session import get_db
 from app.models.agent import Agent
 from app.models.call_record import CallRecord
@@ -115,12 +114,8 @@ async def twilio_media_stream(
 
         log.info("agent_loaded", agent_name=agent.name)
 
-        # Look up user ID
-        user_id_int = await get_user_id_from_uuid(agent.user_id, db)
-        if user_id_int is None:
-            log.error("agent_owner_not_found")
-            await websocket.close(code=4004, reason="Agent owner not found")
-            return
+        # agent.user_id is now directly the integer user ID
+        user_id_int = agent.user_id
 
         # Get workspace for the agent
         workspace_id = await get_agent_workspace_id(agent.id, db)
@@ -427,12 +422,8 @@ async def telnyx_media_stream(
 
         log.info("agent_loaded", agent_name=agent.name)
 
-        # Look up user ID
-        user_id_int = await get_user_id_from_uuid(agent.user_id, db)
-        if user_id_int is None:
-            log.error("agent_owner_not_found")
-            await websocket.close(code=4004, reason="Agent owner not found")
-            return
+        # agent.user_id is now directly the integer user ID
+        user_id_int = agent.user_id
 
         # Get workspace for the agent
         workspace_id = await get_agent_workspace_id(agent.id, db)

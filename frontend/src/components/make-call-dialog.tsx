@@ -24,6 +24,12 @@ import {
 } from "@/components/ui/select";
 import { initiateCall, hangupCall, listPhoneNumbers, type PhoneNumber } from "@/lib/api/telephony";
 import type { Agent } from "@/lib/api/agents";
+import { api } from "@/lib/api";
+
+interface AgentWorkspace {
+  workspace_id: string;
+  workspace_name: string;
+}
 
 interface MakeCallDialogProps {
   open: boolean;
@@ -42,11 +48,25 @@ export function MakeCallDialog({ open, onOpenChange, agent, workspaceId }: MakeC
   const [callDuration, setCallDuration] = useState(0);
   const [provider] = useState<"twilio" | "telnyx">("telnyx");
 
+  // Fetch agent's workspaces if workspaceId not provided
+  const { data: agentWorkspaces = [] } = useQuery<AgentWorkspace[]>({
+    queryKey: ["agent-workspaces", agent.id],
+    queryFn: async () => {
+      const response = await api.get<AgentWorkspace[]>(`/api/v1/workspaces/agent/${agent.id}`);
+      return response.data;
+    },
+    enabled: open && !workspaceId,
+  });
+
+  // Use provided workspaceId or fall back to agent's first workspace
+  const effectiveWorkspaceId = workspaceId ?? agentWorkspaces[0]?.workspace_id;
+
   // Fetch available phone numbers
   const { data: phoneNumbers = [] } = useQuery({
-    queryKey: ["phone-numbers", provider, workspaceId],
-    queryFn: () => (workspaceId ? listPhoneNumbers(provider, workspaceId) : Promise.resolve([])),
-    enabled: open && !!workspaceId,
+    queryKey: ["phone-numbers", provider, effectiveWorkspaceId],
+    queryFn: () =>
+      effectiveWorkspaceId ? listPhoneNumbers(provider, effectiveWorkspaceId) : Promise.resolve([]),
+    enabled: open && !!effectiveWorkspaceId,
   });
 
   // Set default from number when phone numbers load
