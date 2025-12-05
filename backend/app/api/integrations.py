@@ -2,6 +2,7 @@
 
 import uuid
 from datetime import UTC, datetime
+from http import HTTPStatus
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -490,3 +491,110 @@ async def get_workspace_integrations(
         for integration in integrations
         if integration.credentials
     }
+
+
+class CalComEventType(BaseModel):
+    """Cal.com event type."""
+
+    id: int
+    title: str
+    slug: str
+    length: int | None = None
+
+
+class CalComEventTypesResponse(BaseModel):
+    """Response for Cal.com event types."""
+
+    event_types: list[CalComEventType]
+    total: int
+
+
+@router.get("/cal-com/event-types", response_model=CalComEventTypesResponse)
+async def get_calcom_event_types(
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+    workspace_id: str | None = None,
+) -> CalComEventTypesResponse:
+    """Fetch Cal.com event types using stored credentials.
+
+    Args:
+        workspace_id: Workspace ID (optional)
+        current_user: Authenticated user
+        db: Database session
+
+    Returns:
+        List of Cal.com event types
+    """
+    import httpx
+
+    user_uuid = user_id_to_uuid(current_user.id)
+
+    # Get Cal.com credentials
+    workspace_uuid: uuid.UUID | None = None
+    if workspace_id:
+        try:
+            workspace_uuid = uuid.UUID(workspace_id)
+        except ValueError as err:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid workspace_id format",
+            ) from err
+
+    credentials = await get_integration_credentials(user_uuid, "cal-com", db, workspace_uuid)
+
+    if not credentials or "api_key" not in credentials:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Cal.com integration not connected or missing API key",
+        )
+
+    # Fetch event types from Cal.com API
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                "https://api.cal.com/v2/event-types",
+                headers={
+                    "Authorization": f"Bearer {credentials['api_key']}",
+                    "cal-api-version": "2024-06-14",
+                },
+            )
+
+            if response.status_code != HTTPStatus.OK:
+                raise HTTPException(  # noqa: TRY301
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"Cal.com API returned status {response.status_code}: {response.text[:200]}",
+                )
+
+            data = response.json()
+            event_types = []
+
+            for et in data.get("data", []):
+                event_types.append(
+                    CalComEventType(
+                        id=et["id"],
+                        title=et.get("title") or et.get("slug", "Unnamed"),
+                        slug=et["slug"],
+                        length=et.get("lengthInMinutes") or et.get("length"),
+                    )
+                )
+
+            return CalComEventTypesResponse(event_types=event_types, total=len(event_types))
+
+    except HTTPException:
+        # Re-raise FastAPI HTTPExceptions without wrapping them
+        raise
+    except httpx.TimeoutException as err:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="Cal.com API request timed out",
+        ) from err
+    except httpx.HTTPError as err:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Cal.com API error: {err!s}",
+        ) from err
+    except Exception as err:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error fetching event types: {err!s}",
+        ) from err

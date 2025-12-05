@@ -213,11 +213,8 @@ async def initiate_lead_call(
         log.warning("agent_has_no_phone_number")
         return False, None
 
-    # Get user_id (int) from agent's user_id (UUID)
-    user_id_int = await get_user_id_from_uuid(agent.user_id, db)
-    if user_id_int is None:
-        log.error("could_not_resolve_user_id")
-        return False, None
+    # agent.user_id is already the integer user ID
+    user_id_int = agent.user_id
 
     # Get Telnyx service
     telnyx_service = await get_telnyx_service(user_id_int, db, workspace_id=workspace_id)
@@ -345,13 +342,8 @@ async def website_lead_webhook(
         log.error("agent_not_active")
         raise HTTPException(status_code=400, detail="Agent is not active")
 
-    # Get user_id (int) from agent
-    from app.core.auth import get_user_id_from_uuid
-
-    user_id_int = await get_user_id_from_uuid(agent.user_id, db)
-    if user_id_int is None:
-        log.error("could_not_resolve_user_id")
-        raise HTTPException(status_code=500, detail="Internal error resolving user")
+    # agent.user_id is already the integer user ID
+    user_id_int = agent.user_id
 
     # Create or update contact
     contact = await create_or_update_contact(
@@ -503,13 +495,8 @@ async def facebook_lead_webhook(
         log.error("agent_not_active")
         raise HTTPException(status_code=400, detail="Agent is not active")
 
-    # Get user_id (int) from agent
-    from app.core.auth import get_user_id_from_uuid
-
-    user_id_int = await get_user_id_from_uuid(agent.user_id, db)
-    if user_id_int is None:
-        log.error("could_not_resolve_user_id")
-        raise HTTPException(status_code=500, detail="Internal error resolving user")
+    # agent.user_id is already the integer user ID
+    user_id_int = agent.user_id
 
     # Create or update contact
     contact = await create_or_update_contact(

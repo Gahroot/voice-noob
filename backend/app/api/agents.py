@@ -377,8 +377,6 @@ def _apply_agent_updates(agent: Agent, request: UpdateAgentRequest) -> None:
         "language",
         "voice",
         "enabled_tools",
-        "enabled_tool_ids",
-        "integration_settings",
         "phone_number_id",
         "enable_recording",
         "enable_transcript",
@@ -402,6 +400,13 @@ def _apply_agent_updates(agent: Agent, request: UpdateAgentRequest) -> None:
             # Allow setting nullable fields to None, otherwise only set non-None values
             if field in nullable_fields or value is not None:
                 setattr(agent, field, value)
+
+    # Handle JSONB fields specially - create new dict to ensure SQLAlchemy detects change
+    if request.is_field_set("enabled_tool_ids") and request.enabled_tool_ids is not None:
+        agent.enabled_tool_ids = dict(request.enabled_tool_ids)
+
+    if request.is_field_set("integration_settings") and request.integration_settings is not None:
+        agent.integration_settings = dict(request.integration_settings)
 
     # Handle pricing_tier specially (updates provider_config too)
     if request.is_field_set("pricing_tier") and request.pricing_tier is not None:

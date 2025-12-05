@@ -145,41 +145,106 @@ function CalComEventTypeSelector({
 }: {
   form: ReturnType<typeof useForm<z.infer<typeof agentFormSchema>>>;
 }) {
-  const [eventTypes, setEventTypes] = useState<Array<{ id: number; title: string }>>([]);
+  const [eventTypes, setEventTypes] = useState<
+    Array<{ id: number; title: string; length?: number }>
+  >([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // Fetch event types from Cal.com
-  useEffect(() => {
-    const fetchEventTypes = async () => {
-      setLoading(true);
-      try {
-        // Get Cal.com API key from user integrations
-        const response = await api.get("/api/v1/integrations/cal-com");
-        const calcomIntegration = response.data;
-
-        if (calcomIntegration?.has_credentials) {
-          // Fetch event types using the stored API key
-          // Note: We can't fetch directly from client due to CORS, so this is a placeholder
-          // In production, you'd need a backend endpoint to proxy this request
-          setEventTypes([{ id: 0, title: "Fetch from your Cal.com account in integrations page" }]);
-        }
-      } catch (error) {
-        console.error("Failed to fetch event types:", error);
-      } finally {
-        setLoading(false);
+  // Fetch event types from Cal.com via backend
+  const fetchEventTypes = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await api.get("/api/v1/integrations/cal-com/event-types");
+      const data = response.data as {
+        event_types: Array<{ id: number; title: string; length?: number }>;
+        total: number;
+      };
+      setEventTypes(data.event_types);
+      if (data.total === 0) {
+        setError("No event types found in your Cal.com account");
+      } else {
+        toast.success(`Loaded ${data.total} event type(s) from Cal.com`);
       }
-    };
+    } catch (err: unknown) {
+      console.error("Failed to fetch Cal.com event types:", err);
 
-    void fetchEventTypes();
-  }, []);
+      // Extract error message from API response
+      let errorMessage = "Failed to load event types. ";
+      if (err && typeof err === "object" && "response" in err) {
+        const axiosError = err as { response?: { data?: { detail?: string }; status?: number } };
+        if (axiosError.response?.status === 404) {
+          errorMessage +=
+            "Cal.com integration not connected. Please connect it in the Integrations page.";
+        } else if (axiosError.response?.status === 502) {
+          const detail = axiosError.response.data?.detail ?? "Cal.com API error";
+          errorMessage += detail;
+        } else if (axiosError.response?.data?.detail) {
+          errorMessage += axiosError.response.data.detail;
+        } else {
+          errorMessage += "Please check your Cal.com integration.";
+        }
+      } else {
+        errorMessage += "Please check your Cal.com integration.";
+      }
+
+      setError(errorMessage);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const currentEventTypeId = form.watch("integrationSettings")?.["cal-com"]?.default_event_type_id;
 
   return (
-    <div className="space-y-2">
-      <Label htmlFor="calcom-event-type" className="text-sm font-medium">
-        Default Event Type
-      </Label>
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <Label htmlFor="calcom-event-type" className="text-sm font-medium">
+          Default Event Type
+        </Label>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => void fetchEventTypes()}
+          disabled={loading}
+          className="h-7 text-xs"
+        >
+          {loading ? (
+            <>
+              <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+              Loading...
+            </>
+          ) : (
+            <>
+              <svg
+                className="mr-1.5 h-3 w-3"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                />
+              </svg>
+              Fetch Event Types
+            </>
+          )}
+        </Button>
+      </div>
+
+      {error && (
+        <div className="flex items-center gap-2 rounded-md border border-yellow-500/20 bg-yellow-500/10 px-3 py-2 text-xs text-yellow-600 dark:text-yellow-400">
+          <AlertCircle className="h-3.5 w-3.5" />
+          {error}
+        </div>
+      )}
+
       <Select
         value={currentEventTypeId?.toString() ?? ""}
         onValueChange={(value) => {
@@ -190,7 +255,7 @@ function CalComEventTypeSelector({
               ...settings,
               "cal-com": {
                 ...settings["cal-com"],
-                default_event_type_id: value ? parseInt(value) : undefined,
+                default_event_type_id: value === "manual" ? undefined : parseInt(value),
               },
             },
             { shouldDirty: true }
@@ -199,23 +264,25 @@ function CalComEventTypeSelector({
         disabled={loading}
       >
         <SelectTrigger id="calcom-event-type">
-          <SelectValue placeholder="Select default event type" />
+          <SelectValue placeholder="Click 'Fetch Event Types' to load" />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="">Manual entry (enter ID below)</SelectItem>
+          <SelectItem value="manual">Manual entry (enter ID below)</SelectItem>
           {eventTypes.map((et) => (
             <SelectItem key={et.id} value={et.id.toString()}>
               {et.title}
+              {et.length && ` (${et.length} min)`}
             </SelectItem>
           ))}
         </SelectContent>
       </Select>
 
       {/* Manual event type ID input */}
-      {!currentEventTypeId && (
+      {(!currentEventTypeId || currentEventTypeId === "manual") && (
         <Input
           type="number"
           placeholder="Enter Event Type ID manually"
+          value={currentEventTypeId === "manual" ? "" : (currentEventTypeId?.toString() ?? "")}
           onChange={(e) => {
             const value = e.target.value ? parseInt(e.target.value) : undefined;
             const settings = form.getValues("integrationSettings") ?? {};
@@ -446,6 +513,7 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
       isActive: true,
       enabledTools: [],
       enabledToolIds: {},
+      integrationSettings: {},
       selectedWorkspaces: [],
       widgetButtonText: "Talk to us",
     },
@@ -484,6 +552,7 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
         isActive: agent.is_active,
         enabledTools: agent.enabled_tools ?? [],
         enabledToolIds: agent.enabled_tool_ids ?? {},
+        integrationSettings: agent.integration_settings ?? {},
         selectedWorkspaces: [],
       });
     }
@@ -577,15 +646,7 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
 
   const updateAgentMutation = useMutation({
     mutationFn: (data: UpdateAgentRequest) => updateAgent(agentId, data),
-    onSuccess: () => {
-      toast.success("Agent updated successfully");
-      void queryClient.invalidateQueries({ queryKey: ["agents"] });
-      void queryClient.invalidateQueries({ queryKey: ["agent", agentId] });
-      router.push("/dashboard/agents");
-    },
-    onError: (error: Error) => {
-      toast.error(error.message || "Failed to update agent");
-    },
+    // onSuccess removed - handled in onSubmit to avoid race condition
   });
 
   // Handle delete - delete first, then navigate
@@ -683,6 +744,7 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
       voice: data.voice,
       enabled_tools: enabledIntegrations,
       enabled_tool_ids: data.enabledToolIds,
+      integration_settings: data.integrationSettings,
       phone_number_id: data.phoneNumberId,
       enable_recording: data.enableRecording,
       enable_transcript: data.enableTranscript,
@@ -702,8 +764,16 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
           },
         }),
       ]);
-    } catch {
-      // Error handling is done in individual mutations
+
+      // All updates succeeded - now show success and navigate
+      toast.success("Agent updated successfully");
+      await queryClient.invalidateQueries({ queryKey: ["agents"] });
+      await queryClient.invalidateQueries({ queryKey: ["agent", agentId] });
+      router.push("/dashboard/agents");
+    } catch (error) {
+      // Show specific error message
+      const errorMessage = error instanceof Error ? error.message : "Failed to update agent";
+      toast.error(errorMessage);
     }
   }
 

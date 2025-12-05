@@ -237,7 +237,6 @@ async def _handle_twilio_stream(  # noqa: PLR0915
 
             log.info("realtime_to_twilio_started", waiting_for_events=True)
             event_count = 0
-            pending_end_call = False  # True when end_call requested but waiting for AI to finish
             greeting_triggered = False  # Track if we've triggered the greeting
 
             async for event in realtime_session.connection:
@@ -432,8 +431,10 @@ async def telnyx_media_stream(
         # agent.user_id is now directly the integer user ID
         user_id_int = agent.user_id
 
-        # Get workspace for the agent
-        workspace_id = await get_agent_workspace_id(agent.id, db)
+        # Get workspace for the agent (use parsed workspace_uuid or query from agent)
+        if not workspace_uuid:
+            workspace_uuid = await get_agent_workspace_id(agent.id, db)
+        workspace_id_str = str(workspace_uuid) if workspace_uuid else None
 
         # Build agent config
         agent_config = {
@@ -468,7 +469,7 @@ async def telnyx_media_stream(
                 log=log,
                 initial_greeting=agent.initial_greeting,
                 agent_id=agent_id,
-                workspace_id=workspace_id,
+                workspace_id=workspace_id_str,
                 db=db,
                 enable_transcript=agent.enable_transcript,
             )
@@ -780,17 +781,16 @@ async def _handle_telnyx_stream(  # noqa: PLR0915
                                     agent_obj = result_agent.scalar_one_or_none()
 
                                     if agent_obj:
-                                        user_id_int = await get_user_id_from_uuid(
-                                            agent_obj.user_id, db
-                                        )
-                                        if user_id_int:
+                                        # agent_obj.user_id is already the integer user ID
+                                        user_id_int_for_hangup = agent_obj.user_id
+                                        if user_id_int_for_hangup:
                                             from app.api.telephony import get_telnyx_service
 
                                             workspace_uuid_for_hangup = (
                                                 uuid.UUID(workspace_id) if workspace_id else None
                                             )
                                             telnyx_service = await get_telnyx_service(
-                                                user_id_int, db, workspace_uuid_for_hangup
+                                                user_id_int_for_hangup, db, workspace_uuid_for_hangup
                                             )
                                             if telnyx_service:
                                                 await telnyx_service.hangup_call(call_control_id)

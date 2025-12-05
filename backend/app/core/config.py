@@ -125,6 +125,11 @@ class Settings(BaseSettings):
     MAX_RETRIES: int = 3  # Number of retry attempts for failed requests
     RETRY_BACKOFF_FACTOR: float = 2.0  # Exponential backoff multiplier
 
+    # Lead Webhook Configuration
+    LEAD_WEBHOOK_API_KEY: str | None = None  # API key for website/Zapier lead webhooks
+    FACEBOOK_APP_SECRET: str | None = None  # Facebook app secret for webhook signature verification
+    FACEBOOK_VERIFY_TOKEN: str | None = None  # Token for Facebook webhook verification
+
     # Monitoring
     SENTRY_DSN: str | None = None
     SENTRY_ENVIRONMENT: str = "development"

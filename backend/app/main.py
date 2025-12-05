@@ -31,6 +31,7 @@ from app.api import (
     embed,
     health,
     integrations,
+    leads,
     phone_numbers,
     realtime,
     telephony,
@@ -210,6 +211,7 @@ app.include_router(compliance.router)  # Compliance API (GDPR/CCPA)
 app.include_router(integrations.router)  # Integrations API (external tools)
 app.include_router(embed.router)  # Public embed API (unauthenticated)
 app.include_router(embed.ws_router)  # Public embed WebSocket
+app.include_router(leads.router)  # Lead webhook API (Facebook, website forms)
 
 
 @app.get("/")
