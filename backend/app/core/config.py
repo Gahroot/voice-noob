@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     PUBLIC_WEBHOOK_URL: str | None = (
         None  # e.g., "https://yourdomain.com" or "https://abc123.ngrok.io"
     )
+    PUBLIC_URL: str | None = None  # Public URL for webhook callbacks (e.g., ngrok URL)
 
     # Database
     POSTGRES_SERVER: str = "localhost"
@@ -82,7 +83,11 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
     # CORS
-    CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:8000"]
+    CORS_ORIGINS: list[str] = [
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://localhost:8000",
+    ]
     CORS_ALLOW_CREDENTIALS: bool = True
     CORS_ALLOW_METHODS: list[str] = ["*"]
     CORS_ALLOW_HEADERS: list[str] = ["*"]

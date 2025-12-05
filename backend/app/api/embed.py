@@ -285,7 +285,6 @@ async def _get_embed_session_context(
 
     Returns (agent, workspace_id, user_id_int) or None if validation fails.
     """
-    from app.core.auth import get_user_id_from_uuid
     from app.models.workspace import AgentWorkspace
 
     # Validate session
@@ -322,12 +321,8 @@ async def _get_embed_session_context(
         await websocket.close(code=4000)
         return None
 
-    # Look up user_id for the agent
-    user_id_int = await get_user_id_from_uuid(agent.user_id, db)
-    if user_id_int is None:
-        await websocket.send_json({"type": "error", "error": "Agent owner not found"})
-        await websocket.close()
-        return None
+    # agent.user_id is now directly the integer user ID
+    user_id_int = agent.user_id
 
     return agent, agent_workspace.workspace_id, user_id_int
 
@@ -490,7 +485,7 @@ async def get_embed_ephemeral_token(  # noqa: PLR0915
     import httpx
 
     from app.api.settings import get_user_api_keys
-    from app.core.auth import get_user_id_from_uuid, user_id_to_uuid
+    from app.core.auth import user_id_to_uuid
     from app.models.workspace import AgentWorkspace
     from app.services.gpt_realtime import build_instructions_with_language
 
@@ -531,8 +526,8 @@ async def get_embed_ephemeral_token(  # noqa: PLR0915
         log.warning("no_workspace_for_agent")
         raise HTTPException(status_code=500, detail="Agent not configured properly")
 
-    # Get OpenAI API key
-    user_uuid = user_id_to_uuid(await get_user_id_from_uuid(agent.user_id, db) or 0)
+    # Get OpenAI API key - agent.user_id is now directly the integer user ID
+    user_uuid = user_id_to_uuid(agent.user_id)
     user_settings = await get_user_api_keys(
         user_uuid, db, workspace_id=agent_workspace.workspace_id
     )
@@ -611,12 +606,14 @@ async def get_embed_ephemeral_token(  # noqa: PLR0915
             # happens via the /tool-call endpoint
             from app.services.tools.registry import ToolRegistry
 
-            # Get user_id for the agent owner (needed for tool registry)
-            user_id_int = await get_user_id_from_uuid(agent.user_id, db) or 0
+            # agent.user_id is now directly the integer user ID
+            user_id_int = agent.user_id
 
             # Get integration credentials for the workspace
             workspace_id = agent_workspace.workspace_id
-            integrations = await get_workspace_integrations(agent.user_id, workspace_id, db)
+            integrations = await get_workspace_integrations(
+                user_id_to_uuid(agent.user_id), workspace_id, db
+            )
 
             tool_registry = ToolRegistry(
                 db=db,
@@ -661,6 +658,14 @@ class ToolCallRequest(BaseModel):
     arguments: dict[str, Any]
 
 
+class SaveTranscriptRequest(BaseModel):
+    """Request model for saving call transcript."""
+
+    session_id: str
+    transcript: str
+    duration_seconds: int = 0
+
+
 @router.post("/{public_id}/tool-call")
 async def execute_embed_tool_call(
     public_id: str,
@@ -678,7 +683,7 @@ async def execute_embed_tool_call(
     - Origin validation against allowed domains
     - Only tools enabled for the agent are executed
     """
-    from app.core.auth import get_user_id_from_uuid
+    from app.core.auth import user_id_to_uuid
 
     log = logger.bind(
         endpoint="embed_tool_call",
@@ -702,10 +707,8 @@ async def execute_embed_tool_call(
         log.warning("origin_not_allowed", allowed=agent.allowed_domains)
         raise HTTPException(status_code=403, detail="Origin not allowed")
 
-    # Get user ID for tool execution
-    user_id_int = await get_user_id_from_uuid(agent.user_id, db)
-    if user_id_int is None:
-        return {"success": False, "error": "Agent owner not found"}
+    # agent.user_id is now directly the integer user ID
+    user_id_int = agent.user_id
 
     # Get workspace for this agent (needed for proper CRM scoping)
     from app.models.workspace import AgentWorkspace
@@ -719,7 +722,9 @@ async def execute_embed_tool_call(
     # Get integration credentials for the workspace
     integrations: dict[str, dict[str, Any]] = {}
     if workspace_id:
-        integrations = await get_workspace_integrations(agent.user_id, workspace_id, db)
+        integrations = await get_workspace_integrations(
+            user_id_to_uuid(agent.user_id), workspace_id, db
+        )
 
     # Create tool registry with workspace context
     from app.services.tools.registry import ToolRegistry
@@ -763,3 +768,91 @@ async def execute_embed_tool_call(
         return {"success": False, "error": str(e)}
     finally:
         await tool_registry.close()
+
+
+@router.post("/{public_id}/transcript")
+async def save_embed_transcript(
+    public_id: str,
+    transcript_request: SaveTranscriptRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    origin: str | None = Header(None),
+) -> dict[str, Any]:
+    """Save a call transcript from an embed widget session.
+
+    This endpoint creates a CallRecord with the transcript for widget calls.
+    Widget calls use 'widget' as the provider since they're not telephony calls.
+
+    Security:
+    - Origin validation against allowed domains
+    - Only saves for active, embed-enabled agents
+    """
+    from app.models.call_record import CallDirection, CallRecord, CallStatus
+    from app.models.workspace import AgentWorkspace
+
+    log = logger.bind(
+        endpoint="embed_transcript",
+        public_id=public_id,
+        session_id=transcript_request.session_id,
+        origin=origin,
+    )
+
+    # Get agent
+    agent = await get_agent_by_public_id(public_id, db)
+    if not agent:
+        log.warning("agent_not_found")
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    if not agent.embed_enabled or not agent.is_active:
+        log.warning("agent_not_available")
+        raise HTTPException(status_code=403, detail="Agent not available")
+
+    # Validate origin
+    if not validate_origin(origin, agent.allowed_domains):
+        log.warning("origin_not_allowed", allowed=agent.allowed_domains)
+        raise HTTPException(status_code=403, detail="Origin not allowed")
+
+    # Check if transcripts are enabled for this agent
+    if not agent.enable_transcript:
+        log.info("transcripts_disabled_for_agent")
+        return {"success": True, "message": "Transcripts not enabled for this agent"}
+
+    # Skip if transcript is empty
+    if not transcript_request.transcript.strip():
+        log.info("empty_transcript_skipped")
+        return {"success": True, "message": "Empty transcript skipped"}
+
+    # Get workspace for this agent
+    workspace_result = await db.execute(
+        select(AgentWorkspace).where(AgentWorkspace.agent_id == agent.id).limit(1)
+    )
+    agent_workspace = workspace_result.scalar_one_or_none()
+    workspace_id = agent_workspace.workspace_id if agent_workspace else None
+
+    # Create call record for widget session
+    call_record = CallRecord(
+        user_id=agent.user_id,
+        workspace_id=workspace_id,
+        provider="widget",
+        provider_call_id=transcript_request.session_id,
+        agent_id=agent.id,
+        direction=CallDirection.INBOUND.value,
+        status=CallStatus.COMPLETED.value,
+        from_number="widget",
+        to_number="widget",
+        duration_seconds=transcript_request.duration_seconds,
+        transcript=transcript_request.transcript,
+        started_at=datetime.now(UTC) - timedelta(seconds=transcript_request.duration_seconds),
+        ended_at=datetime.now(UTC),
+    )
+    db.add(call_record)
+    await db.commit()
+
+    log.info(
+        "transcript_saved",
+        record_id=str(call_record.id),
+        transcript_length=len(transcript_request.transcript),
+        duration_seconds=transcript_request.duration_seconds,
+    )
+
+    return {"success": True, "call_id": str(call_record.id)}

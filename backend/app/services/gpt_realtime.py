@@ -101,6 +101,20 @@ Current: {current_datetime}
     return instructions
 
 
+class TranscriptEntry:
+    """Single transcript entry representing one turn in the conversation."""
+
+    def __init__(self, role: str, content: str, timestamp: str | None = None) -> None:
+        from datetime import UTC, datetime
+
+        self.role = role  # "user" or "assistant"
+        self.content = content
+        self.timestamp = timestamp or datetime.now(UTC).isoformat()
+
+    def to_dict(self) -> dict[str, str]:
+        return {"role": self.role, "content": self.content, "timestamp": self.timestamp}
+
+
 class GPTRealtimeSession:
     """Manages a GPT Realtime API session for a voice call.
 
@@ -109,6 +123,7 @@ class GPTRealtimeSession:
     - Internal tool integration
     - Audio streaming
     - Tool call routing to internal tool handlers
+    - Transcript accumulation
     """
 
     def __init__(
@@ -137,6 +152,12 @@ class GPTRealtimeSession:
         self.connection: Any = None
         self.tool_registry: ToolRegistry | None = None
         self.client: AsyncOpenAI | None = None
+        # Transcript accumulation
+        self._transcript_entries: list[TranscriptEntry] = []
+        self._current_assistant_text: str = ""
+        # Initial greeting (triggered after event loop starts to avoid race condition)
+        self._pending_initial_greeting: str | None = None
+        self._greeting_triggered: bool = False
         self.logger = logger.bind(
             component="gpt_realtime",
             session_id=self.session_id,
@@ -266,7 +287,9 @@ class GPTRealtimeSession:
             "modalities": ["text", "audio"],
             "instructions": instructions,
             "voice": voice,
+            "speed": 1.1,  # Slightly faster speech (1.0 = normal, range: 0.25-1.5)
             "temperature": temperature,
+            # Use pcm16 for higher quality audio - conversion to g711_ulaw handled in telephony_ws.py
             "input_audio_format": "pcm16",
             "output_audio_format": "pcm16",
             "input_audio_transcription": {"model": "whisper-1"},
@@ -290,6 +313,16 @@ class GPTRealtimeSession:
                 "session_configured",
                 tool_count=len(tools),
             )
+
+            # Store initial greeting for later - triggered after event loop starts
+            # to avoid race condition where audio events arrive before listener is ready
+            initial_greeting = self.agent_config.get("initial_greeting")
+            if initial_greeting:
+                self._pending_initial_greeting = initial_greeting
+                self.logger.info(
+                    "initial_greeting_pending",
+                    greeting=initial_greeting[:50],
+                )
         except Exception as e:
             self.logger.exception(
                 "session_config_failed", error=str(e), error_type=type(e).__name__
@@ -372,13 +405,34 @@ class GPTRealtimeSession:
             event: Function call event from SDK
 
         Returns:
-            Tool execution result (includes action field for call control)
+            Tool execution result with optional 'action' field for call control
         """
         call_id = event.call_id
         name = event.name
-        arguments = (
-            json.loads(event.arguments) if isinstance(event.arguments, str) else event.arguments
-        )
+
+        # Parse arguments safely - GPT may send incomplete/malformed JSON
+        try:
+            arguments = (
+                json.loads(event.arguments) if isinstance(event.arguments, str) else event.arguments
+            )
+        except json.JSONDecodeError as e:
+            self.logger.warning(
+                "function_call_json_parse_error",
+                call_id=call_id,
+                tool_name=name,
+                raw_arguments=str(event.arguments)[:200],
+                error=str(e),
+            )
+            # Return error to GPT so it can retry
+            if self.connection:
+                await self.connection.conversation.item.create(
+                    item={
+                        "type": "function_call_output",
+                        "call_id": call_id,
+                        "output": json.dumps({"success": False, "error": "Invalid JSON arguments"}),
+                    }
+                )
+            return {"success": False, "error": "Invalid JSON arguments"}
 
         # Execute tool via internal tool registry
         result = await self.handle_tool_call({"name": name, "arguments": arguments})
@@ -392,16 +446,67 @@ class GPTRealtimeSession:
                     "output": json.dumps(result),
                 }
             )
+            # Trigger GPT to generate a response after the function call
+            await self.connection.response.create()
 
         self.logger.info(
             "function_call_completed",
             call_id=call_id,
             tool_name=name,
             success=result.get("success"),
-            has_action=bool(result.get("action")),
+            action=result.get("action"),
         )
 
         return result
+
+    async def trigger_initial_greeting(self) -> bool:
+        """Trigger the initial greeting if one is pending.
+
+        This should be called AFTER the event listener has started to avoid
+        race conditions where audio events arrive before the listener is ready.
+
+        Returns:
+            True if greeting was triggered, False if no greeting pending or already triggered
+        """
+        if not self._pending_initial_greeting or self._greeting_triggered:
+            return False
+
+        if not self.connection:
+            self.logger.warning("cannot_trigger_greeting_no_connection")
+            return False
+
+        self._greeting_triggered = True
+        greeting = self._pending_initial_greeting
+
+        self.logger.info("triggering_initial_greeting", greeting=greeting[:50])
+
+        try:
+            # Clear any buffered input audio to prevent line noise from
+            # triggering VAD and cancelling the greeting response
+            await self.connection.input_audio_buffer.clear()
+
+            # Standard OpenAI Realtime pattern:
+            # 1. Create a conversation item with the prompt
+            # 2. Call response.create() to trigger the response
+            # This follows the official OpenAI examples
+            await self.connection.conversation.item.create(
+                item={
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": f"[Call connected. Say this greeting now: {greeting}]",
+                        }
+                    ],
+                }
+            )
+            # Trigger response generation (no parameters needed)
+            await self.connection.response.create()
+            return True
+        except Exception as e:
+            self.logger.exception("initial_greeting_failed", error=str(e))
+            return False
 
     async def send_audio(self, audio_data: bytes) -> None:
         """Send audio input to GPT Realtime using SDK.
@@ -503,23 +608,89 @@ class GPTRealtimeSession:
                 "trigger_initial_response_error", error=str(e), error_type=type(e).__name__
             )
 
+    def add_user_transcript(self, text: str) -> None:
+        """Add a user transcript entry.
+
+        Args:
+            text: Transcribed user speech
+        """
+        if text.strip():
+            self._transcript_entries.append(TranscriptEntry(role="user", content=text.strip()))
+            self.logger.debug("user_transcript_added", text_length=len(text))
+
+    def add_assistant_transcript(self, text: str) -> None:
+        """Add an assistant transcript entry.
+
+        Args:
+            text: Assistant response text
+        """
+        if text.strip():
+            self._transcript_entries.append(TranscriptEntry(role="assistant", content=text.strip()))
+            self.logger.debug("assistant_transcript_added", text_length=len(text))
+
+    def accumulate_assistant_text(self, delta: str) -> None:
+        """Accumulate assistant text delta for transcript.
+
+        Args:
+            delta: Text delta from response.text.delta event
+        """
+        self._current_assistant_text += delta
+
+    def flush_assistant_text(self) -> None:
+        """Flush accumulated assistant text to transcript."""
+        if self._current_assistant_text.strip():
+            self.add_assistant_transcript(self._current_assistant_text)
+        self._current_assistant_text = ""
+
+    def get_transcript(self) -> str:
+        """Get the full transcript as formatted text.
+
+        Returns:
+            Formatted transcript string
+        """
+        lines = []
+        for entry in self._transcript_entries:
+            role_label = "User" if entry.role == "user" else "Assistant"
+            lines.append(f"[{role_label}]: {entry.content}")
+        return "\n\n".join(lines)
+
+    def get_transcript_entries(self) -> list[dict[str, str]]:
+        """Get transcript entries as list of dicts.
+
+        Returns:
+            List of transcript entry dictionaries
+        """
+        return [entry.to_dict() for entry in self._transcript_entries]
+
     async def cleanup(self) -> None:
         """Cleanup resources."""
         self.logger.info("gpt_realtime_session_cleanup_started")
 
+        # Flush any remaining assistant text
+        self.flush_assistant_text()
+
         # Close Realtime connection
         if self.connection:
             try:
-                await self.connection.__aexit__(None, None, None)
+                # Try close() method first (if available)
+                if hasattr(self.connection, "close"):
+                    await self.connection.close()
+                # Otherwise try aclose() for async generators
+                elif hasattr(self.connection, "aclose"):
+                    await self.connection.aclose()
+                self.logger.info("realtime_connection_closed")
             except Exception as e:
-                self.logger.exception("connection_close_failed", error=str(e))
+                self.logger.warning("connection_close_failed", error=str(e))
 
         # Cleanup tool registry
         if self.tool_registry:
             # No cleanup needed for internal tools
             pass
 
-        self.logger.info("gpt_realtime_session_cleanup_completed")
+        self.logger.info(
+            "gpt_realtime_session_cleanup_completed",
+            transcript_entries=len(self._transcript_entries),
+        )
 
     async def __aenter__(self) -> "GPTRealtimeSession":
         """Async context manager entry."""
