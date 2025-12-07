@@ -236,9 +236,13 @@ class GPTRealtimeSession:
 
         try:
             # Use official SDK's realtime.connect() method
-            self.connection = await self.client.beta.realtime.connect(model=model).__aenter__()
+            # Note: We need to keep the context manager reference for proper lifecycle
+            realtime_context = self.client.beta.realtime.connect(model=model)
+            self.connection = await realtime_context.__aenter__()
+            self.logger.info(
+                "realtime_connection_established", connection_type=type(self.connection).__name__
+            )
 
-            self.logger.info("realtime_connection_established")
             # Note: Session configuration is done in initialize() AFTER tool_registry is set
 
         except Exception as e:

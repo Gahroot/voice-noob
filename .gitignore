@@ -72,3 +72,23 @@ frontend/.env.local
 # OS
 .DS_Store
 Thumbs.db
+
+# Personal test scripts with API keys
+backend/check_app_details.py
+backend/check_phone_number.py
+backend/check_telnyx_apps.py
+backend/check_user_settings.py
+backend/configure_phone_number.py
+backend/delete_apps.py
+backend/delete_broken_app.py
+backend/insert_telnyx_api_key.py
+backend/insert_telnyx_api_key_correct.py
+backend/insert_telnyx_api_key_direct.py
+backend/list_connections.py
+backend/list_users.py
+backend/reassign_number_to_app.py
+backend/setup_phone_number.py
+backend/test_calcom_api.py
+backend/test_call_with_app_id.py
+backend/test_call_with_connection.py
+backend/test_telnyx.py

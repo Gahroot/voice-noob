@@ -27,6 +27,8 @@ logger = structlog.get_logger()
 
 # Constants for event logging
 EVENT_LOG_THRESHOLD = 20  # Log first N events, then every 100th
+INITIAL_EVENT_LOGS = 5  # Number of initial events to log before switching to periodic logging
+EVENT_LOG_INTERVAL = 20  # Log every Nth event after initial logs
 
 
 async def get_agent_workspace_id(agent_id: uuid.UUID, db: AsyncSession) -> uuid.UUID | None:
@@ -515,8 +517,9 @@ async def _handle_telnyx_stream(  # noqa: PLR0915
     stream_id = ""
     call_control_id = ""
     should_end_call = False  # Flag to signal call should end
-    # Event to signal when stream_id is available (for synchronization)
+    # Events for synchronization
     stream_ready = asyncio.Event()
+    events_listener_ready = asyncio.Event()
 
     async def telnyx_to_realtime() -> None:  # noqa: PLR0915
         """Forward audio from Telnyx to GPT Realtime."""
@@ -542,6 +545,15 @@ async def _handle_telnyx_stream(  # noqa: PLR0915
                     )
                     # Signal that stream is ready for sending audio
                     stream_ready.set()
+
+                    # Wait for the event listener to be ready before triggering the AI response
+                    # This prevents the race condition where events are generated before listener is active
+                    log.info("waiting_for_events_listener_ready")
+                    try:
+                        await asyncio.wait_for(events_listener_ready.wait(), timeout=10.0)
+                        log.info("events_listener_ready_confirmed")
+                    except TimeoutError:
+                        log.warning("events_listener_ready_timeout", timeout_seconds=10)
 
                     # Brief delay to let initial audio come in before AI speaks
                     # This allows the AI to hear if the user says something first
@@ -635,14 +647,36 @@ async def _handle_telnyx_stream(  # noqa: PLR0915
                 connection_type=type(realtime_session.connection).__name__,
             )
 
+            # Signal that the event listener is now ready to receive events
+            # This must be done BEFORE we start iterating to prevent race conditions
+            log.info("event_listener_now_ready", about_to_listen=True)
+            events_listener_ready.set()
+
+            log.info("entering_async_for_loop_for_realtime_events")
             async for event in realtime_session.connection:
                 if total_event_count == 0:
-                    log.info("first_realtime_event_received", event_type=event.type)
+                    log.info(
+                        "first_realtime_event_received",
+                        event_type=event.type,
+                        event_class=type(event).__name__,
+                    )
                 event_type = event.type
                 total_event_count += 1
-                log.debug(
-                    "realtime_event_received", event_type=event_type, total_events=total_event_count
-                )
+                if (
+                    total_event_count <= INITIAL_EVENT_LOGS
+                    or total_event_count % EVENT_LOG_INTERVAL == 0
+                ):
+                    log.info(
+                        "realtime_event_received",
+                        event_type=event_type,
+                        total_events=total_event_count,
+                    )
+                else:
+                    log.debug(
+                        "realtime_event_received",
+                        event_type=event_type,
+                        total_events=total_event_count,
+                    )
 
                 try:
                     # Handle tool calls
@@ -771,7 +805,6 @@ async def _handle_telnyx_stream(  # noqa: PLR0915
                             # Hangup the call via Telnyx API
                             if call_control_id and agent_id and db:
                                 try:
-                                    from app.core.auth import get_user_id_from_uuid
                                     from app.models.agent import Agent
 
                                     # Get agent to find user
@@ -790,7 +823,9 @@ async def _handle_telnyx_stream(  # noqa: PLR0915
                                                 uuid.UUID(workspace_id) if workspace_id else None
                                             )
                                             telnyx_service = await get_telnyx_service(
-                                                user_id_int_for_hangup, db, workspace_uuid_for_hangup
+                                                user_id_int_for_hangup,
+                                                db,
+                                                workspace_uuid_for_hangup,
                                             )
                                             if telnyx_service:
                                                 await telnyx_service.hangup_call(call_control_id)
@@ -833,8 +868,15 @@ async def _handle_telnyx_stream(  # noqa: PLR0915
                         error_type=type(e).__name__,
                     )
 
+        except StopAsyncIteration:
+            log.info("realtime_connection_closed_normally", total_events=total_event_count)
         except Exception as e:
-            log.exception("realtime_to_telnyx_error", error=str(e), error_type=type(e).__name__)
+            log.exception(
+                "realtime_to_telnyx_error",
+                error=str(e),
+                error_type=type(e).__name__,
+                total_events=total_event_count,
+            )
 
     # Run both directions concurrently with timeout to prevent hung tasks
     log.info("starting_bidirectional_stream_tasks")
