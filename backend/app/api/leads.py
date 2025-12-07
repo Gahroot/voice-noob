@@ -199,7 +199,6 @@ async def initiate_lead_call(
     Returns (success, call_id).
     """
     from app.api.telephony import get_telnyx_service
-    from app.core.auth import get_user_id_from_uuid
     from app.models.call_record import CallDirection, CallRecord, CallStatus
 
     log = logger.bind(
