@@ -1251,13 +1251,9 @@ async def telnyx_answer_webhook(  # noqa: PLR0911, PLR0912, PLR0915
     # Use Call Control API to start streaming (NOT TeXML)
     # Get TelnyxService with proper API key from workspace
     try:
-        # Get user_id from agent (agent.user_id is a UUID)
-        from app.core.auth import get_user_id_from_uuid
-
-        user_id_int = await get_user_id_from_uuid(agent.user_id, db)
-        if user_id_int is None:
-            log.error("could_not_get_user_id_for_telnyx_service")
-            return Response(content="", status_code=200)
+        # agent.user_id is already the integer user ID (not UUID)
+        # Cast to int to satisfy mypy (Agent model defines user_id: Mapped[int])
+        user_id_int: int = agent.user_id  # type: ignore[assignment]
 
         telnyx_service = await get_telnyx_service(user_id_int, db, workspace_id=workspace_id)
         if not telnyx_service:
