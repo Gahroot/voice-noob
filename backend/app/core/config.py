@@ -44,7 +44,8 @@ class Settings(BaseSettings):
     def assemble_db_connection(cls, v: str | None, info: Any) -> str:
         """Build database URL from components if not provided."""
         if isinstance(v, str):
-            return v
+            # Convert postgresql:// to postgresql+asyncpg:// for async driver
+            return v.replace("postgresql://", "postgresql+asyncpg://")
 
         data = info.data
         return str(
