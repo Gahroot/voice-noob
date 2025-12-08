@@ -129,6 +129,7 @@ class Settings(BaseSettings):
 
     # Lead Webhook Configuration
     LEAD_WEBHOOK_API_KEY: str | None = None  # API key for website/Zapier lead webhooks
+    LEAD_WEBHOOK_DEFAULT_USER_ID: int | None = None  # Default user ID for leads without agent_id
     FACEBOOK_APP_SECRET: str | None = None  # Facebook app secret for webhook signature verification
     FACEBOOK_VERIFY_TOKEN: str | None = None  # Token for Facebook webhook verification
 

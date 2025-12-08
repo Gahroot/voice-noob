@@ -44,8 +44,8 @@ class WebsiteLeadRequest(BaseModel):
     company_name: str | None = Field(None, max_length=255)
     notes: str | None = Field(None, max_length=1000)
     source: str = Field(default="website", max_length=50)
-    # Agent to use for the callback (required)
-    agent_id: str = Field(..., description="Agent ID to use for instant callback")
+    # Agent to use for the callback (optional - if not provided, contact is saved without call)
+    agent_id: str | None = Field(None, description="Agent ID to use for instant callback")
 
 
 class FacebookLeadData(BaseModel):
@@ -293,12 +293,12 @@ async def website_lead_webhook(
     db: AsyncSession = Depends(get_db),
     api_key: str = Query(..., description="API key for authentication"),
 ) -> LeadResponse:
-    """Receive a lead from a website form and initiate instant callback.
+    """Receive a lead from a website form and optionally initiate instant callback.
 
     This endpoint:
     1. Validates the API key
     2. Creates/updates contact in CRM
-    3. Initiates an outbound call using the specified agent
+    3. If agent_id is provided, initiates an outbound call using the specified agent
 
     Query Parameters:
         api_key: Your Voice Noob API key for authentication
@@ -306,7 +306,7 @@ async def website_lead_webhook(
     Example webhook URL for your website form:
         POST https://your-domain.com/webhooks/leads/website?api_key=YOUR_API_KEY
 
-    Example payload:
+    Example payload (with instant callback):
         {
             "first_name": "John",
             "last_name": "Doe",
@@ -316,6 +316,12 @@ async def website_lead_webhook(
             "notes": "Interested in voice agents",
             "source": "website",
             "agent_id": "uuid-of-your-appointment-setter-agent"
+        }
+
+    Example payload (contact only, no callback):
+        {
+            "first_name": "John",
+            "phone_number": "+15551234567"
         }
     """
     log = logger.bind(
@@ -331,18 +337,31 @@ async def website_lead_webhook(
         log.warning("invalid_api_key")
         raise HTTPException(status_code=401, detail="Invalid API key")
 
-    # Get agent and workspace
-    agent, workspace_id = await get_agent_with_workspace(lead.agent_id, db)
-    if not agent:
-        log.error("agent_not_found")
-        raise HTTPException(status_code=404, detail="Agent not found")
+    agent: Agent | None = None
+    workspace_id: uuid.UUID | None = None
+    user_id_int: int | None = None
 
-    if not agent.is_active:
-        log.error("agent_not_active")
-        raise HTTPException(status_code=400, detail="Agent is not active")
+    # If agent_id is provided, get agent and workspace
+    if lead.agent_id:
+        agent, workspace_id = await get_agent_with_workspace(lead.agent_id, db)
+        if not agent:
+            log.error("agent_not_found")
+            raise HTTPException(status_code=404, detail="Agent not found")
 
-    # agent.user_id is already the integer user ID
-    user_id_int = agent.user_id
+        if not agent.is_active:
+            log.error("agent_not_active")
+            raise HTTPException(status_code=400, detail="Agent is not active")
+
+        user_id_int = agent.user_id
+    else:
+        # Use default user ID from settings
+        user_id_int = settings.LEAD_WEBHOOK_DEFAULT_USER_ID
+        if not user_id_int:
+            log.error("no_agent_id_and_no_default_user")
+            raise HTTPException(
+                status_code=400,
+                detail="agent_id is required or LEAD_WEBHOOK_DEFAULT_USER_ID must be configured",
+            )
 
     # Create or update contact
     contact = await create_or_update_contact(
@@ -358,6 +377,15 @@ async def website_lead_webhook(
         source=lead.source,
     )
     log.info("contact_created_or_updated", contact_id=contact.id)
+
+    # If no agent provided, just save the contact
+    if not agent:
+        return LeadResponse(
+            success=True,
+            message="Lead received and contact saved",
+            contact_id=contact.id,
+            call_initiated=False,
+        )
 
     # Initiate callback
     call_success, call_id = await initiate_lead_call(db, agent, workspace_id, contact)
