@@ -88,6 +88,7 @@ class Settings(BaseSettings):
         "http://localhost:3000",
         "http://localhost:3001",
         "http://localhost:8000",
+        "https://voice-noob.vercel.app",
     ]
     CORS_ALLOW_CREDENTIALS: bool = True
     CORS_ALLOW_METHODS: list[str] = ["*"]
