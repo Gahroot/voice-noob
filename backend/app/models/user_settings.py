@@ -49,6 +49,9 @@ class UserSettings(Base):
     telnyx_public_key: Mapped[str | None] = mapped_column(
         Text, nullable=True, comment="Telnyx public key"
     )
+    telnyx_messaging_profile_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, comment="Telnyx Messaging Profile ID for SMS"
+    )
     twilio_account_sid: Mapped[str | None] = mapped_column(
         String(255), nullable=True, comment="Twilio Account SID"
     )

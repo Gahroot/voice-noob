@@ -23,6 +23,7 @@ class UpdateSettingsRequest(BaseModel):
     elevenlabs_api_key: str | None = None
     telnyx_api_key: str | None = None
     telnyx_public_key: str | None = None
+    telnyx_messaging_profile_id: str | None = None
     twilio_account_sid: str | None = None
     twilio_auth_token: str | None = None
 
@@ -34,6 +35,7 @@ class SettingsResponse(BaseModel):
     deepgram_api_key_set: bool
     elevenlabs_api_key_set: bool
     telnyx_api_key_set: bool
+    telnyx_messaging_profile_id_set: bool
     twilio_account_sid_set: bool
     workspace_id: str | None = None
 
@@ -97,6 +99,7 @@ async def get_settings(
             deepgram_api_key_set=False,
             elevenlabs_api_key_set=False,
             telnyx_api_key_set=False,
+            telnyx_messaging_profile_id_set=False,
             twilio_account_sid_set=False,
             workspace_id=workspace_id,
         )
@@ -106,6 +109,7 @@ async def get_settings(
         deepgram_api_key_set=bool(settings.deepgram_api_key),
         elevenlabs_api_key_set=bool(settings.elevenlabs_api_key),
         telnyx_api_key_set=bool(settings.telnyx_api_key),
+        telnyx_messaging_profile_id_set=bool(settings.telnyx_messaging_profile_id),
         twilio_account_sid_set=bool(settings.twilio_account_sid),
         workspace_id=str(settings.workspace_id) if settings.workspace_id else None,
     )
@@ -156,6 +160,8 @@ async def update_settings(
             settings.telnyx_api_key = request.telnyx_api_key or None
         if request.telnyx_public_key is not None:
             settings.telnyx_public_key = request.telnyx_public_key or None
+        if request.telnyx_messaging_profile_id is not None:
+            settings.telnyx_messaging_profile_id = request.telnyx_messaging_profile_id or None
         if request.twilio_account_sid is not None:
             settings.twilio_account_sid = request.twilio_account_sid or None
         if request.twilio_auth_token is not None:
@@ -172,6 +178,7 @@ async def update_settings(
             elevenlabs_api_key=request.elevenlabs_api_key,
             telnyx_api_key=request.telnyx_api_key,
             telnyx_public_key=request.telnyx_public_key,
+            telnyx_messaging_profile_id=request.telnyx_messaging_profile_id,
             twilio_account_sid=request.twilio_account_sid,
             twilio_auth_token=request.twilio_auth_token,
         )
@@ -189,9 +196,9 @@ async def get_user_api_keys(
 ) -> UserSettings | None:
     """Get user API keys for internal use.
 
-    Settings are strictly isolated per workspace - no fallback to user-level settings.
-    User-level settings (workspace_id=NULL) are only for admin/default use cases,
-    not shared with workspaces.
+    Settings lookup order:
+    1. Workspace-specific settings (if workspace_id provided)
+    2. User-level settings (fallback)
 
     Args:
         user_id: User ID (UUID)
@@ -201,15 +208,38 @@ async def get_user_api_keys(
     Returns:
         UserSettings or None
     """
-    # Build conditions based on workspace_id
-    conditions = [UserSettings.user_id == user_id]
-
     if workspace_id:
-        # Get workspace-specific settings only - no fallback
-        conditions.append(UserSettings.workspace_id == workspace_id)
-    else:
-        # Get user-level settings (admin/default)
-        conditions.append(UserSettings.workspace_id.is_(None))
+        # First try workspace-specific settings
+        result = await db.execute(
+            select(UserSettings).where(
+                and_(
+                    UserSettings.user_id == user_id,
+                    UserSettings.workspace_id == workspace_id,
+                )
+            )
+        )
+        settings = result.scalar_one_or_none()
+        if settings:
+            return settings
 
-    result = await db.execute(select(UserSettings).where(and_(*conditions)))
+        # Fallback to user-level settings
+        result = await db.execute(
+            select(UserSettings).where(
+                and_(
+                    UserSettings.user_id == user_id,
+                    UserSettings.workspace_id.is_(None),
+                )
+            )
+        )
+        return result.scalar_one_or_none()
+
+    # Get user-level settings only (no workspace specified)
+    result = await db.execute(
+        select(UserSettings).where(
+            and_(
+                UserSettings.user_id == user_id,
+                UserSettings.workspace_id.is_(None),
+            )
+        )
+    )
     return result.scalar_one_or_none()

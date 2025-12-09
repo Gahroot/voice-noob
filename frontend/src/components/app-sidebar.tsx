@@ -30,6 +30,7 @@ import {
   PanelLeft,
   LogOut,
   Key,
+  MessageSquare,
 } from "lucide-react";
 import { useSidebarStore } from "@/lib/sidebar-store";
 import { useAuth } from "@/hooks/use-auth";
@@ -64,6 +65,12 @@ const navigation = [
     href: "/dashboard/campaigns",
     icon: PhoneOutgoing,
     color: "text-orange-400",
+  },
+  {
+    name: "SMS",
+    href: "/dashboard/sms",
+    icon: MessageSquare,
+    color: "text-green-400",
   },
   {
     name: "Appointments",

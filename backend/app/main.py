@@ -34,6 +34,7 @@ from app.api import (
     leads,
     phone_numbers,
     realtime,
+    sms,
     telephony,
     telephony_ws,
     tools,
@@ -212,6 +213,8 @@ app.include_router(integrations.router)  # Integrations API (external tools)
 app.include_router(embed.router)  # Public embed API (unauthenticated)
 app.include_router(embed.ws_router)  # Public embed WebSocket
 app.include_router(leads.router)  # Lead webhook API (Facebook, website forms)
+app.include_router(sms.router)  # SMS API (conversations, messages, campaigns)
+app.include_router(sms.webhook_router)  # Telnyx SMS webhooks
 
 
 @app.get("/")
