@@ -419,11 +419,12 @@ class SlickTextSMSTools:
     def client_v1(self) -> httpx.AsyncClient:
         """Get or create HTTP client for V1 API with Basic auth."""
         if self._client_v1 is None:
+            # V1 API requires form-encoded data, NOT JSON
             self._client_v1 = httpx.AsyncClient(
                 base_url=self.BASE_URL_V1,
                 auth=(self.public_key or "", self.private_key or ""),
                 headers={
-                    "Content-Type": "application/json",
+                    "Content-Type": "application/x-www-form-urlencoded",
                 },
                 timeout=httpx.Timeout(60.0, connect=10.0),
             )
@@ -719,6 +720,158 @@ class SlickTextSMSTools:
             logger.warning("slicktext_v2_inbox_error", error=str(e))
             return None
 
+    async def _find_v1_contact_by_phone(self, phone_digits: str) -> str | None:
+        """Search for existing contact by phone number using V1 API.
+
+        Args:
+            phone_digits: Phone number digits without + prefix
+
+        Returns:
+            Contact ID if found with exact phone match, None otherwise
+        """
+        contacts_response = await self.client_v1.get(
+            "/contacts/",
+            params={"number": phone_digits},
+        )
+
+        logger.info(
+            "slicktext_v1_contacts_response",
+            status_code=contacts_response.status_code,
+            response=contacts_response.text[:500] if contacts_response.text else "",
+            searching_for=phone_digits,
+        )
+
+        if contacts_response.status_code != HTTPStatus.OK:
+            return None
+
+        contacts_data = contacts_response.json()
+        contacts = contacts_data.get("contacts", [])
+        for contact in contacts:
+            contact_number = str(contact.get("number", "")).lstrip("+").replace("-", "")
+            if contact_number == phone_digits:
+                contact_id = str(contact.get("id"))
+                logger.info(
+                    "slicktext_v1_contact_found",
+                    contact_id=contact_id,
+                    contact_number=contact_number,
+                    contact_textwords=contact.get("textwords", []),
+                    contact_status=contact.get("status"),
+                )
+                return contact_id
+
+        if contacts:
+            logger.warning(
+                "slicktext_v1_contact_mismatch",
+                searching_for=phone_digits,
+                found_contacts=[c.get("number") for c in contacts[:5]],
+            )
+        return None
+
+    def _normalize_phone(self, phone: str) -> str:
+        """Normalize phone number to digits only."""
+        return phone.lstrip("+").replace("-", "").replace(" ", "").replace("(", "").replace(")", "")
+
+    async def _optin_v1_contact(self, phone_digits: str) -> str | None:
+        """Opt-in a new contact using V1 API.
+
+        Args:
+            phone_digits: Phone number digits without + prefix
+
+        Returns:
+            Contact ID if opt-in succeeds with verified phone, None otherwise
+        """
+        if not self.textword_id or not self.textword_id.isdigit():
+            if self.textword_id:
+                logger.error(
+                    "slicktext_v1_invalid_textword",
+                    textword_id=self.textword_id,
+                    error="textword_id must be numeric",
+                )
+            return None
+
+        optin_response = await self.client_v1.post(
+            "/contacts/",
+            data={
+                "action": "OPTIN",
+                "textword": int(self.textword_id),
+                "number": phone_digits,
+            },
+        )
+        logger.info(
+            "slicktext_v1_optin_response",
+            status_code=optin_response.status_code,
+            response=optin_response.text[:500] if optin_response.text else "",
+        )
+
+        optin_data = optin_response.json()
+
+        # Handle successful opt-in (200/201)
+        if optin_response.status_code in (HTTPStatus.OK, HTTPStatus.CREATED):
+            returned_number = self._normalize_phone(str(optin_data.get("number", "")))
+            if returned_number and returned_number != phone_digits:
+                logger.error(
+                    "slicktext_v1_phone_mismatch_in_optin",
+                    requested_phone=phone_digits,
+                    returned_phone=returned_number,
+                )
+                return None
+            contact_id = str(optin_data.get("contact_id") or optin_data.get("id", ""))
+            if contact_id:
+                logger.info(
+                    "slicktext_v1_contact_created",
+                    contact_id=contact_id,
+                    verified_phone=returned_number or phone_digits,
+                )
+            return contact_id or None
+
+        # Handle 409 Conflict - contact already subscribed
+        if optin_response.status_code == HTTPStatus.CONFLICT:
+            data_field = optin_data.get("data", {})
+            returned_number = self._normalize_phone(str(data_field.get("number", "")))
+
+            # CRITICAL: Verify phone matches - API may return wrong contact
+            if returned_number != phone_digits:
+                logger.error(
+                    "slicktext_v1_phone_mismatch_in_conflict",
+                    requested_phone=phone_digits,
+                    returned_phone=returned_number,
+                    returned_name=f"{data_field.get('firstName', '')} {data_field.get('lastName', '')}".strip(),
+                    returned_id=data_field.get("id"),
+                )
+                return None
+
+            contact_id = str(data_field.get("id") or data_field.get("contact_id") or "")
+            if contact_id:
+                logger.info(
+                    "slicktext_v1_contact_already_subscribed",
+                    contact_id=contact_id,
+                    verified_phone=returned_number,
+                )
+                return contact_id
+            logger.warning(
+                "slicktext_v1_conflict_no_id",
+                response=optin_response.text[:500] if optin_response.text else "",
+            )
+
+        return None
+
+    async def _find_or_create_v1_contact(self, phone_digits: str) -> str | None:
+        """Find existing contact or create via opt-in using V1 API.
+
+        Args:
+            phone_digits: Phone number digits without + prefix
+
+        Returns:
+            Contact ID string if found/created with VERIFIED phone match, None otherwise
+        """
+        # First try to find existing contact
+        contact_id = await self._find_v1_contact_by_phone(phone_digits)
+        if contact_id:
+            return contact_id
+
+        # Try opt-in if textword_id configured
+        return await self._optin_v1_contact(phone_digits)
+
     async def _send_via_v1_api(self, to: str, body: str) -> dict[str, Any]:
         """Send message via V1 (Legacy) API direct message endpoint.
 
@@ -731,62 +884,38 @@ class SlickTextSMSTools:
             # Normalize phone - ensure it has digits only for V1 API
             phone_digits = to.lstrip("+")
 
-            # First, we need to find or create a contact to get their ID
-            # V1 API: GET /contacts with phone filter
-            contacts_response = await self.client_v1.get(
-                "/contacts/",
-                params={"phone": phone_digits},
-            )
+            # Find or create contact
+            contact_id = await self._find_or_create_v1_contact(phone_digits)
 
-            contact_id = None
-            if contacts_response.status_code == HTTPStatus.OK:
-                contacts_data = contacts_response.json()
-                contacts = contacts_data.get("contacts", [])
-                if contacts:
-                    contact_id = str(contacts[0].get("id"))
-                    logger.info("slicktext_v1_contact_found", contact_id=contact_id)
-
-            # If no contact, create one via opt-in
-            if not contact_id and self.textword_id:
-                optin_response = await self.client_v1.post(
-                    "/contacts/",
-                    json={
-                        "action": "OPTIN",
-                        "textword": int(self.textword_id),
-                        "phone": phone_digits,
-                    },
+            # GUARDRAIL: Require a verified contact_id before sending
+            if not contact_id:
+                logger.error(
+                    "slicktext_v1_no_contact",
+                    to=to,
+                    phone_digits=phone_digits,
+                    has_textword_id=bool(self.textword_id),
                 )
-                if optin_response.status_code in (HTTPStatus.OK, HTTPStatus.CREATED):
-                    optin_data = optin_response.json()
-                    contact_id = str(optin_data.get("contact_id") or optin_data.get("id", ""))
-                    logger.info("slicktext_v1_contact_created", contact_id=contact_id)
+                return {
+                    "success": False,
+                    "error": f"Could not find or create SlickText contact for {to}. Ensure the contact is opted-in or configure a valid textword_id.",
+                }
 
-            # Now send the message
+            # Now send the message - ONLY to verified contact_id
             # V1 API: POST /messages with action=SEND
             payload: dict[str, Any] = {
                 "action": "SEND",
                 "body": body,
+                "contact": int(contact_id),
             }
-
-            # Use contact ID if available, otherwise use textword with phone
-            if contact_id:
-                payload["contact"] = int(contact_id)
-            elif self.textword_id:
-                payload["textword"] = int(self.textword_id)
-                payload["phone"] = phone_digits  # This opts in and sends
-            else:
-                return {
-                    "success": False,
-                    "error": "SlickText V1 API requires a textword_id to send messages",
-                }
 
             logger.info(
                 "slicktext_v1_send_message",
                 contact_id=contact_id,
-                textword_id=self.textword_id,
+                to=to,
+                phone_digits=phone_digits,
             )
 
-            response = await self.client_v1.post("/messages/", json=payload)
+            response = await self.client_v1.post("/messages/", data=payload)
 
             logger.info(
                 "slicktext_v1_response",

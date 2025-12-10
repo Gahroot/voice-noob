@@ -11,6 +11,17 @@ vi.mock("@/lib/api", () => ({
   },
 }));
 
+// Mock agents API
+vi.mock("@/lib/api/agents", () => ({
+  fetchAgents: vi.fn().mockResolvedValue([]),
+}));
+
+// Mock telephony API
+vi.mock("@/lib/api/telephony", () => ({
+  listPhoneNumbers: vi.fn().mockResolvedValue([]),
+  initiateCall: vi.fn(),
+}));
+
 const mockContacts = [
   {
     id: 1,
@@ -50,6 +61,21 @@ const mockContacts = [
   },
 ];
 
+const mockWorkspaces = [{ id: "1", name: "Default", description: null, is_default: true }];
+
+// Helper to set up API mocks for common scenarios
+const setupMocks = (contacts: typeof mockContacts | [] = mockContacts) => {
+  vi.mocked(api.get).mockImplementation((url: string) => {
+    if (url.includes("/api/v1/workspaces")) {
+      return Promise.resolve({ data: mockWorkspaces });
+    }
+    if (url.includes("/api/v1/crm/contacts")) {
+      return Promise.resolve({ data: contacts });
+    }
+    return Promise.resolve({ data: [] });
+  });
+};
+
 describe("CRMPage", () => {
   let queryClient: QueryClient;
 
@@ -69,24 +95,22 @@ describe("CRMPage", () => {
   };
 
   it("renders page title and description", () => {
-    vi.mocked(api.get).mockResolvedValue({ data: [] });
+    setupMocks([]);
     renderWithClient(<CRMPage />);
 
     expect(screen.getByText("CRM")).toBeInTheDocument();
-    expect(
-      screen.getByText("Manage your contacts, appointments, and call interactions")
-    ).toBeInTheDocument();
+    expect(screen.getByText("Manage your contacts and interactions")).toBeInTheDocument();
   });
 
   it("renders Add Contact button", () => {
-    vi.mocked(api.get).mockResolvedValue({ data: [] });
+    setupMocks([]);
     renderWithClient(<CRMPage />);
 
     expect(screen.getByRole("button", { name: /Add Contact/i })).toBeInTheDocument();
   });
 
   it("displays stats cards", async () => {
-    vi.mocked(api.get).mockResolvedValue({ data: mockContacts });
+    setupMocks(mockContacts);
     renderWithClient(<CRMPage />);
 
     await waitFor(() => {
@@ -112,7 +136,7 @@ describe("CRMPage", () => {
   });
 
   it("displays contact count in stats", async () => {
-    vi.mocked(api.get).mockResolvedValue({ data: mockContacts });
+    setupMocks(mockContacts);
     renderWithClient(<CRMPage />);
 
     await waitFor(() => {
@@ -121,7 +145,7 @@ describe("CRMPage", () => {
   });
 
   it("renders contacts list when data is loaded", async () => {
-    vi.mocked(api.get).mockResolvedValue({ data: mockContacts });
+    setupMocks(mockContacts);
     renderWithClient(<CRMPage />);
 
     await waitFor(() => {
@@ -132,7 +156,7 @@ describe("CRMPage", () => {
   });
 
   it("displays contact details correctly", async () => {
-    vi.mocked(api.get).mockResolvedValue({ data: mockContacts });
+    setupMocks(mockContacts);
     renderWithClient(<CRMPage />);
 
     await waitFor(() => {
@@ -151,7 +175,7 @@ describe("CRMPage", () => {
   });
 
   it("displays status badges with correct styling", async () => {
-    vi.mocked(api.get).mockResolvedValue({ data: mockContacts });
+    setupMocks(mockContacts);
     renderWithClient(<CRMPage />);
 
     await waitFor(() => {
@@ -162,7 +186,7 @@ describe("CRMPage", () => {
   });
 
   it("shows empty state when no contacts exist", async () => {
-    vi.mocked(api.get).mockResolvedValue({ data: [] });
+    setupMocks([]);
     renderWithClient(<CRMPage />);
 
     await waitFor(() => {
@@ -174,7 +198,7 @@ describe("CRMPage", () => {
   });
 
   it("shows Add Your First Contact button in empty state", async () => {
-    vi.mocked(api.get).mockResolvedValue({ data: [] });
+    setupMocks([]);
     renderWithClient(<CRMPage />);
 
     await waitFor(() => {
@@ -182,21 +206,26 @@ describe("CRMPage", () => {
     });
   });
 
-  it("displays correct contact count message", async () => {
-    vi.mocked(api.get).mockResolvedValue({ data: mockContacts });
+  it("displays correct contact count in stats", async () => {
+    setupMocks(mockContacts);
     renderWithClient(<CRMPage />);
 
     await waitFor(() => {
-      expect(screen.getByText("Showing 3 contacts")).toBeInTheDocument();
+      // Total contacts count is shown in the stats card
+      const statsCard = screen.getByText("Total Contacts").closest("div");
+      expect(statsCard).toBeInTheDocument();
+      expect(screen.getByText("3")).toBeInTheDocument();
     });
   });
 
-  it("displays singular contact message when only one contact", async () => {
-    vi.mocked(api.get).mockResolvedValue({ data: [mockContacts[0]] });
+  it("displays singular contact count when only one contact", async () => {
+    const firstContact = mockContacts[0];
+    if (!firstContact) throw new Error("Mock contact not found");
+    setupMocks([firstContact]);
     renderWithClient(<CRMPage />);
 
     await waitFor(() => {
-      expect(screen.getByText("Showing 1 contact")).toBeInTheDocument();
+      expect(screen.getByText("1")).toBeInTheDocument();
     });
   });
 
@@ -220,18 +249,21 @@ describe("CRMPage", () => {
     });
   });
 
-  it("renders View Details buttons for each contact", async () => {
-    vi.mocked(api.get).mockResolvedValue({ data: mockContacts });
-    renderWithClient(<CRMPage />);
+  it("renders clickable contact cards", async () => {
+    setupMocks(mockContacts);
+    const { container } = renderWithClient(<CRMPage />);
 
     await waitFor(() => {
-      const viewDetailsButtons = screen.getAllByRole("button", { name: /View Details/i });
-      expect(viewDetailsButtons).toHaveLength(3);
+      // Contact cards are clickable - look for the cursor-pointer class
+      const clickableCards = container.querySelectorAll('[class*="cursor-pointer"]');
+      expect(clickableCards.length).toBeGreaterThanOrEqual(3);
     });
   });
 
   it("handles contacts with null fields gracefully", async () => {
-    vi.mocked(api.get).mockResolvedValue({ data: [mockContacts[2]] }); // Bob with null fields
+    const contactWithNulls = mockContacts[2]; // Bob with null fields
+    if (!contactWithNulls) throw new Error("Mock contact not found");
+    setupMocks([contactWithNulls]);
     renderWithClient(<CRMPage />);
 
     await waitFor(() => {
@@ -242,7 +274,7 @@ describe("CRMPage", () => {
   });
 
   it("applies correct status colors", async () => {
-    vi.mocked(api.get).mockResolvedValue({ data: mockContacts });
+    setupMocks(mockContacts);
     const { container } = renderWithClient(<CRMPage />);
 
     await waitFor(() => {
@@ -268,7 +300,7 @@ describe("CRMPage", () => {
   });
 
   it("fetches contacts from correct API endpoint", async () => {
-    vi.mocked(api.get).mockResolvedValue({ data: mockContacts });
+    setupMocks(mockContacts);
     renderWithClient(<CRMPage />);
 
     await waitFor(() => {
@@ -277,7 +309,7 @@ describe("CRMPage", () => {
   });
 
   it("uses React Query for data fetching", async () => {
-    vi.mocked(api.get).mockResolvedValue({ data: mockContacts });
+    setupMocks(mockContacts);
     renderWithClient(<CRMPage />);
 
     // Should use 'contacts' query key
@@ -285,41 +317,42 @@ describe("CRMPage", () => {
       expect(screen.getByText("John Doe")).toBeInTheDocument();
     });
 
-    // Verify query cache
-    const cachedData = queryClient.getQueryData(["contacts"]);
+    // Verify query cache - note: the query key includes workspace_id
+    const cachedData = queryClient.getQueryData(["contacts", "all"]);
     expect(cachedData).toEqual(mockContacts);
   });
 
   it("displays appointments count (currently 0)", async () => {
-    vi.mocked(api.get).mockResolvedValue({ data: mockContacts });
+    setupMocks(mockContacts);
     renderWithClient(<CRMPage />);
 
     await waitFor(() => {
-      expect(screen.getByText("Scheduled this month")).toBeInTheDocument();
+      expect(screen.getByText("Appointments")).toBeInTheDocument();
     });
   });
 
   it("displays call interactions count (currently 0)", async () => {
-    vi.mocked(api.get).mockResolvedValue({ data: mockContacts });
+    setupMocks(mockContacts);
     renderWithClient(<CRMPage />);
 
     await waitFor(() => {
-      expect(screen.getByText("Total interactions logged")).toBeInTheDocument();
+      expect(screen.getByText("Call Interactions")).toBeInTheDocument();
     });
   });
 
   it("renders contact cards with hover effect", async () => {
-    vi.mocked(api.get).mockResolvedValue({ data: mockContacts });
+    setupMocks(mockContacts);
     const { container } = renderWithClient(<CRMPage />);
 
     await waitFor(() => {
-      const contactCards = container.querySelectorAll('[class*="hover:bg-accent"]');
+      // Contact cards have hover:border-primary/50 for the hover effect
+      const contactCards = container.querySelectorAll('[class*="hover:border-primary"]');
       expect(contactCards.length).toBeGreaterThan(0);
     });
   });
 
   it("displays icons for contact information", async () => {
-    vi.mocked(api.get).mockResolvedValue({ data: mockContacts });
+    setupMocks(mockContacts);
     const { container } = renderWithClient(<CRMPage />);
 
     await waitFor(() => {

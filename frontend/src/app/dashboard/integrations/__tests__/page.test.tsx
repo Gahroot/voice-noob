@@ -20,8 +20,8 @@ describe("IntegrationsPage", () => {
   it("displays connection statistics", () => {
     render(<IntegrationsPage />);
 
-    // Internal tools (crm, bookings) are always connected
-    expect(screen.getByText("2 Connected")).toBeInTheDocument();
+    // Internal tools (call_control, crm, bookings) are always connected
+    expect(screen.getByText("3 Connected")).toBeInTheDocument();
     expect(screen.getByText(/\d+ Available/)).toBeInTheDocument();
   });
 

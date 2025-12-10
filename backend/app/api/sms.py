@@ -434,14 +434,43 @@ async def send_message(
             )
 
         # Create SMSMessage record for SlickText
+        # First, get or create conversation (like Telnyx does)
+        conv_result = await db.execute(
+            select(SMSConversation).where(
+                SMSConversation.workspace_id == workspace_uuid,
+                SMSConversation.from_number == send_request.from_number,
+                SMSConversation.to_number == send_request.to_number,
+            )
+        )
+        conversation = conv_result.scalar_one_or_none()
+
+        if not conversation:
+            # Try to find contact by phone number
+            contact_result = await db.execute(
+                select(Contact).where(
+                    Contact.workspace_id == workspace_uuid,
+                    Contact.phone_number == send_request.to_number,
+                )
+            )
+            contact = contact_result.scalar_one_or_none()
+
+            conversation = SMSConversation(
+                user_id=user_uuid,
+                workspace_id=workspace_uuid,
+                contact_id=contact.id if contact else None,
+                from_number=send_request.from_number,
+                to_number=send_request.to_number,
+            )
+            db.add(conversation)
+            await db.flush()
+
         # message_id is from inbox API, campaign_id is from campaigns API
         provider_msg_id = result.get("message_id") or result.get("campaign_id")
         message = SMSMessage(
-            workspace_id=workspace_uuid,
-            user_id=user_uuid,
+            conversation_id=conversation.id,
             provider="slicktext",
             provider_message_id=provider_msg_id,
-            direction=MessageDirection.OUTBOUND,
+            direction=MessageDirection.OUTBOUND.value,
             from_number=send_request.from_number,
             to_number=send_request.to_number,
             body=send_request.body,
@@ -449,6 +478,12 @@ async def send_message(
             sent_at=datetime.now(UTC),
         )
         db.add(message)
+
+        # Update conversation with last message info
+        conversation.last_message_preview = send_request.body[:255] if send_request.body else None
+        conversation.last_message_at = datetime.now(UTC)
+        conversation.last_message_direction = MessageDirection.OUTBOUND.value
+
         await db.commit()
         await db.refresh(message)
 

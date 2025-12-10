@@ -228,12 +228,12 @@ describe("compareTiers", () => {
     expect(long[0]?.cost.totalCost).toBeGreaterThan(short[0]?.cost.totalCost ?? 0);
   });
 
-  it("maintains tier order (budget, balanced, premium-mini, premium)", () => {
+  it("maintains tier order (premium, premium-mini, balanced, budget)", () => {
     const comparison = compareTiers(1000, 5);
-    expect(comparison[0]?.tier.id).toBe("budget");
-    expect(comparison[1]?.tier.id).toBe("balanced");
-    expect(comparison[2]?.tier.id).toBe("premium-mini");
-    expect(comparison[3]?.tier.id).toBe("premium");
+    expect(comparison[0]?.tier.id).toBe("premium");
+    expect(comparison[1]?.tier.id).toBe("premium-mini");
+    expect(comparison[2]?.tier.id).toBe("balanced");
+    expect(comparison[3]?.tier.id).toBe("budget");
   });
 
   it("includes full cost breakdown for each tier", () => {

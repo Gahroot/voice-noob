@@ -207,6 +207,7 @@ omit = ["*/tests/*", "*/migrations/*"]
 
 [dependency-groups]
 dev = [
+    "aiosqlite>=0.21.0",
     "fakeredis>=2.32.1",
     "mypy>=1.18.2",
     "ruff>=0.14.6",
