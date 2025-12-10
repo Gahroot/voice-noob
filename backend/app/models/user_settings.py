@@ -60,14 +60,25 @@ class UserSettings(Base):
     )
 
     # SlickText API Keys
+    # V2 API (accounts created after Jan 22, 2025) uses single Bearer token
+    slicktext_api_key: Mapped[str | None] = mapped_column(
+        Text, nullable=True, comment="SlickText API Key (v2 Bearer token)"
+    )
+    # V1 API (legacy accounts) uses public/private key pair
     slicktext_public_key: Mapped[str | None] = mapped_column(
-        Text, nullable=True, comment="SlickText Public API Key"
+        Text, nullable=True, comment="SlickText Public Key (v1 API)"
     )
     slicktext_private_key: Mapped[str | None] = mapped_column(
-        Text, nullable=True, comment="SlickText Private API Key"
+        Text, nullable=True, comment="SlickText Private Key (v1 API)"
+    )
+    slicktext_textword_id: Mapped[str | None] = mapped_column(
+        String(50), nullable=True, comment="SlickText Textword ID (v1 API, for sending)"
     )
     slicktext_webhook_secret: Mapped[str | None] = mapped_column(
         Text, nullable=True, comment="SlickText Webhook Secret for signature verification"
+    )
+    slicktext_phone_number: Mapped[str | None] = mapped_column(
+        String(50), nullable=True, comment="SlickText phone number (E.164 format)"
     )
 
     # Timestamps

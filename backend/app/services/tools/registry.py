@@ -175,16 +175,10 @@ class ToolRegistry:
             return self._slicktext_sms_tools
 
         creds = self.integrations.get("slicktext-sms")
-        if (
-            creds
-            and creds.get("public_key")
-            and creds.get("private_key")
-            and creds.get("from_number")
-        ):
+        if creds and creds.get("api_key"):
             self._slicktext_sms_tools = SlickTextSMSTools(
-                public_key=creds["public_key"],
-                private_key=creds["private_key"],
-                from_number=creds["from_number"],
+                api_key=creds["api_key"],
+                brand_id=creds.get("brand_id"),
             )
             return self._slicktext_sms_tools
 
@@ -429,7 +423,7 @@ class ToolRegistry:
         # SlickText SMS tools
         slicktext_tool_names = {
             "slicktext_send_sms",
-            "slicktext_get_message_status",
+            "slicktext_get_campaign_status",
         }
 
         if tool_name in slicktext_tool_names:

@@ -174,25 +174,39 @@ const API_KEY_PROVIDERS: ApiKeyProvider[] = [
     description: "SMS marketing platform with pre-approved 10DLC campaigns and automation.",
     category: "telephony",
     icon: MessageSquareText,
-    documentationUrl: "https://api.slicktext.com/docs/v1/basics",
+    documentationUrl: "https://api.slicktext.com/docs/",
     fields: [
+      // V2 API (accounts created after Jan 22, 2025)
+      {
+        name: "slicktext_api_key",
+        label: "API Key (V2)",
+        placeholder: "Bearer token for newer accounts",
+        settingsKey: "slicktext_api_key_set",
+      },
+      // V1 API (legacy accounts created before Jan 22, 2025)
       {
         name: "slicktext_public_key",
-        label: "Public Key",
-        placeholder: "Enter your Public Key",
+        label: "Public Key (V1 Legacy)",
+        placeholder: "For older accounts",
         settingsKey: "slicktext_public_key_set",
       },
       {
         name: "slicktext_private_key",
-        label: "Private Key",
-        placeholder: "Enter your Private Key",
-        settingsKey: "slicktext_public_key_set", // Using same key since both are required
+        label: "Private Key (V1 Legacy)",
+        placeholder: "For older accounts",
+        settingsKey: "slicktext_private_key_set",
       },
       {
-        name: "slicktext_webhook_secret",
-        label: "Webhook Secret (Optional)",
-        placeholder: "Enter your Webhook Secret",
-        settingsKey: "slicktext_public_key_set", // Optional but grouped
+        name: "slicktext_textword_id",
+        label: "Textword ID (V1 Legacy)",
+        placeholder: "Required for V1 sending",
+        settingsKey: "slicktext_public_key_set",
+      },
+      {
+        name: "slicktext_phone_number",
+        label: "Phone Number",
+        placeholder: "+1XXXXXXXXXX",
+        settingsKey: "slicktext_api_key_set",
       },
     ],
   },

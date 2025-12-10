@@ -66,6 +66,7 @@ import {
   type CreateCampaignRequest,
 } from "@/lib/api/campaigns";
 import { listPhoneNumbers, type PhoneNumber, type Provider } from "@/lib/api/telephony";
+import { fetchSettings } from "@/lib/api/settings";
 import { toast } from "sonner";
 import Link from "next/link";
 
@@ -149,7 +150,7 @@ export default function CampaignsPage() {
     queryFn: () => fetchAgents(),
   });
 
-  // Fetch phone numbers
+  // Fetch phone numbers (Twilio, Telnyx, and SlickText from settings)
   const { data: phoneNumbers = [] } = useQuery<PhoneNumber[]>({
     queryKey: ["phoneNumbers", activeWorkspaceId],
     queryFn: async () => {
@@ -158,7 +159,20 @@ export default function CampaignsPage() {
       const results = await Promise.all(
         providers.map((provider) => listPhoneNumbers(provider, activeWorkspaceId))
       );
-      return results.flat();
+      const allNumbers: PhoneNumber[] = results.flat();
+      // Get SlickText phone number from settings
+      const settings = await fetchSettings(activeWorkspaceId);
+      if (settings.slicktext_phone_number) {
+        allNumbers.push({
+          id: "slicktext-" + settings.slicktext_phone_number,
+          phone_number: settings.slicktext_phone_number,
+          friendly_name: "SlickText",
+          provider: "slicktext",
+          capabilities: { sms: true },
+          assigned_agent_id: null,
+        });
+      }
+      return allNumbers;
     },
     enabled: !!activeWorkspaceId,
   });

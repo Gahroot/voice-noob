@@ -54,6 +54,7 @@ import {
   type CreateCampaignRequest,
 } from "@/lib/api/sms";
 import { listPhoneNumbers, type PhoneNumber } from "@/lib/api/telephony";
+import { fetchSettings } from "@/lib/api/settings";
 import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
 
@@ -81,6 +82,7 @@ export default function SMSPage() {
     to_number: "",
     from_number: "",
     body: "",
+    provider: "telnyx",
   });
   const [newCampaignData, setNewCampaignData] = useState<CreateCampaignRequest>({
     name: "",
@@ -126,13 +128,27 @@ export default function SMSPage() {
     enabled: !!activeWorkspaceId,
   });
 
-  // Fetch phone numbers
+  // Fetch phone numbers (Telnyx + SlickText from settings)
   const { data: phoneNumbers = [] } = useQuery<PhoneNumber[]>({
     queryKey: ["phoneNumbers", activeWorkspaceId],
     queryFn: async () => {
       if (!activeWorkspaceId) return [];
-      const results = await listPhoneNumbers("telnyx", activeWorkspaceId);
-      return results;
+      // Get Telnyx phone numbers
+      const telnyxNumbers = await listPhoneNumbers("telnyx", activeWorkspaceId);
+      // Get SlickText phone number from settings
+      const settings = await fetchSettings(activeWorkspaceId);
+      const allNumbers: PhoneNumber[] = [...telnyxNumbers];
+      if (settings.slicktext_phone_number) {
+        allNumbers.push({
+          id: "slicktext-" + settings.slicktext_phone_number,
+          phone_number: settings.slicktext_phone_number,
+          friendly_name: "SlickText",
+          provider: "slicktext",
+          capabilities: { sms: true },
+          assigned_agent_id: null,
+        });
+      }
+      return allNumbers;
     },
     enabled: !!activeWorkspaceId,
   });
@@ -155,7 +171,7 @@ export default function SMSPage() {
     onSuccess: () => {
       toast.success("Message sent!");
       setIsNewMessageOpen(false);
-      setNewMessageData({ to_number: "", from_number: "", body: "" });
+      setNewMessageData({ to_number: "", from_number: "", body: "", provider: "telnyx" });
       void queryClient.invalidateQueries({ queryKey: ["sms-conversations"] });
     },
     onError: (error: Error) => {
@@ -585,9 +601,14 @@ export default function SMSPage() {
               <Label htmlFor="from_number">From Number</Label>
               <Select
                 value={newMessageData.from_number}
-                onValueChange={(value) =>
-                  setNewMessageData({ ...newMessageData, from_number: value })
-                }
+                onValueChange={(value) => {
+                  const selectedPhone = phoneNumbers.find((p) => p.phone_number === value);
+                  setNewMessageData({
+                    ...newMessageData,
+                    from_number: value,
+                    provider: selectedPhone?.provider ?? "telnyx",
+                  });
+                }}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Select a phone number" />

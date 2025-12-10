@@ -26,6 +26,7 @@ from app.models.sms import (
     SMSMessage,
 )
 from app.services.sms_service import SMSService
+from app.services.tools.sms_tools import SlickTextSMSTools
 
 router = APIRouter(prefix="/api/v1/sms", tags=["sms"])
 webhook_router = APIRouter(prefix="/webhooks/telnyx", tags=["webhooks"])
@@ -104,6 +105,7 @@ class SendMessageRequest(BaseModel):
     from_number: str = Field(..., description="Sender phone number (E.164)")
     body: str = Field(..., description="Message content", max_length=1600)
     conversation_id: str | None = Field(None, description="Optional existing conversation ID")
+    provider: str = Field("telnyx", description="SMS provider: telnyx or slicktext")
 
     @field_validator("to_number", "from_number")
     @classmethod
@@ -188,7 +190,7 @@ async def get_sms_service(
     db: AsyncSession,
     workspace_id: uuid.UUID,
 ) -> SMSService | None:
-    """Get SMS service for a user."""
+    """Get Telnyx SMS service for a user."""
     user_uuid = user_id_to_uuid(user_id)
     user_settings = await get_user_api_keys(user_uuid, db, workspace_id=workspace_id)
 
@@ -198,6 +200,43 @@ async def get_sms_service(
     return SMSService(
         api_key=user_settings.telnyx_api_key,
         messaging_profile_id=getattr(user_settings, "telnyx_messaging_profile_id", None),
+    )
+
+
+async def get_slicktext_service(
+    user_id: int,
+    db: AsyncSession,
+    workspace_id: uuid.UUID,
+) -> SlickTextSMSTools | None:
+    """Get SlickText SMS service for a user.
+
+    Supports both V1 (legacy) and V2 APIs:
+    - V1: Uses public_key + private_key (Basic auth)
+    - V2: Uses api_key (Bearer token)
+    """
+    user_uuid = user_id_to_uuid(user_id)
+    user_settings = await get_user_api_keys(user_uuid, db, workspace_id=workspace_id)
+
+    if not user_settings:
+        return None
+
+    # Check for V1 API credentials first (legacy accounts)
+    has_v1_creds = bool(
+        getattr(user_settings, "slicktext_public_key", None)
+        and getattr(user_settings, "slicktext_private_key", None)
+    )
+
+    # Check for V2 API credentials
+    has_v2_creds = bool(user_settings.slicktext_api_key)
+
+    if not has_v1_creds and not has_v2_creds:
+        return None
+
+    return SlickTextSMSTools(
+        api_key=user_settings.slicktext_api_key or "",
+        public_key=getattr(user_settings, "slicktext_public_key", None),
+        private_key=getattr(user_settings, "slicktext_private_key", None),
+        textword_id=getattr(user_settings, "slicktext_textword_id", None),
     )
 
 
@@ -364,6 +403,71 @@ async def send_message(
     workspace_uuid = uuid.UUID(workspace_id)
     user_uuid = user_id_to_uuid(current_user.id)
 
+    logger.info(
+        "sms_send_request",
+        provider=send_request.provider,
+        from_number=send_request.from_number,
+        to_number=send_request.to_number,
+    )
+
+    # Route to SlickText if provider is slicktext
+    if send_request.provider == "slicktext":
+        slicktext_service = await get_slicktext_service(current_user.id, db, workspace_uuid)
+        if not slicktext_service:
+            raise HTTPException(
+                status_code=400,
+                detail="SlickText SMS not configured. Please add credentials in Settings.",
+            )
+
+        try:
+            result = await slicktext_service.send_sms(
+                to=send_request.to_number,
+                body=send_request.body,
+            )
+        finally:
+            await slicktext_service.close()
+
+        if not result.get("success"):
+            raise HTTPException(
+                status_code=502,
+                detail=result.get("error", "Failed to send SMS via SlickText"),
+            )
+
+        # Create SMSMessage record for SlickText
+        # message_id is from inbox API, campaign_id is from campaigns API
+        provider_msg_id = result.get("message_id") or result.get("campaign_id")
+        message = SMSMessage(
+            workspace_id=workspace_uuid,
+            user_id=user_uuid,
+            provider="slicktext",
+            provider_message_id=provider_msg_id,
+            direction=MessageDirection.OUTBOUND,
+            from_number=send_request.from_number,
+            to_number=send_request.to_number,
+            body=send_request.body,
+            status="sent",
+            sent_at=datetime.now(UTC),
+        )
+        db.add(message)
+        await db.commit()
+        await db.refresh(message)
+
+        return MessageResponse(
+            id=str(message.id),
+            direction=message.direction,
+            from_number=message.from_number,
+            to_number=message.to_number,
+            body=message.body,
+            status=message.status,
+            is_read=message.is_read,
+            sent_at=message.sent_at.isoformat() if message.sent_at else None,
+            delivered_at=message.delivered_at.isoformat() if message.delivered_at else None,
+            created_at=message.created_at.isoformat(),
+            agent_id=str(message.agent_id) if message.agent_id else None,
+            error_message=message.error_message,
+        )
+
+    # Default: Use Telnyx
     sms_service = await get_sms_service(current_user.id, db, workspace_uuid)
     if not sms_service:
         raise HTTPException(

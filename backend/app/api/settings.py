@@ -26,9 +26,14 @@ class UpdateSettingsRequest(BaseModel):
     telnyx_messaging_profile_id: str | None = None
     twilio_account_sid: str | None = None
     twilio_auth_token: str | None = None
+    # SlickText V2 API (Bearer token)
+    slicktext_api_key: str | None = None
+    # SlickText V1 API (Basic auth)
     slicktext_public_key: str | None = None
     slicktext_private_key: str | None = None
+    slicktext_textword_id: str | None = None
     slicktext_webhook_secret: str | None = None
+    slicktext_phone_number: str | None = None
 
 
 class SettingsResponse(BaseModel):
@@ -40,7 +45,13 @@ class SettingsResponse(BaseModel):
     telnyx_api_key_set: bool
     telnyx_messaging_profile_id_set: bool
     twilio_account_sid_set: bool
-    slicktext_public_key_set: bool
+    # SlickText V2 API
+    slicktext_api_key_set: bool
+    # SlickText V1 API
+    slicktext_public_key_set: bool = False
+    slicktext_private_key_set: bool = False
+    slicktext_textword_id: str | None = None
+    slicktext_phone_number: str | None = None
     workspace_id: str | None = None
 
 
@@ -105,7 +116,11 @@ async def get_settings(
             telnyx_api_key_set=False,
             telnyx_messaging_profile_id_set=False,
             twilio_account_sid_set=False,
+            slicktext_api_key_set=False,
             slicktext_public_key_set=False,
+            slicktext_private_key_set=False,
+            slicktext_textword_id=None,
+            slicktext_phone_number=None,
             workspace_id=workspace_id,
         )
 
@@ -116,7 +131,11 @@ async def get_settings(
         telnyx_api_key_set=bool(settings.telnyx_api_key),
         telnyx_messaging_profile_id_set=bool(settings.telnyx_messaging_profile_id),
         twilio_account_sid_set=bool(settings.twilio_account_sid),
+        slicktext_api_key_set=bool(settings.slicktext_api_key),
         slicktext_public_key_set=bool(settings.slicktext_public_key),
+        slicktext_private_key_set=bool(settings.slicktext_private_key),
+        slicktext_textword_id=settings.slicktext_textword_id,
+        slicktext_phone_number=settings.slicktext_phone_number,
         workspace_id=str(settings.workspace_id) if settings.workspace_id else None,
     )
 
@@ -172,12 +191,18 @@ async def update_settings(  # noqa: PLR0912
             settings.twilio_account_sid = request.twilio_account_sid or None
         if request.twilio_auth_token is not None:
             settings.twilio_auth_token = request.twilio_auth_token or None
+        if request.slicktext_api_key is not None:
+            settings.slicktext_api_key = request.slicktext_api_key or None
         if request.slicktext_public_key is not None:
             settings.slicktext_public_key = request.slicktext_public_key or None
         if request.slicktext_private_key is not None:
             settings.slicktext_private_key = request.slicktext_private_key or None
+        if request.slicktext_textword_id is not None:
+            settings.slicktext_textword_id = request.slicktext_textword_id or None
         if request.slicktext_webhook_secret is not None:
             settings.slicktext_webhook_secret = request.slicktext_webhook_secret or None
+        if request.slicktext_phone_number is not None:
+            settings.slicktext_phone_number = request.slicktext_phone_number or None
 
         db.add(settings)
     else:
@@ -193,9 +218,12 @@ async def update_settings(  # noqa: PLR0912
             telnyx_messaging_profile_id=request.telnyx_messaging_profile_id,
             twilio_account_sid=request.twilio_account_sid,
             twilio_auth_token=request.twilio_auth_token,
+            slicktext_api_key=request.slicktext_api_key,
             slicktext_public_key=request.slicktext_public_key,
             slicktext_private_key=request.slicktext_private_key,
+            slicktext_textword_id=request.slicktext_textword_id,
             slicktext_webhook_secret=request.slicktext_webhook_secret,
+            slicktext_phone_number=request.slicktext_phone_number,
         )
         db.add(settings)
 

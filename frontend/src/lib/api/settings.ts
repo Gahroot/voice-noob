@@ -51,7 +51,13 @@ export interface SettingsResponse {
   telnyx_api_key_set: boolean;
   telnyx_messaging_profile_id_set: boolean;
   twilio_account_sid_set: boolean;
+  // SlickText V2 API
+  slicktext_api_key_set: boolean;
+  // SlickText V1 API (legacy)
   slicktext_public_key_set: boolean;
+  slicktext_private_key_set: boolean;
+  slicktext_textword_id: string | null;
+  slicktext_phone_number: string | null;
   workspace_id: string | null;
 }
 
@@ -63,9 +69,14 @@ export interface UpdateSettingsRequest {
   telnyx_public_key?: string;
   twilio_account_sid?: string;
   twilio_auth_token?: string;
+  // SlickText V2 API (Bearer token)
+  slicktext_api_key?: string;
+  // SlickText V1 API (Basic auth) - for legacy accounts
   slicktext_public_key?: string;
   slicktext_private_key?: string;
+  slicktext_textword_id?: string;
   slicktext_webhook_secret?: string;
+  slicktext_phone_number?: string;
 }
 
 export async function fetchSettings(workspaceId?: string): Promise<SettingsResponse> {

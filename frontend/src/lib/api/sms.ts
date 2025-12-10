@@ -93,6 +93,7 @@ export interface SendMessageRequest {
   from_number: string;
   body: string;
   conversation_id?: string;
+  provider?: string;
 }
 
 // Conversation API
