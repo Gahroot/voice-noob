@@ -49,7 +49,9 @@ export interface SettingsResponse {
   deepgram_api_key_set: boolean;
   elevenlabs_api_key_set: boolean;
   telnyx_api_key_set: boolean;
+  telnyx_messaging_profile_id_set: boolean;
   twilio_account_sid_set: boolean;
+  slicktext_public_key_set: boolean;
   workspace_id: string | null;
 }
 
@@ -61,6 +63,9 @@ export interface UpdateSettingsRequest {
   telnyx_public_key?: string;
   twilio_account_sid?: string;
   twilio_auth_token?: string;
+  slicktext_public_key?: string;
+  slicktext_private_key?: string;
+  slicktext_webhook_secret?: string;
 }
 
 export async function fetchSettings(workspaceId?: string): Promise<SettingsResponse> {

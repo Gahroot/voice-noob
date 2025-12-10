@@ -209,3 +209,93 @@ def require_telnyx_signature(func: Any) -> Any:
         return await func(request, *args, **kwargs)
 
     return wrapper
+
+
+def validate_slicktext_signature(
+    signature: str,
+    payload: bytes,
+    webhook_secret: str,
+) -> bool:
+    """Validate SlickText webhook signature.
+
+    SlickText uses HMAC-SHA256 for webhook validation.
+    Header: x-slicktext-signature
+
+    Args:
+        signature: The x-slicktext-signature header value
+        payload: The raw request body
+        webhook_secret: The SlickText webhook secret
+
+    Returns:
+        True if signature is valid, False otherwise
+    """
+    if not signature or not webhook_secret:
+        return False
+
+    try:
+        # Compute HMAC-SHA256
+        expected_sig = hmac.new(
+            webhook_secret.encode("utf-8"),
+            payload,
+            hashlib.sha256,
+        ).hexdigest()
+
+        return hmac.compare_digest(signature, expected_sig)
+    except Exception as e:
+        logger.warning("slicktext_signature_validation_failed", error=str(e))
+        return False
+
+
+async def verify_slicktext_webhook(request: Request, webhook_secret: str | None = None) -> bool:
+    """Verify SlickText webhook signature from request.
+
+    Args:
+        request: FastAPI request object
+        webhook_secret: Optional webhook secret (if not provided, skips validation in debug)
+
+    Returns:
+        True if signature is valid or validation is skipped in debug mode
+
+    Raises:
+        HTTPException: If signature validation fails
+    """
+    # Get signature from header
+    signature = request.headers.get("x-slicktext-signature", "")
+
+    if not signature:
+        if settings.DEBUG:
+            logger.warning("missing_slicktext_signature_debug_mode")
+            return True
+        logger.warning("missing_slicktext_signature")
+        raise HTTPException(status_code=403, detail="Missing SlickText signature")
+
+    if not webhook_secret:
+        if settings.DEBUG:
+            logger.warning("slicktext_webhook_secret_not_configured_debug_mode")
+            return True
+        logger.error("slicktext_webhook_secret_not_configured")
+        raise HTTPException(status_code=500, detail="SlickText webhook not configured")
+
+    # Get raw body
+    body = await request.body()
+
+    # Validate signature
+    if not validate_slicktext_signature(signature, body, webhook_secret):
+        logger.warning("invalid_slicktext_signature")
+        raise HTTPException(status_code=403, detail="Invalid SlickText signature")
+
+    return True
+
+
+def require_slicktext_signature(webhook_secret: str | None = None) -> Any:
+    """Decorator to require valid SlickText signature on webhook endpoints."""
+
+    def decorator(func: Any) -> Any:
+        @wraps(func)
+        async def wrapper(request: Request, *args: Any, **kwargs: Any) -> Any:
+            await verify_slicktext_webhook(request, webhook_secret)
+            return await func(request, *args, **kwargs)
+
+        return wrapper
+
+    return decorator

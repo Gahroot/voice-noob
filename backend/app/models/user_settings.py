@@ -59,6 +59,17 @@ class UserSettings(Base):
         Text, nullable=True, comment="Twilio Auth Token"
     )
 
+    # SlickText API Keys
+    slicktext_public_key: Mapped[str | None] = mapped_column(
+        Text, nullable=True, comment="SlickText Public API Key"
+    )
+    slicktext_private_key: Mapped[str | None] = mapped_column(
+        Text, nullable=True, comment="SlickText Private API Key"
+    )
+    slicktext_webhook_secret: Mapped[str | None] = mapped_column(
+        Text, nullable=True, comment="SlickText Webhook Secret for signature verification"
+    )
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False

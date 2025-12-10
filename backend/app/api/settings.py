@@ -26,6 +26,9 @@ class UpdateSettingsRequest(BaseModel):
     telnyx_messaging_profile_id: str | None = None
     twilio_account_sid: str | None = None
     twilio_auth_token: str | None = None
+    slicktext_public_key: str | None = None
+    slicktext_private_key: str | None = None
+    slicktext_webhook_secret: str | None = None
 
 
 class SettingsResponse(BaseModel):
@@ -37,6 +40,7 @@ class SettingsResponse(BaseModel):
     telnyx_api_key_set: bool
     telnyx_messaging_profile_id_set: bool
     twilio_account_sid_set: bool
+    slicktext_public_key_set: bool
     workspace_id: str | None = None
 
 
@@ -101,6 +105,7 @@ async def get_settings(
             telnyx_api_key_set=False,
             telnyx_messaging_profile_id_set=False,
             twilio_account_sid_set=False,
+            slicktext_public_key_set=False,
             workspace_id=workspace_id,
         )
 
@@ -111,12 +116,13 @@ async def get_settings(
         telnyx_api_key_set=bool(settings.telnyx_api_key),
         telnyx_messaging_profile_id_set=bool(settings.telnyx_messaging_profile_id),
         twilio_account_sid_set=bool(settings.twilio_account_sid),
+        slicktext_public_key_set=bool(settings.slicktext_public_key),
         workspace_id=str(settings.workspace_id) if settings.workspace_id else None,
     )
 
 
 @router.post("", status_code=status.HTTP_200_OK)
-async def update_settings(
+async def update_settings(  # noqa: PLR0912
     request: UpdateSettingsRequest,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
@@ -166,6 +172,12 @@ async def update_settings(
             settings.twilio_account_sid = request.twilio_account_sid or None
         if request.twilio_auth_token is not None:
             settings.twilio_auth_token = request.twilio_auth_token or None
+        if request.slicktext_public_key is not None:
+            settings.slicktext_public_key = request.slicktext_public_key or None
+        if request.slicktext_private_key is not None:
+            settings.slicktext_private_key = request.slicktext_private_key or None
+        if request.slicktext_webhook_secret is not None:
+            settings.slicktext_webhook_secret = request.slicktext_webhook_secret or None
 
         db.add(settings)
     else:
@@ -181,6 +193,9 @@ async def update_settings(
             telnyx_messaging_profile_id=request.telnyx_messaging_profile_id,
             twilio_account_sid=request.twilio_account_sid,
             twilio_auth_token=request.twilio_auth_token,
+            slicktext_public_key=request.slicktext_public_key,
+            slicktext_private_key=request.slicktext_private_key,
+            slicktext_webhook_secret=request.slicktext_webhook_secret,
         )
         db.add(settings)
 

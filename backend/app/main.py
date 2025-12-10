@@ -215,6 +215,7 @@ app.include_router(embed.ws_router)  # Public embed WebSocket
 app.include_router(leads.router)  # Lead webhook API (Facebook, website forms)
 app.include_router(sms.router)  # SMS API (conversations, messages, campaigns)
 app.include_router(sms.webhook_router)  # Telnyx SMS webhooks
+app.include_router(sms.slicktext_webhook_router)  # SlickText SMS webhooks
 
 
 @app.get("/")

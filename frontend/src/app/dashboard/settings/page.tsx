@@ -54,6 +54,7 @@ import {
   Mic,
   Volume2,
   Phone,
+  MessageSquareText,
 } from "lucide-react";
 
 interface Workspace {
@@ -164,6 +165,34 @@ const API_KEY_PROVIDERS: ApiKeyProvider[] = [
         label: "Auth Token",
         placeholder: "Enter your Auth Token",
         settingsKey: "twilio_account_sid_set", // Using same key since both are required
+      },
+    ],
+  },
+  {
+    id: "slicktext",
+    name: "SlickText",
+    description: "SMS marketing platform with pre-approved 10DLC campaigns and automation.",
+    category: "telephony",
+    icon: MessageSquareText,
+    documentationUrl: "https://api.slicktext.com/docs/v1/basics",
+    fields: [
+      {
+        name: "slicktext_public_key",
+        label: "Public Key",
+        placeholder: "Enter your Public Key",
+        settingsKey: "slicktext_public_key_set",
+      },
+      {
+        name: "slicktext_private_key",
+        label: "Private Key",
+        placeholder: "Enter your Private Key",
+        settingsKey: "slicktext_public_key_set", // Using same key since both are required
+      },
+      {
+        name: "slicktext_webhook_secret",
+        label: "Webhook Secret (Optional)",
+        placeholder: "Enter your Webhook Secret",
+        settingsKey: "slicktext_public_key_set", // Optional but grouped
       },
     ],
   },

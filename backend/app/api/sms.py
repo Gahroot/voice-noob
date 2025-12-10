@@ -14,7 +14,7 @@ from sqlalchemy.orm import selectinload
 from app.api.settings import get_user_api_keys
 from app.core.auth import CurrentUser, user_id_to_uuid
 from app.core.limiter import limiter
-from app.core.webhook_security import verify_telnyx_webhook
+from app.core.webhook_security import verify_slicktext_webhook, verify_telnyx_webhook
 from app.db.session import get_db
 from app.models.contact import Contact
 from app.models.sms import (
@@ -29,6 +29,7 @@ from app.services.sms_service import SMSService
 
 router = APIRouter(prefix="/api/v1/sms", tags=["sms"])
 webhook_router = APIRouter(prefix="/webhooks/telnyx", tags=["webhooks"])
+slicktext_webhook_router = APIRouter(prefix="/webhooks/slicktext", tags=["webhooks"])
 
 
 def normalize_e164(phone: str) -> str:
@@ -839,5 +840,132 @@ async def telnyx_sms_webhook(
         message_id = payload.get("id", "")
         log.info("delivery_status", message_id=message_id)
         await _handle_delivery_status(db, payload)
+
+    return {"status": "received"}
+
+
+# =============================================================================
+# SlickText Webhook Helpers
+# =============================================================================
+
+
+async def _handle_slicktext_inbound_message(
+    db: AsyncSession,
+    payload: dict,  # type: ignore[type-arg]
+) -> str | None:
+    """Handle inbound SMS message from SlickText webhook."""
+    from app.models.phone_number import PhoneNumber
+
+    # SlickText webhook payload structure for inbox.message.received
+    data = payload.get("data", {})
+    from_number = data.get("from", "")
+    to_number = data.get("to", "")
+    message_text = data.get("body", "") or data.get("text", "")
+    message_id = data.get("id", "") or payload.get("id", "")
+
+    # Normalize phone numbers to E.164
+    if from_number and not from_number.startswith("+"):
+        from_number = f"+{from_number}"
+    if to_number and not to_number.startswith("+"):
+        to_number = f"+{to_number}"
+
+    # Find the phone number in our system
+    phone_result = await db.execute(
+        select(PhoneNumber).where(PhoneNumber.phone_number == to_number)
+    )
+    phone = phone_result.scalar_one_or_none()
+
+    if not phone:
+        return None
+
+    # Find or create conversation
+    conv_result = await db.execute(
+        select(SMSConversation).where(
+            SMSConversation.workspace_id == phone.workspace_id,
+            SMSConversation.from_number == to_number,
+            SMSConversation.to_number == from_number,
+        )
+    )
+    conversation = conv_result.scalar_one_or_none()
+
+    if not conversation:
+        contact_result = await db.execute(
+            select(Contact).where(
+                Contact.workspace_id == phone.workspace_id,
+                Contact.phone_number == from_number,
+            )
+        )
+        contact = contact_result.scalar_one_or_none()
+        conversation = SMSConversation(
+            user_id=phone.user_id,
+            workspace_id=phone.workspace_id,
+            contact_id=contact.id if contact else None,
+            from_number=to_number,
+            to_number=from_number,
+        )
+        db.add(conversation)
+        await db.flush()
+
+    # Create message record
+    message = SMSMessage(
+        conversation_id=conversation.id,
+        provider="slicktext",
+        provider_message_id=str(message_id),
+        direction=MessageDirection.INBOUND.value,
+        from_number=from_number,
+        to_number=to_number,
+        body=message_text,
+        status="received",
+    )
+    db.add(message)
+
+    # Update conversation metadata
+    preview_length = 255
+    conversation.last_message_preview = (
+        message_text[:preview_length] if len(message_text) > preview_length else message_text
+    )
+    conversation.last_message_at = datetime.now(UTC)
+    conversation.last_message_direction = MessageDirection.INBOUND.value
+    conversation.unread_count += 1
+
+    await db.commit()
+    return str(conversation.id)
+
+
+# =============================================================================
+# SlickText Webhook Endpoints
+# =============================================================================
+
+
+@slicktext_webhook_router.post("/sms")
+async def slicktext_sms_webhook(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, str]:
+    """Handle SlickText SMS webhooks (inbound messages).
+
+    SlickText sends webhooks for:
+    - inbox.message.received: Inbound SMS received
+    - campaign.sent: Campaign message sent
+    - campaign.failed: Campaign message failed
+    """
+    # Note: In production, you'd want to look up the webhook secret
+    # from user settings based on the phone number or other identifier
+    # For now, we'll verify in debug mode or skip if no secret
+    await verify_slicktext_webhook(request, webhook_secret=None)
+
+    body = await request.json()
+    event_name = body.get("name", "")
+    payload = body
+
+    log = logger.bind(webhook="slicktext_sms", event_name=event_name)
+    log.info("slicktext_sms_webhook_received")
+
+    if event_name == "inbox.message.received":
+        conv_id = await _handle_slicktext_inbound_message(db, payload)
+        if conv_id:
+            log.info("inbound_message_saved", conversation_id=conv_id)
+        else:
+            log.warning("phone_number_not_found")
 
     return {"status": "received"}

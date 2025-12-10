@@ -10,7 +10,7 @@ from app.services.tools.call_control_tools import CallControlTools
 from app.services.tools.crm_tools import CRMTools
 from app.services.tools.gohighlevel_tools import GoHighLevelTools
 from app.services.tools.shopify_tools import ShopifyTools
-from app.services.tools.sms_tools import TelnyxSMSTools, TwilioSMSTools
+from app.services.tools.sms_tools import SlickTextSMSTools, TelnyxSMSTools, TwilioSMSTools
 
 
 class ToolRegistry:
@@ -49,6 +49,7 @@ class ToolRegistry:
         self._shopify_tools: ShopifyTools | None = None
         self._twilio_sms_tools: TwilioSMSTools | None = None
         self._telnyx_sms_tools: TelnyxSMSTools | None = None
+        self._slicktext_sms_tools: SlickTextSMSTools | None = None
 
     def _get_ghl_tools(self) -> GoHighLevelTools | None:
         """Get GoHighLevel tools if credentials are available."""
@@ -168,6 +169,27 @@ class ToolRegistry:
 
         return None
 
+    def _get_slicktext_sms_tools(self) -> SlickTextSMSTools | None:
+        """Get SlickText SMS tools if credentials are available."""
+        if self._slicktext_sms_tools:
+            return self._slicktext_sms_tools
+
+        creds = self.integrations.get("slicktext-sms")
+        if (
+            creds
+            and creds.get("public_key")
+            and creds.get("private_key")
+            and creds.get("from_number")
+        ):
+            self._slicktext_sms_tools = SlickTextSMSTools(
+                public_key=creds["public_key"],
+                private_key=creds["private_key"],
+                from_number=creds["from_number"],
+            )
+            return self._slicktext_sms_tools
+
+        return None
+
     def get_all_tool_definitions(
         self,
         enabled_tools: list[str],
@@ -246,6 +268,11 @@ class ToolRegistry:
         if "telnyx-sms" in enabled_tools and self._get_telnyx_sms_tools():
             telnyx_tools = TelnyxSMSTools.get_tool_definitions()
             tools.extend(filter_tools("telnyx-sms", telnyx_tools))
+
+        # SlickText SMS tools
+        if "slicktext-sms" in enabled_tools and self._get_slicktext_sms_tools():
+            slicktext_tools = SlickTextSMSTools.get_tool_definitions()
+            tools.extend(filter_tools("slicktext-sms", slicktext_tools))
 
         return tools
 
@@ -399,6 +426,21 @@ class ToolRegistry:
                 }
             return await telnyx_tools.execute_tool(tool_name, arguments)
 
+        # SlickText SMS tools
+        slicktext_tool_names = {
+            "slicktext_send_sms",
+            "slicktext_get_message_status",
+        }
+
+        if tool_name in slicktext_tool_names:
+            slicktext_tools = self._get_slicktext_sms_tools()
+            if not slicktext_tools:
+                return {
+                    "success": False,
+                    "error": "SlickText SMS integration not configured. Please add your API credentials.",
+                }
+            return await slicktext_tools.execute_tool(tool_name, arguments)
+
         # Unknown tool
         return {"success": False, "error": f"Unknown tool: {tool_name}"}
 
@@ -416,3 +458,5 @@ class ToolRegistry:
             await self._twilio_sms_tools.close()
         if self._telnyx_sms_tools:
             await self._telnyx_sms_tools.close()
+        if self._slicktext_sms_tools:
+            await self._slicktext_sms_tools.close()
