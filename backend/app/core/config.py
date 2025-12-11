@@ -136,6 +136,10 @@ class Settings(BaseSettings):
     FACEBOOK_APP_SECRET: str | None = None  # Facebook app secret for webhook signature verification
     FACEBOOK_VERIFY_TOKEN: str | None = None  # Token for Facebook webhook verification
 
+    # SlickText Polling Configuration
+    SLICKTEXT_POLLING_ENABLED: bool = True  # Enable polling for inbound SMS (for tech demos)
+    SLICKTEXT_POLLING_INTERVAL: int = 30  # Seconds between poll cycles
+
     # Monitoring
     SENTRY_DSN: str | None = None
     SENTRY_ENVIRONMENT: str = "development"

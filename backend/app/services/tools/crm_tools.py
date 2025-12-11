@@ -436,10 +436,27 @@ class CRMTools:
             contact = result.scalar_one_or_none()
 
             if not contact:
-                return {
-                    "success": False,
-                    "error": f"No contact found with phone {contact_phone}. Please create contact first.",
-                }
+                # Auto-create contact for SMS conversations
+                # This allows booking without explicit contact creation
+                self.logger.info(
+                    "auto_creating_contact_for_appointment",
+                    phone=contact_phone,
+                )
+                contact = Contact(
+                    user_id=self.user_id,
+                    workspace_id=self.workspace_id,
+                    first_name="SMS Contact",
+                    phone_number=contact_phone,
+                    status="new",
+                )
+                self.db.add(contact)
+                await self.db.flush()
+                await self.db.refresh(contact)
+                self.logger.info(
+                    "auto_created_contact",
+                    contact_id=contact.id,
+                    phone=contact_phone,
+                )
 
             # Parse datetime and handle timezone
             appointment_time = datetime.fromisoformat(scheduled_at.replace("Z", "+00:00"))

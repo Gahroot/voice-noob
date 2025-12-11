@@ -279,6 +279,11 @@ class TestContactRelationships:
         create_test_appointment: Any,
     ) -> None:
         """Test contact to appointments relationship."""
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+
+        from app.models.contact import Contact
+
         user = await create_test_user()
         contact = await create_test_contact(user_id=user.id)
 
@@ -286,8 +291,13 @@ class TestContactRelationships:
         appointment1 = await create_test_appointment(contact_id=contact.id)
         appointment2 = await create_test_appointment(contact_id=contact.id)
 
-        # Refresh to load relationships
-        await test_session.refresh(contact)
+        # Re-query with eager loading to avoid async lazy load issues
+        result = await test_session.execute(
+            select(Contact)
+            .where(Contact.id == contact.id)
+            .options(selectinload(Contact.appointments))
+        )
+        contact = result.scalar_one()
 
         # Access appointments through relationship
         assert len(contact.appointments) == 2
@@ -304,6 +314,11 @@ class TestContactRelationships:
         create_test_call_interaction: Any,
     ) -> None:
         """Test contact to call interactions relationship."""
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+
+        from app.models.contact import Contact
+
         user = await create_test_user()
         contact = await create_test_contact(user_id=user.id)
 
@@ -311,8 +326,13 @@ class TestContactRelationships:
         call1 = await create_test_call_interaction(contact_id=contact.id)
         call2 = await create_test_call_interaction(contact_id=contact.id)
 
-        # Refresh to load relationships
-        await test_session.refresh(contact)
+        # Re-query with eager loading to avoid async lazy load issues
+        result = await test_session.execute(
+            select(Contact)
+            .where(Contact.id == contact.id)
+            .options(selectinload(Contact.call_interactions))
+        )
+        contact = result.scalar_one()
 
         # Access call interactions through relationship
         assert len(contact.call_interactions) == 2

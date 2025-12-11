@@ -1,5 +1,11 @@
-import { AppSidebar } from "@/components/app-sidebar";
+"use client";
+
+import dynamic from "next/dynamic";
 import { TopBar } from "@/components/top-bar";
+
+const AppSidebar = dynamic(() => import("@/components/app-sidebar").then((m) => m.AppSidebar), {
+  ssr: false,
+});
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (

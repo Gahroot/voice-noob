@@ -23,17 +23,31 @@ class TestAppointmentModel:
         sample_appointment_data: dict[str, Any],
     ) -> None:
         """Test creating an appointment with all fields."""
+        from sqlalchemy.orm import undefer
+
         user = await create_test_user()
         contact = await create_test_contact(user_id=user.id)
 
         appointment = Appointment(contact_id=contact.id, **sample_appointment_data)
         test_session.add(appointment)
         await test_session.commit()
-        await test_session.refresh(appointment)
+
+        # Re-query with undeferred notes column (it's deferred by default)
+        result = await test_session.execute(
+            select(Appointment)
+            .where(Appointment.id == appointment.id)
+            .options(undefer(Appointment.notes))
+        )
+        appointment = result.scalar_one()
 
         assert appointment.id is not None
         assert appointment.contact_id == contact.id
-        assert appointment.scheduled_at == sample_appointment_data["scheduled_at"]
+        # SQLite doesn't preserve timezone info, so compare without timezone
+        expected_scheduled_at = sample_appointment_data["scheduled_at"].replace(tzinfo=None)
+        actual_scheduled_at = appointment.scheduled_at
+        if actual_scheduled_at.tzinfo is not None:
+            actual_scheduled_at = actual_scheduled_at.replace(tzinfo=None)
+        assert actual_scheduled_at == expected_scheduled_at
         assert appointment.duration_minutes == sample_appointment_data["duration_minutes"]
         assert appointment.status == sample_appointment_data["status"]
         assert appointment.service_type == sample_appointment_data["service_type"]
@@ -50,6 +64,8 @@ class TestAppointmentModel:
         create_test_contact: Any,
     ) -> None:
         """Test creating an appointment with minimal required fields."""
+        from sqlalchemy.orm import undefer
+
         user = await create_test_user()
         contact = await create_test_contact(user_id=user.id)
 
@@ -61,11 +77,23 @@ class TestAppointmentModel:
         )
         test_session.add(appointment)
         await test_session.commit()
-        await test_session.refresh(appointment)
+
+        # Re-query with undeferred notes column (it's deferred by default)
+        result = await test_session.execute(
+            select(Appointment)
+            .where(Appointment.id == appointment.id)
+            .options(undefer(Appointment.notes))
+        )
+        appointment = result.scalar_one()
 
         assert appointment.id is not None
         assert appointment.contact_id == contact.id
-        assert appointment.scheduled_at == scheduled_time
+        # SQLite doesn't preserve timezone info, so compare without timezone
+        expected_time = scheduled_time.replace(tzinfo=None)
+        actual_time = appointment.scheduled_at
+        if actual_time.tzinfo is not None:
+            actual_time = actual_time.replace(tzinfo=None)
+        assert actual_time == expected_time
         assert appointment.duration_minutes == 30  # Default value
         assert appointment.status == "scheduled"  # Default value
         assert appointment.service_type is None

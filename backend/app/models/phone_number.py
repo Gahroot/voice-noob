@@ -107,7 +107,16 @@ class PhoneNumber(Base):
         Uuid(as_uuid=True),
         nullable=True,
         index=True,
-        comment="Agent currently assigned to this number (informational)",
+        comment="Voice agent currently assigned to this number (informational)",
+    )
+
+    # Default text agent for SMS on this number
+    default_text_agent_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("agents.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="Default text agent for new SMS conversations on this number",
     )
 
     # Additional metadata

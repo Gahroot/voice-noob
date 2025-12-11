@@ -80,6 +80,12 @@ class UserSettings(Base):
     slicktext_phone_number: Mapped[str | None] = mapped_column(
         String(50), nullable=True, comment="SlickText phone number (E.164 format)"
     )
+    slicktext_default_text_agent_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("agents.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="Default text agent for SlickText SMS conversations",
+    )
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(

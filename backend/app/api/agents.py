@@ -13,6 +13,7 @@ from app.core.limiter import limiter
 from app.core.public_id import generate_public_id
 from app.db.session import get_db
 from app.models.agent import Agent
+from app.models.workspace import AgentWorkspace, Workspace
 
 # Sentinel value to distinguish "not provided" from "explicitly set to None"
 _UNSET = object()
@@ -58,10 +59,28 @@ class CreateAgentRequest(BaseModel):
         default=None,
         description="Optional initial greeting the agent speaks when call starts",
     )
+    # Text agent settings
+    channel_mode: str = Field(default="voice", pattern="^(voice|text|both)$")
+    text_response_delay_ms: int = Field(
+        default=3000,
+        ge=0,
+        le=30000,
+        description="Delay in ms before responding to text (for batching)",
+    )
+    text_max_context_messages: int = Field(
+        default=20, ge=1, le=100, description="Max messages to include in text response context"
+    )
+    # Workspace assignments
+    workspace_ids: list[str] = Field(
+        default_factory=list,
+        description="List of workspace IDs to assign the agent to. If empty, assigns to user's default workspace.",
+    )
 
 
 class UpdateAgentRequest(BaseModel):
     """Request to update a voice agent."""
+
+    model_config = {"extra": "allow"}  # Allow extra fields for _explicitly_set_fields tracking
 
     name: str | None = Field(None, min_length=1, max_length=200)
     description: str | None = None
@@ -95,9 +114,14 @@ class UpdateAgentRequest(BaseModel):
         default=None,
         description="Optional initial greeting the agent speaks when call starts",
     )
-
-    # Track which fields were explicitly set in the request (including null values)
-    _explicitly_set_fields: set[str] = set()
+    # Text agent settings
+    channel_mode: str | None = Field(None, pattern="^(voice|text|both)$")
+    text_response_delay_ms: int | None = Field(
+        None, ge=0, le=30000, description="Delay in ms before responding to text (for batching)"
+    )
+    text_max_context_messages: int | None = Field(
+        None, ge=1, le=100, description="Max messages to include in text response context"
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -110,7 +134,9 @@ class UpdateAgentRequest(BaseModel):
 
     def is_field_set(self, field_name: str) -> bool:
         """Check if a field was explicitly set in the request (even if to None)."""
-        return field_name in self._explicitly_set_fields
+        extra = getattr(self, "__pydantic_extra__", {}) or {}
+        explicitly_set = extra.get("_explicitly_set_fields", set())
+        return field_name in explicitly_set
 
 
 class AgentResponse(BaseModel):
@@ -144,6 +170,10 @@ class AgentResponse(BaseModel):
     created_at: str
     updated_at: str
     last_call_at: str | None
+    # Text agent settings
+    channel_mode: str
+    text_response_delay_ms: int
+    text_max_context_messages: int
 
 
 @router.post("", response_model=AgentResponse, status_code=status.HTTP_201_CREATED)
@@ -189,12 +219,53 @@ async def create_agent(
         temperature=agent_request.temperature,
         max_tokens=agent_request.max_tokens,
         initial_greeting=agent_request.initial_greeting,
+        channel_mode=agent_request.channel_mode,
+        text_response_delay_ms=agent_request.text_response_delay_ms,
+        text_max_context_messages=agent_request.text_max_context_messages,
         provider_config=provider_config,
         is_active=True,
         is_published=False,
     )
 
     db.add(agent)
+    await db.flush()  # Get agent.id before creating workspace associations
+
+    # Assign agent to workspaces
+    workspace_ids_to_assign = agent_request.workspace_ids
+    if not workspace_ids_to_assign:
+        # If no workspaces specified, assign to user's default workspace
+        default_workspace = await db.execute(
+            select(Workspace).where(
+                Workspace.user_id == current_user.id,
+                Workspace.is_default == True,  # noqa: E712
+            )
+        )
+        default_ws = default_workspace.scalar_one_or_none()
+        if default_ws:
+            workspace_ids_to_assign = [str(default_ws.id)]
+
+    # Create AgentWorkspace associations
+    for ws_id in workspace_ids_to_assign:
+        try:
+            workspace_uuid = uuid.UUID(ws_id)
+            # Verify workspace belongs to user
+            ws_result = await db.execute(
+                select(Workspace).where(
+                    Workspace.id == workspace_uuid,
+                    Workspace.user_id == current_user.id,
+                )
+            )
+            workspace = ws_result.scalar_one_or_none()
+            if workspace:
+                agent_workspace = AgentWorkspace(
+                    agent_id=agent.id,
+                    workspace_id=workspace_uuid,
+                )
+                db.add(agent_workspace)
+        except ValueError:
+            # Invalid UUID, skip
+            pass
+
     await db.commit()
     await db.refresh(agent)
 
@@ -388,6 +459,10 @@ def _apply_agent_updates(agent: Agent, request: UpdateAgentRequest) -> None:
         "temperature",
         "max_tokens",
         "initial_greeting",
+        # Text agent settings
+        "channel_mode",
+        "text_response_delay_ms",
+        "text_max_context_messages",
     ]
 
     # Fields that can be explicitly set to None (cleared)
@@ -503,6 +578,9 @@ def _agent_to_response(agent: Agent) -> AgentResponse:
         created_at=agent.created_at.isoformat(),
         updated_at=agent.updated_at.isoformat(),
         last_call_at=agent.last_call_at.isoformat() if agent.last_call_at else None,
+        channel_mode=agent.channel_mode,
+        text_response_delay_ms=agent.text_response_delay_ms,
+        text_max_context_messages=agent.text_max_context_messages,
     )
 
 

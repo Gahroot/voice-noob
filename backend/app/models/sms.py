@@ -133,6 +133,35 @@ class SMSConversation(Base):
         String(20), nullable=True, comment="Direction of last message"
     )
 
+    # Conversation origin tracking
+    initiated_by: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="platform",
+        index=True,
+        comment="Who initiated the conversation: 'platform' (we sent first) or 'external' (they texted first)",
+    )
+
+    # AI Text Agent assignment
+    assigned_agent_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("agents.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="Text agent assigned to handle this conversation",
+    )
+    ai_enabled: Mapped[bool] = mapped_column(
+        default=True, comment="Whether AI auto-responds to this conversation"
+    )
+    ai_paused: Mapped[bool] = mapped_column(
+        default=False, comment="Temporarily pause AI responses (human takeover)"
+    )
+    ai_paused_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="Resume AI responses after this time",
+    )
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
@@ -149,6 +178,9 @@ class SMSConversation(Base):
     contact: Mapped["Contact | None"] = relationship("Contact", lazy="selectin")
     messages: Mapped[list["SMSMessage"]] = relationship(
         "SMSMessage", back_populates="conversation", cascade="all, delete-orphan", lazy="selectin"
+    )
+    assigned_agent: Mapped["Agent | None"] = relationship(
+        "Agent", foreign_keys=[assigned_agent_id], lazy="selectin"
     )
 
     def __repr__(self) -> str:

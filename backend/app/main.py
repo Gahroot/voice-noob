@@ -50,6 +50,10 @@ from app.middleware.request_tracing import RequestTracingMiddleware
 from app.middleware.security import SecurityHeadersMiddleware
 from app.models.user import User
 from app.services.campaign_worker import start_campaign_worker, stop_campaign_worker
+from app.services.slicktext_polling_service import (
+    start_slicktext_polling,
+    stop_slicktext_polling,
+)
 
 # Configure structured logging with async processors
 structlog.configure(
@@ -73,7 +77,7 @@ logger = structlog.get_logger()
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:  # noqa: PLR0915
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:  # noqa: PLR0912, PLR0915
     """Lifespan context manager for startup and shutdown events."""
     # Startup
     logger.info("Starting application", app_name=settings.APP_NAME)
@@ -135,10 +139,30 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:  # noqa: PLR0915
     except Exception:
         logger.exception("Failed to start campaign worker - campaigns will not process")
 
+    # Start SlickText polling service (non-fatal)
+    if settings.SLICKTEXT_POLLING_ENABLED:
+        try:
+            await start_slicktext_polling(poll_interval=settings.SLICKTEXT_POLLING_INTERVAL)
+            logger.info(
+                "SlickText polling service started",
+                poll_interval=settings.SLICKTEXT_POLLING_INTERVAL,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to start SlickText polling - inbound SMS polling will not work"
+            )
+
     yield
 
     # Shutdown
     logger.info("Shutting down application")
+
+    # Stop SlickText polling service
+    try:
+        await stop_slicktext_polling()
+        logger.info("SlickText polling service stopped")
+    except Exception:
+        logger.exception("Error stopping SlickText polling service")
 
     # Stop campaign worker
     try:

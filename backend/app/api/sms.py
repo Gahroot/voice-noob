@@ -79,6 +79,11 @@ class ConversationResponse(BaseModel):
     last_message_at: str | None = None
     last_message_direction: str | None = None
     created_at: str
+    # AI text agent fields
+    assigned_agent_id: str | None = None
+    assigned_agent_name: str | None = None
+    ai_enabled: bool = True
+    ai_paused: bool = False
 
 
 class MessageResponse(BaseModel):
@@ -259,7 +264,10 @@ async def list_conversations(
 
     query = (
         select(SMSConversation)
-        .options(selectinload(SMSConversation.contact))
+        .options(
+            selectinload(SMSConversation.contact),
+            selectinload(SMSConversation.assigned_agent),
+        )
         .where(SMSConversation.workspace_id == workspace_uuid)
         .order_by(SMSConversation.last_message_at.desc().nulls_last())
         .offset(offset)
@@ -289,6 +297,10 @@ async def list_conversations(
             last_message_at=conv.last_message_at.isoformat() if conv.last_message_at else None,
             last_message_direction=conv.last_message_direction,
             created_at=conv.created_at.isoformat(),
+            assigned_agent_id=str(conv.assigned_agent_id) if conv.assigned_agent_id else None,
+            assigned_agent_name=conv.assigned_agent.name if conv.assigned_agent else None,
+            ai_enabled=conv.ai_enabled,
+            ai_paused=conv.ai_paused,
         )
         for conv in conversations
     ]
@@ -303,7 +315,10 @@ async def get_conversation(
     """Get a single conversation."""
     result = await db.execute(
         select(SMSConversation)
-        .options(selectinload(SMSConversation.contact))
+        .options(
+            selectinload(SMSConversation.contact),
+            selectinload(SMSConversation.assigned_agent),
+        )
         .where(SMSConversation.id == uuid.UUID(conversation_id))
     )
     conv = result.scalar_one_or_none()
@@ -327,6 +342,10 @@ async def get_conversation(
         last_message_at=conv.last_message_at.isoformat() if conv.last_message_at else None,
         last_message_direction=conv.last_message_direction,
         created_at=conv.created_at.isoformat(),
+        assigned_agent_id=str(conv.assigned_agent_id) if conv.assigned_agent_id else None,
+        assigned_agent_name=conv.assigned_agent.name if conv.assigned_agent else None,
+        ai_enabled=conv.ai_enabled,
+        ai_paused=conv.ai_paused,
     )
 
 
@@ -376,13 +395,235 @@ async def mark_conversation_read(
 ) -> dict[str, str]:
     """Mark all messages in a conversation as read."""
     workspace_uuid = uuid.UUID(workspace_id)
+    conv_uuid = uuid.UUID(conversation_id)
 
-    sms_service = await get_sms_service(current_user.id, db, workspace_uuid)
-    if not sms_service:
-        raise HTTPException(status_code=400, detail="SMS not configured")
+    # Verify conversation exists and belongs to workspace
+    result = await db.execute(
+        select(SMSConversation).where(
+            SMSConversation.id == conv_uuid,
+            SMSConversation.workspace_id == workspace_uuid,
+        )
+    )
+    conversation = result.scalar_one_or_none()
 
-    await sms_service.mark_conversation_read(db, uuid.UUID(conversation_id))
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    # Reset unread count
+    conversation.unread_count = 0
+
+    # Mark all inbound messages as read
+    messages_result = await db.execute(
+        select(SMSMessage).where(
+            SMSMessage.conversation_id == conv_uuid,
+            SMSMessage.direction == MessageDirection.INBOUND.value,
+            SMSMessage.is_read == False,  # noqa: E712
+        )
+    )
+    messages = messages_result.scalars().all()
+    for message in messages:
+        message.is_read = True
+
+    await db.commit()
     return {"status": "ok"}
+
+
+# =============================================================================
+# AI Text Agent Endpoints
+# =============================================================================
+
+
+class AssignAgentRequest(BaseModel):
+    """Request to assign a text agent to a conversation."""
+
+    agent_id: str | None = Field(None, description="Agent ID to assign (null to unassign)")
+
+
+class UpdateAISettingsRequest(BaseModel):
+    """Request to update AI settings for a conversation."""
+
+    ai_enabled: bool | None = Field(None, description="Enable/disable AI responses")
+    ai_paused: bool | None = Field(None, description="Pause/resume AI responses")
+    pause_duration_minutes: int | None = Field(
+        None, description="Pause duration in minutes (for temporary pause)"
+    )
+
+
+@router.post("/conversations/{conversation_id}/assign-agent")
+async def assign_agent_to_conversation(
+    conversation_id: str,
+    request: AssignAgentRequest,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> ConversationResponse:
+    """Assign or unassign a text agent to a conversation."""
+    from app.models.agent import Agent
+
+    result = await db.execute(
+        select(SMSConversation)
+        .options(
+            selectinload(SMSConversation.contact),
+            selectinload(SMSConversation.assigned_agent),
+        )
+        .where(SMSConversation.id == uuid.UUID(conversation_id))
+    )
+    conv = result.scalar_one_or_none()
+
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    if request.agent_id:
+        # Verify agent exists and supports text
+        agent_result = await db.execute(
+            select(Agent).where(Agent.id == uuid.UUID(request.agent_id))
+        )
+        agent = agent_result.scalar_one_or_none()
+
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+
+        if agent.channel_mode not in ("text", "both"):
+            raise HTTPException(
+                status_code=400,
+                detail="Agent does not support text channel. Update agent's channel mode first.",
+            )
+
+        conv.assigned_agent_id = uuid.UUID(request.agent_id)
+        conv.ai_enabled = True
+    else:
+        conv.assigned_agent_id = None
+
+    await db.commit()
+    await db.refresh(conv)
+
+    # Reload with relationships
+    result = await db.execute(
+        select(SMSConversation)
+        .options(
+            selectinload(SMSConversation.contact),
+            selectinload(SMSConversation.assigned_agent),
+        )
+        .where(SMSConversation.id == conv.id)
+    )
+    conv = result.scalar_one()
+
+    return ConversationResponse(
+        id=str(conv.id),
+        contact_id=conv.contact_id,
+        contact_name=(
+            f"{conv.contact.first_name} {conv.contact.last_name or ''}".strip()
+            if conv.contact
+            else None
+        ),
+        from_number=conv.from_number,
+        to_number=conv.to_number,
+        status=conv.status,
+        unread_count=conv.unread_count,
+        last_message_preview=conv.last_message_preview,
+        last_message_at=conv.last_message_at.isoformat() if conv.last_message_at else None,
+        last_message_direction=conv.last_message_direction,
+        created_at=conv.created_at.isoformat(),
+        assigned_agent_id=str(conv.assigned_agent_id) if conv.assigned_agent_id else None,
+        assigned_agent_name=conv.assigned_agent.name if conv.assigned_agent else None,
+        ai_enabled=conv.ai_enabled,
+        ai_paused=conv.ai_paused,
+    )
+
+
+@router.post("/conversations/{conversation_id}/ai-settings")
+async def update_conversation_ai_settings(
+    conversation_id: str,
+    request: UpdateAISettingsRequest,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> ConversationResponse:
+    """Update AI settings for a conversation (enable/disable/pause)."""
+    from datetime import timedelta
+
+    result = await db.execute(
+        select(SMSConversation)
+        .options(
+            selectinload(SMSConversation.contact),
+            selectinload(SMSConversation.assigned_agent),
+        )
+        .where(SMSConversation.id == uuid.UUID(conversation_id))
+    )
+    conv = result.scalar_one_or_none()
+
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    if request.ai_enabled is not None:
+        conv.ai_enabled = request.ai_enabled
+
+    if request.ai_paused is not None:
+        conv.ai_paused = request.ai_paused
+        if request.ai_paused and request.pause_duration_minutes:
+            conv.ai_paused_until = datetime.now(UTC) + timedelta(
+                minutes=request.pause_duration_minutes
+            )
+        elif not request.ai_paused:
+            conv.ai_paused_until = None
+
+    await db.commit()
+    await db.refresh(conv)
+
+    return ConversationResponse(
+        id=str(conv.id),
+        contact_id=conv.contact_id,
+        contact_name=(
+            f"{conv.contact.first_name} {conv.contact.last_name or ''}".strip()
+            if conv.contact
+            else None
+        ),
+        from_number=conv.from_number,
+        to_number=conv.to_number,
+        status=conv.status,
+        unread_count=conv.unread_count,
+        last_message_preview=conv.last_message_preview,
+        last_message_at=conv.last_message_at.isoformat() if conv.last_message_at else None,
+        last_message_direction=conv.last_message_direction,
+        created_at=conv.created_at.isoformat(),
+        assigned_agent_id=str(conv.assigned_agent_id) if conv.assigned_agent_id else None,
+        assigned_agent_name=conv.assigned_agent.name if conv.assigned_agent else None,
+        ai_enabled=conv.ai_enabled,
+        ai_paused=conv.ai_paused,
+    )
+
+
+@router.get("/text-agents", response_model=list[dict[str, str]])
+async def list_text_agents(
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+    workspace_id: str = Query(..., description="Workspace ID"),
+) -> list[dict[str, str]]:
+    """List agents that support text channel for assignment."""
+    from app.models.agent import Agent
+    from app.models.workspace import AgentWorkspace
+
+    workspace_uuid = uuid.UUID(workspace_id)
+
+    # Get agents that support text and are assigned to this workspace
+    result = await db.execute(
+        select(Agent)
+        .join(AgentWorkspace, Agent.id == AgentWorkspace.agent_id)
+        .where(
+            AgentWorkspace.workspace_id == workspace_uuid,
+            Agent.channel_mode.in_(["text", "both"]),
+            Agent.is_active == True,  # noqa: E712
+        )
+        .order_by(Agent.name)
+    )
+    agents = result.scalars().all()
+
+    return [
+        {
+            "id": str(agent.id),
+            "name": agent.name,
+            "channel_mode": agent.channel_mode,
+        }
+        for agent in agents
+    ]
 
 
 # =============================================================================
@@ -454,15 +695,36 @@ async def send_message(
             )
             contact = contact_result.scalar_one_or_none()
 
+            # Look up default text agent from the phone number configuration
+            from app.models.phone_number import PhoneNumber
+
+            phone_result = await db.execute(
+                select(PhoneNumber).where(
+                    PhoneNumber.workspace_id == workspace_uuid,
+                    PhoneNumber.phone_number == send_request.from_number,
+                )
+            )
+            phone_number = phone_result.scalar_one_or_none()
+            default_agent_id = phone_number.default_text_agent_id if phone_number else None
+
+            # Platform-initiated conversation - AI can auto-respond to replies
             conversation = SMSConversation(
                 user_id=user_uuid,
                 workspace_id=workspace_uuid,
                 contact_id=contact.id if contact else None,
                 from_number=send_request.from_number,
                 to_number=send_request.to_number,
+                initiated_by="platform",  # WE initiated this conversation
+                assigned_agent_id=default_agent_id,  # Auto-assign default text agent
+                ai_enabled=default_agent_id is not None,  # Enable AI if agent assigned
             )
             db.add(conversation)
             await db.flush()
+            logger.info(
+                "created_platform_conversation_slicktext",
+                conversation_id=str(conversation.id),
+                assigned_agent_id=str(default_agent_id) if default_agent_id else None,
+            )
 
         # message_id is from inbox API, campaign_id is from campaigns API
         provider_msg_id = result.get("message_id") or result.get("campaign_id")
@@ -839,7 +1101,9 @@ async def _handle_inbound_message(
     payload: dict,  # type: ignore[type-arg]
 ) -> str | None:
     """Handle inbound SMS message from Telnyx webhook."""
+    from app.models.agent import Agent
     from app.models.phone_number import PhoneNumber
+    from app.services.text_agent_service import schedule_ai_response
 
     from_number = payload.get("from", {}).get("phone_number", "")
     to_number = payload.get("to", [{}])[0].get("phone_number", "")
@@ -863,6 +1127,7 @@ async def _handle_inbound_message(
         )
     )
     conversation = conv_result.scalar_one_or_none()
+    is_new_conversation = conversation is None
 
     if not conversation:
         contact_result = await db.execute(
@@ -872,15 +1137,42 @@ async def _handle_inbound_message(
             )
         )
         contact = contact_result.scalar_one_or_none()
+
+        # NEW CONVERSATION from external party - do NOT enable AI auto-response
+        # AI should only auto-respond to conversations WE initiated (platform-initiated)
         conversation = SMSConversation(
             user_id=phone.user_id,
             workspace_id=phone.workspace_id,
             contact_id=contact.id if contact else None,
             from_number=to_number,
             to_number=from_number,
+            # Mark as externally initiated - AI will NOT auto-respond
+            initiated_by="external",
+            # Do NOT auto-assign agent for external conversations
+            assigned_agent_id=None,
+            ai_enabled=False,  # Disable AI for external conversations
         )
         db.add(conversation)
         await db.flush()
+        logger.info(
+            "created_external_conversation_telnyx",
+            conversation_id=str(conversation.id),
+            ai_enabled=False,
+        )
+    # EXISTING conversation - auto-assign default agent if it's platform-initiated
+    # but doesn't have an agent yet (for backward compatibility)
+    elif (
+        conversation.initiated_by == "platform"
+        and not conversation.assigned_agent_id
+        and phone.default_text_agent_id
+    ):
+        conversation.assigned_agent_id = phone.default_text_agent_id
+        conversation.ai_enabled = True
+        logger.info(
+            "auto_assigned_agent_to_existing_conversation",
+            conversation_id=str(conversation.id),
+            agent_id=str(phone.default_text_agent_id),
+        )
 
     # Create message
     message = SMSMessage(
@@ -905,6 +1197,35 @@ async def _handle_inbound_message(
     conversation.unread_count += 1
 
     await db.commit()
+
+    # Schedule AI response if agent is assigned and workspace exists
+    if (
+        conversation.assigned_agent_id
+        and conversation.ai_enabled
+        and not conversation.ai_paused
+        and phone.workspace_id  # Must have workspace for AI response
+    ):
+        # Get agent to determine delay
+        agent_result = await db.execute(
+            select(Agent).where(Agent.id == conversation.assigned_agent_id)
+        )
+        agent = agent_result.scalar_one_or_none()
+        delay_ms = agent.text_response_delay_ms if agent else 3000
+
+        # Schedule response with debounce
+        await schedule_ai_response(
+            conversation_id=conversation.id,
+            workspace_id=phone.workspace_id,
+            delay_ms=delay_ms,
+        )
+        logger.info(
+            "scheduled_ai_response",
+            conversation_id=str(conversation.id),
+            agent_id=str(conversation.assigned_agent_id),
+            delay_ms=delay_ms,
+            is_new=is_new_conversation,
+        )
+
     return str(conversation.id)
 
 
@@ -988,19 +1309,47 @@ async def telnyx_sms_webhook(
 # =============================================================================
 
 
-async def _handle_slicktext_inbound_message(
+async def _handle_slicktext_inbound_message(  # noqa: PLR0912, PLR0915
     db: AsyncSession,
     payload: dict,  # type: ignore[type-arg]
 ) -> str | None:
-    """Handle inbound SMS message from SlickText webhook."""
-    from app.models.phone_number import PhoneNumber
+    """Handle inbound SMS message from SlickText webhook.
 
-    # SlickText webhook payload structure for inbox.message.received
-    data = payload.get("data", {})
-    from_number = data.get("from", "")
-    to_number = data.get("to", "")
-    message_text = data.get("body", "") or data.get("text", "")
-    message_id = data.get("id", "") or payload.get("id", "")
+    SlickText Inbox Chat Message Received webhook payload structure:
+    {
+        "Event": "ChatMessageRecieved",  # Note: SlickText has typo in API
+        "Timestamp": "2018-05-31 12:57:40",
+        "attemptNumber": 1,
+        "ChatThread": {
+            "ChatThreadId": "string",
+            "WithNumber": "+15554449998",  # Our phone number (receiver)
+            "DateCreated": "string"
+        },
+        "ChatMessage": {
+            "ChatMessageId": "string",
+            "FromNumber": "+15554441234",  # Sender's phone number
+            "Body": "message text",
+            "MediaUrl": "string",
+            "MessageRead": false,
+            "Received": "string"
+        },
+        "Textwords": [...]
+    }
+    """
+    from app.models.agent import Agent
+    from app.models.phone_number import PhoneNumber
+    from app.models.user_settings import UserSettings
+    from app.services.text_agent_service import schedule_ai_response
+
+    # SlickText "Inbox Chat Message Received" webhook payload structure
+    chat_thread = payload.get("ChatThread", {})
+    chat_message = payload.get("ChatMessage", {})
+
+    # Extract fields from SlickText payload
+    from_number = chat_message.get("FromNumber", "")
+    to_number = chat_thread.get("WithNumber", "")
+    message_text = chat_message.get("Body", "")
+    message_id = chat_message.get("ChatMessageId", "")
 
     # Normalize phone numbers to E.164
     if from_number and not from_number.startswith("+"):
@@ -1008,42 +1357,118 @@ async def _handle_slicktext_inbound_message(
     if to_number and not to_number.startswith("+"):
         to_number = f"+{to_number}"
 
-    # Find the phone number in our system
+    log = logger.bind(
+        from_number=from_number,
+        to_number=to_number,
+        message_id=message_id,
+    )
+    log.info("processing_slicktext_inbound")
+
+    # First, try to find phone number in PhoneNumber table (for consistency with Telnyx)
     phone_result = await db.execute(
         select(PhoneNumber).where(PhoneNumber.phone_number == to_number)
     )
     phone = phone_result.scalar_one_or_none()
 
-    if not phone:
+    # If not found in PhoneNumber table, look up in UserSettings (SlickText-specific)
+    user_settings = None
+    workspace_id = None
+    user_id = None
+    if phone:
+        # Found in PhoneNumber table
+        workspace_id = phone.workspace_id
+        user_id = phone.user_id
+        log.info("found_phone_in_phone_number_table", workspace_id=str(workspace_id))
+    else:
+        # Look up SlickText phone number in UserSettings
+        settings_result = await db.execute(
+            select(UserSettings).where(UserSettings.slicktext_phone_number == to_number)
+        )
+        user_settings = settings_result.scalar_one_or_none()
+
+        if not user_settings:
+            # Try without + prefix
+            to_number_no_plus = to_number.lstrip("+")
+            settings_result = await db.execute(
+                select(UserSettings).where(
+                    UserSettings.slicktext_phone_number.in_(
+                        [to_number, to_number_no_plus, f"+{to_number_no_plus}"]
+                    )
+                )
+            )
+            user_settings = settings_result.scalar_one_or_none()
+
+        if user_settings:
+            workspace_id = user_settings.workspace_id
+            user_id = user_settings.user_id
+            log.info("found_phone_in_user_settings", workspace_id=str(workspace_id))
+        else:
+            log.warning("phone_number_not_found_anywhere", to_number=to_number)
+            return None
+
+    if not workspace_id or not user_id:
+        log.warning("missing_workspace_or_user")
         return None
 
     # Find or create conversation
     conv_result = await db.execute(
         select(SMSConversation).where(
-            SMSConversation.workspace_id == phone.workspace_id,
+            SMSConversation.workspace_id == workspace_id,
             SMSConversation.from_number == to_number,
             SMSConversation.to_number == from_number,
         )
     )
     conversation = conv_result.scalar_one_or_none()
+    is_new_conversation = conversation is None
 
     if not conversation:
         contact_result = await db.execute(
             select(Contact).where(
-                Contact.workspace_id == phone.workspace_id,
+                Contact.workspace_id == workspace_id,
                 Contact.phone_number == from_number,
             )
         )
         contact = contact_result.scalar_one_or_none()
+
+        # NEW CONVERSATION from external party - do NOT enable AI auto-response
+        # AI should only auto-respond to conversations WE initiated (platform-initiated)
         conversation = SMSConversation(
-            user_id=phone.user_id,
-            workspace_id=phone.workspace_id,
+            user_id=user_id,
+            workspace_id=workspace_id,
             contact_id=contact.id if contact else None,
             from_number=to_number,
             to_number=from_number,
+            # Mark as externally initiated - AI will NOT auto-respond
+            initiated_by="external",
+            # Do NOT auto-assign agent for external conversations
+            assigned_agent_id=None,
+            ai_enabled=False,  # Disable AI for external conversations
         )
         db.add(conversation)
         await db.flush()
+        log.info(
+            "created_external_conversation",
+            conversation_id=str(conversation.id),
+            ai_enabled=False,
+        )
+    # EXISTING conversation - auto-assign default agent if it's platform-initiated
+    # but doesn't have an agent yet (for backward compatibility)
+    elif conversation.initiated_by == "platform" and not conversation.assigned_agent_id:
+        # Get default agent from phone number or user settings
+        default_agent_id = None
+        if phone and phone.default_text_agent_id:
+            default_agent_id = phone.default_text_agent_id
+        elif user_settings and user_settings.slicktext_default_text_agent_id:
+            default_agent_id = user_settings.slicktext_default_text_agent_id
+
+        if default_agent_id:
+            conversation.assigned_agent_id = default_agent_id
+            conversation.ai_enabled = True
+            log.info(
+                "auto_assigned_agent_to_existing_conversation",
+                conversation_id=str(conversation.id),
+                agent_id=str(default_agent_id),
+            )
 
     # Create message record
     message = SMSMessage(
@@ -1068,6 +1493,35 @@ async def _handle_slicktext_inbound_message(
     conversation.unread_count += 1
 
     await db.commit()
+
+    # Schedule AI response if agent is assigned and workspace exists
+    if (
+        conversation.assigned_agent_id
+        and conversation.ai_enabled
+        and not conversation.ai_paused
+        and workspace_id  # Must have workspace for AI response
+    ):
+        # Get agent to determine delay
+        agent_result = await db.execute(
+            select(Agent).where(Agent.id == conversation.assigned_agent_id)
+        )
+        agent = agent_result.scalar_one_or_none()
+        delay_ms = agent.text_response_delay_ms if agent else 3000
+
+        # Schedule response with debounce
+        await schedule_ai_response(
+            conversation_id=conversation.id,
+            workspace_id=workspace_id,
+            delay_ms=delay_ms,
+            provider="slicktext",  # Pass provider for response routing
+        )
+        log.info(
+            "scheduled_ai_response_slicktext",
+            agent_id=str(conversation.assigned_agent_id),
+            delay_ms=delay_ms,
+            is_new=is_new_conversation,
+        )
+
     return str(conversation.id)
 
 
@@ -1084,9 +1538,12 @@ async def slicktext_sms_webhook(
     """Handle SlickText SMS webhooks (inbound messages).
 
     SlickText sends webhooks for:
-    - inbox.message.received: Inbound SMS received
+    - ChatMessageRecieved: Inbound SMS received (note: SlickText has typo in API)
+    - MessageSent: Outbound message sent
     - campaign.sent: Campaign message sent
     - campaign.failed: Campaign message failed
+
+    SlickText webhook payload uses "Event" field (not "name").
     """
     # Note: In production, you'd want to look up the webhook secret
     # from user settings based on the phone number or other identifier
@@ -1094,13 +1551,15 @@ async def slicktext_sms_webhook(
     await verify_slicktext_webhook(request, webhook_secret=None)
 
     body = await request.json()
-    event_name = body.get("name", "")
+    # SlickText uses "Event" field, not "name"
+    event_name = body.get("Event", "") or body.get("name", "")
     payload = body
 
     log = logger.bind(webhook="slicktext_sms", event_name=event_name)
-    log.info("slicktext_sms_webhook_received")
+    log.info("slicktext_sms_webhook_received", payload_keys=list(body.keys()))
 
-    if event_name == "inbox.message.received":
+    # Handle inbound messages - SlickText uses "ChatMessageRecieved" (their typo)
+    if event_name in ("ChatMessageRecieved", "ChatMessageReceived", "inbox.message.received"):
         conv_id = await _handle_slicktext_inbound_message(db, payload)
         if conv_id:
             log.info("inbound_message_saved", conversation_id=conv_id)

@@ -67,6 +67,8 @@ class PhoneNumberResponse(BaseModel):
     workspace_name: str | None = None
     assigned_agent_id: str | None
     assigned_agent_name: str | None = None
+    default_text_agent_id: str | None = None
+    default_text_agent_name: str | None = None
     can_receive_calls: bool
     can_make_calls: bool
     can_receive_sms: bool
@@ -110,6 +112,7 @@ class UpdatePhoneNumberRequest(BaseModel):
     friendly_name: str | None = None
     workspace_id: str | None = None
     assigned_agent_id: str | None = None
+    default_text_agent_id: str | None = None
     status: str | None = None
     notes: str | None = None
 
@@ -180,6 +183,7 @@ async def list_phone_numbers(
         workspace_name = None
         agent_name = None
         assigned_agent_id = None
+        default_text_agent_name = None
 
         if record.workspace:
             workspace_name = record.workspace.name
@@ -193,6 +197,15 @@ async def list_phone_numbers(
             assigned_agent_id = str(agent.id)
             agent_name = agent.name
 
+        # Look up default text agent name
+        if record.default_text_agent_id:
+            text_agent_result = await db.execute(
+                select(Agent).where(Agent.id == record.default_text_agent_id)
+            )
+            text_agent = text_agent_result.scalar_one_or_none()
+            if text_agent:
+                default_text_agent_name = text_agent.name
+
         phone_numbers.append(
             PhoneNumberResponse(
                 id=str(record.id),
@@ -204,6 +217,10 @@ async def list_phone_numbers(
                 workspace_name=workspace_name,
                 assigned_agent_id=assigned_agent_id,
                 assigned_agent_name=agent_name,
+                default_text_agent_id=(
+                    str(record.default_text_agent_id) if record.default_text_agent_id else None
+                ),
+                default_text_agent_name=default_text_agent_name,
                 can_receive_calls=record.can_receive_calls,
                 can_make_calls=record.can_make_calls,
                 can_receive_sms=record.can_receive_sms,
@@ -262,6 +279,7 @@ async def get_phone_number(
     workspace_name = None
     agent_name = None
     assigned_agent_id = None
+    default_text_agent_name = None
 
     if record.workspace:
         workspace_name = record.workspace.name
@@ -273,6 +291,15 @@ async def get_phone_number(
         assigned_agent_id = str(agent.id)
         agent_name = agent.name
 
+    # Look up default text agent name
+    if record.default_text_agent_id:
+        text_agent_result = await db.execute(
+            select(Agent).where(Agent.id == record.default_text_agent_id)
+        )
+        text_agent = text_agent_result.scalar_one_or_none()
+        if text_agent:
+            default_text_agent_name = text_agent.name
+
     return PhoneNumberResponse(
         id=str(record.id),
         phone_number=record.phone_number,
@@ -283,6 +310,10 @@ async def get_phone_number(
         workspace_name=workspace_name,
         assigned_agent_id=assigned_agent_id,
         assigned_agent_name=agent_name,
+        default_text_agent_id=(
+            str(record.default_text_agent_id) if record.default_text_agent_id else None
+        ),
+        default_text_agent_name=default_text_agent_name,
         can_receive_calls=record.can_receive_calls,
         can_make_calls=record.can_make_calls,
         can_receive_sms=record.can_receive_sms,
@@ -353,6 +384,8 @@ async def create_phone_number(
         workspace_name=None,
         assigned_agent_id=None,
         assigned_agent_name=None,
+        default_text_agent_id=None,
+        default_text_agent_name=None,
         can_receive_calls=phone_number.can_receive_calls,
         can_make_calls=phone_number.can_make_calls,
         can_receive_sms=phone_number.can_receive_sms,
@@ -366,7 +399,7 @@ async def create_phone_number(
 
 @router.put("/{phone_number_id}", response_model=PhoneNumberResponse)
 @limiter.limit("30/minute")  # Rate limit phone number updates
-async def update_phone_number(
+async def update_phone_number(  # noqa: PLR0912
     phone_number_id: str,
     update_request: UpdatePhoneNumberRequest,
     request: Request,
@@ -418,6 +451,12 @@ async def update_phone_number(
             if update_request.assigned_agent_id
             else None
         )
+    if update_request.default_text_agent_id is not None:
+        phone_number.default_text_agent_id = (
+            uuid.UUID(update_request.default_text_agent_id)
+            if update_request.default_text_agent_id
+            else None
+        )
     if update_request.status is not None:
         phone_number.status = update_request.status
     if update_request.notes is not None:
@@ -429,6 +468,7 @@ async def update_phone_number(
     workspace_name = None
     agent_name = None
     assigned_agent_id = None
+    default_text_agent_name = None
 
     if phone_number.workspace:
         workspace_name = phone_number.workspace.name
@@ -444,6 +484,15 @@ async def update_phone_number(
         assigned_agent_id = str(agent.id)
         agent_name = agent.name
 
+    # Look up default text agent name
+    if phone_number.default_text_agent_id:
+        text_agent_result = await db.execute(
+            select(Agent).where(Agent.id == phone_number.default_text_agent_id)
+        )
+        text_agent = text_agent_result.scalar_one_or_none()
+        if text_agent:
+            default_text_agent_name = text_agent.name
+
     return PhoneNumberResponse(
         id=str(phone_number.id),
         phone_number=phone_number.phone_number,
@@ -454,6 +503,10 @@ async def update_phone_number(
         workspace_name=workspace_name,
         assigned_agent_id=assigned_agent_id,
         assigned_agent_name=agent_name,
+        default_text_agent_id=(
+            str(phone_number.default_text_agent_id) if phone_number.default_text_agent_id else None
+        ),
+        default_text_agent_name=default_text_agent_name,
         can_receive_calls=phone_number.can_receive_calls,
         can_make_calls=phone_number.can_make_calls,
         can_receive_sms=phone_number.can_receive_sms,

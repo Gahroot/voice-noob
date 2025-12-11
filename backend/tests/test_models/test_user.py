@@ -74,18 +74,40 @@ class TestUserModel:
             await test_session.commit()
 
     @pytest.mark.asyncio
-    @pytest.mark.usefixtures("test_session")
-    async def test_user_email_required(self) -> None:
-        """Test that email is required."""
-        with pytest.raises(TypeError):
-            User(hashed_password="password")  # type: ignore[call-arg]  # noqa: S106
+    async def test_user_email_required(
+        self,
+        test_session: AsyncSession,
+    ) -> None:
+        """Test that email is required at database level."""
+        from sqlalchemy.exc import IntegrityError
+
+        # SQLAlchemy 2.0 with mapped_column allows None values at creation time,
+        # but the database constraint will reject it
+        user = User(
+            email=None,  # type: ignore[arg-type]
+            hashed_password="password",  # noqa: S106
+        )
+        test_session.add(user)
+        with pytest.raises(IntegrityError):
+            await test_session.commit()
 
     @pytest.mark.asyncio
-    @pytest.mark.usefixtures("test_session")
-    async def test_user_password_required(self) -> None:
-        """Test that hashed_password is required."""
-        with pytest.raises(TypeError):
-            User(email="test@example.com")  # type: ignore[call-arg]
+    async def test_user_password_required(
+        self,
+        test_session: AsyncSession,
+    ) -> None:
+        """Test that hashed_password is required at database level."""
+        from sqlalchemy.exc import IntegrityError
+
+        # SQLAlchemy 2.0 with mapped_column allows None values at creation time,
+        # but the database constraint will reject it
+        user = User(
+            email="test@example.com",
+            hashed_password=None,  # type: ignore[arg-type]
+        )
+        test_session.add(user)
+        with pytest.raises(IntegrityError):
+            await test_session.commit()
 
     @pytest.mark.asyncio
     async def test_user_defaults(
@@ -129,7 +151,7 @@ class TestUserModel:
         test_session: AsyncSession,
     ) -> None:
         """Test that timestamps are set automatically."""
-        from datetime import UTC, datetime
+        from datetime import UTC, datetime, timedelta
 
         before_creation = datetime.now(UTC)
 
@@ -145,8 +167,20 @@ class TestUserModel:
 
         assert user.created_at is not None
         assert user.updated_at is not None
-        assert before_creation <= user.created_at <= after_creation
-        assert before_creation <= user.updated_at <= after_creation
+
+        # SQLite doesn't preserve timezone info, so compare without timezone
+        # Also, SQLite func.now() only has second precision, so add 1 second tolerance
+        before_naive = before_creation.replace(tzinfo=None, microsecond=0) - timedelta(seconds=1)
+        after_naive = after_creation.replace(tzinfo=None, microsecond=0) + timedelta(seconds=1)
+        created_naive = user.created_at
+        updated_naive = user.updated_at
+        if created_naive.tzinfo is not None:
+            created_naive = created_naive.replace(tzinfo=None)
+        if updated_naive.tzinfo is not None:
+            updated_naive = updated_naive.replace(tzinfo=None)
+
+        assert before_naive <= created_naive <= after_naive
+        assert before_naive <= updated_naive <= after_naive
 
     @pytest.mark.asyncio
     async def test_user_update_timestamp(

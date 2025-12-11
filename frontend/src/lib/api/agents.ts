@@ -73,6 +73,10 @@ export interface Agent {
   created_at: string;
   updated_at: string;
   last_call_at: string | null;
+  // Text agent settings
+  channel_mode: "voice" | "text" | "both";
+  text_response_delay_ms: number;
+  text_max_context_messages: number;
 }
 
 export interface CreateAgentRequest {
@@ -91,6 +95,12 @@ export interface CreateAgentRequest {
   initial_greeting?: string;
   temperature?: number;
   max_tokens?: number;
+  // Text agent settings
+  channel_mode?: "voice" | "text" | "both";
+  text_response_delay_ms?: number;
+  text_max_context_messages?: number;
+  // Workspace assignments
+  workspace_ids?: string[];
 }
 
 /**
@@ -157,6 +167,10 @@ export interface UpdateAgentRequest {
   temperature?: number;
   max_tokens?: number;
   initial_greeting?: string | null;
+  // Text agent settings
+  channel_mode?: "voice" | "text" | "both";
+  text_response_delay_ms?: number;
+  text_max_context_messages?: number;
 }
 
 /**

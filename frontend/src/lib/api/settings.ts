@@ -58,6 +58,7 @@ export interface SettingsResponse {
   slicktext_private_key_set: boolean;
   slicktext_textword_id: string | null;
   slicktext_phone_number: string | null;
+  slicktext_default_text_agent_id: string | null;
   workspace_id: string | null;
 }
 
@@ -77,6 +78,7 @@ export interface UpdateSettingsRequest {
   slicktext_textword_id?: string;
   slicktext_webhook_secret?: string;
   slicktext_phone_number?: string;
+  slicktext_default_text_agent_id?: string;
 }
 
 export async function fetchSettings(workspaceId?: string): Promise<SettingsResponse> {

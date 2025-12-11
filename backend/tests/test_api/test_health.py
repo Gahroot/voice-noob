@@ -73,7 +73,11 @@ class TestRedisHealthCheck:
 
     @pytest.mark.asyncio
     async def test_redis_health_check_success(self, test_client: AsyncClient) -> None:
-        """Test Redis health check returns healthy status."""
+        """Test Redis health check returns healthy status.
+
+        Note: This test uses the test_client fixture which already overrides
+        get_redis to return a fake Redis instance that should work correctly.
+        """
         response = await test_client.get("/health/redis")
 
         assert response.status_code == 200
@@ -84,27 +88,29 @@ class TestRedisHealthCheck:
     @pytest.mark.asyncio
     async def test_redis_health_check_failure(self, test_client: AsyncClient) -> None:
         """Test Redis health check handles connection failures."""
-        # Mock Redis error
-        with patch("app.db.redis.get_redis") as mock_get_redis:
+        from app.db.redis import get_redis
+        from app.main import app
+
+        # Create a mock that raises an exception on ping
+        async def override_get_redis_error() -> Any:
             mock_redis = AsyncMock()
             mock_redis.ping = AsyncMock(side_effect=Exception("Redis connection failed"))
-            mock_get_redis.return_value = mock_redis
+            return mock_redis
 
-            from app.db.redis import get_redis
-            from app.main import app
+        # Apply the override
+        app.dependency_overrides[get_redis] = override_get_redis_error
 
-            app.dependency_overrides[get_redis] = mock_get_redis
+        response = await test_client.get("/health/redis")
 
-            response = await test_client.get("/health/redis")
+        # Clean up override - restore the test fixture's override
+        # Note: test_client fixture will restore its own overrides
+        app.dependency_overrides.pop(get_redis, None)
 
-            # Clean up override
-            app.dependency_overrides.clear()
-
-            # Service returns 503 when Redis is unhealthy
-            assert response.status_code == 503
-            data = response.json()
-            assert data["status"] == "unhealthy"
-            assert "redis" in data
+        # Service returns 503 when Redis is unhealthy
+        assert response.status_code == 503
+        data = response.json()
+        assert data["status"] == "unhealthy"
+        assert "redis" in data
 
 
 class TestHealthCheckIntegration:

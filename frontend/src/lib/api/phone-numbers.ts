@@ -20,6 +20,8 @@ export interface PhoneNumber {
   workspace_name: string | null;
   assigned_agent_id: string | null;
   assigned_agent_name: string | null;
+  default_text_agent_id: string | null;
+  default_text_agent_name: string | null;
   can_receive_calls: boolean;
   can_make_calls: boolean;
   can_receive_sms: boolean;
@@ -62,6 +64,7 @@ export interface UpdatePhoneNumberRequest {
   friendly_name?: string;
   workspace_id?: string | null;
   assigned_agent_id?: string | null;
+  default_text_agent_id?: string | null;
   status?: string;
   notes?: string;
 }

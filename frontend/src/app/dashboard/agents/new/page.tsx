@@ -4,7 +4,7 @@ import { useMemo, useEffect } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm, useWatch } from "react-hook-form";
 import { useRouter } from "next/navigation";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import * as z from "zod";
 import Link from "next/link";
@@ -37,12 +37,32 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { ChevronDown, AlertTriangle, Shield, ShieldAlert } from "lucide-react";
+import {
+  ChevronDown,
+  AlertTriangle,
+  Shield,
+  ShieldAlert,
+  Phone,
+  MessageSquare,
+  MessagesSquare,
+  FolderOpen,
+} from "lucide-react";
+import { api } from "@/lib/api";
+
+interface Workspace {
+  id: string;
+  name: string;
+  description: string | null;
+  is_default: boolean;
+}
 
 const agentFormSchema = z.object({
   name: z.string().min(2, "Name must be at least 2 characters"),
   description: z.string().optional(),
   language: z.string().min(1, "Please select a language"),
+
+  // Channel Mode
+  channelMode: z.enum(["voice", "text", "both"]).default("voice"),
 
   // Voice Settings
   ttsProvider: z.enum(["elevenlabs", "openai", "google"]),
@@ -74,6 +94,9 @@ const agentFormSchema = z.object({
   // Tools & Integrations
   enabledTools: z.array(z.string()).default([]),
   enabledToolIds: z.record(z.string(), z.array(z.string())).default({}),
+
+  // Workspaces
+  selectedWorkspaces: z.array(z.string()).default([]),
 });
 
 type AgentFormValues = z.infer<typeof agentFormSchema>;
@@ -107,6 +130,7 @@ function getRiskLevelBadge(level: "safe" | "moderate" | "high") {
 
 const defaultValues: Partial<AgentFormValues> = {
   language: "en-US",
+  channelMode: "voice",
   ttsProvider: "elevenlabs",
   elevenLabsModel: "turbo-v2.5",
   ttsSpeed: 1,
@@ -122,16 +146,36 @@ const defaultValues: Partial<AgentFormValues> = {
   turnDetectionMode: "server-vad",
   enabledTools: [],
   enabledToolIds: {},
+  selectedWorkspaces: [],
 };
 
 export default function NewAgentPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
 
+  // Fetch all workspaces
+  const { data: workspaces = [] } = useQuery({
+    queryKey: ["workspaces"],
+    queryFn: async () => {
+      const response = await api.get<Workspace[]>("/api/v1/workspaces");
+      return response.data;
+    },
+  });
+
   const form = useForm<AgentFormValues>({
     resolver: zodResolver(agentFormSchema),
     defaultValues,
   });
+
+  // Auto-select default workspace when workspaces load
+  useEffect(() => {
+    if (workspaces.length > 0 && form.getValues("selectedWorkspaces").length === 0) {
+      const defaultWorkspace = workspaces.find((w) => w.is_default);
+      if (defaultWorkspace) {
+        form.setValue("selectedWorkspaces", [defaultWorkspace.id]);
+      }
+    }
+  }, [workspaces, form]);
 
   // Watch llmProvider and llmModel to derive pricing tier for language filtering
   const llmProvider = useWatch({ control: form.control, name: "llmProvider" });
@@ -190,12 +234,14 @@ export default function NewAgentPage() {
       pricing_tier: pricingTier,
       system_prompt: data.systemPrompt,
       language: data.language,
+      channel_mode: data.channelMode,
       enabled_tools: enabledIntegrations,
       enabled_tool_ids: data.enabledToolIds,
       phone_number_id: data.phoneNumberId,
       enable_recording: data.enableRecording,
       enable_transcript: data.enableTranscript,
       initial_greeting: data.initialGreeting?.trim() ? data.initialGreeting.trim() : undefined,
+      workspace_ids: data.selectedWorkspaces,
     };
 
     createAgentMutation.mutate(request);
@@ -285,6 +331,140 @@ export default function NewAgentPage() {
                             ))}
                           </SelectContent>
                         </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="channelMode"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Channel Mode</FormLabel>
+                        <FormDescription>
+                          Select which communication channels this agent supports
+                        </FormDescription>
+                        <div className="grid grid-cols-3 gap-3 pt-2">
+                          {[
+                            {
+                              value: "voice",
+                              label: "Voice Only",
+                              description: "Phone calls only",
+                              icon: Phone,
+                            },
+                            {
+                              value: "text",
+                              label: "Text Only",
+                              description: "SMS/text messages only",
+                              icon: MessageSquare,
+                            },
+                            {
+                              value: "both",
+                              label: "Voice & Text",
+                              description: "Both channels",
+                              icon: MessagesSquare,
+                            },
+                          ].map((option) => {
+                            const Icon = option.icon;
+                            const isSelected = field.value === option.value;
+                            return (
+                              <button
+                                key={option.value}
+                                type="button"
+                                onClick={() => field.onChange(option.value)}
+                                className={`flex flex-col items-center gap-2 rounded-lg border-2 p-4 text-center transition-colors ${
+                                  isSelected
+                                    ? "border-primary bg-primary/5"
+                                    : "border-border hover:border-primary/50"
+                                }`}
+                              >
+                                <Icon
+                                  className={`h-6 w-6 ${isSelected ? "text-primary" : "text-muted-foreground"}`}
+                                />
+                                <div>
+                                  <p
+                                    className={`text-sm font-medium ${isSelected ? "text-primary" : ""}`}
+                                  >
+                                    {option.label}
+                                  </p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {option.description}
+                                  </p>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="selectedWorkspaces"
+                    render={() => (
+                      <FormItem>
+                        <div className="mb-4">
+                          <FormLabel className="flex items-center gap-2 text-base">
+                            <FolderOpen className="h-4 w-4" />
+                            Workspaces
+                          </FormLabel>
+                          <FormDescription>
+                            Assign this agent to workspaces. This is required for the agent to
+                            appear in SMS conversations.
+                          </FormDescription>
+                        </div>
+                        {workspaces.length === 0 ? (
+                          <div className="rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">
+                            No workspaces created yet.{" "}
+                            <Link href="/dashboard/workspaces" className="text-primary underline">
+                              Create a workspace
+                            </Link>{" "}
+                            to organize your contacts and appointments.
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            {workspaces.map((workspace) => (
+                              <FormField
+                                key={workspace.id}
+                                control={form.control}
+                                name="selectedWorkspaces"
+                                render={({ field }) => (
+                                  <FormItem className="flex flex-row items-start space-x-3 space-y-0 rounded-md border p-3">
+                                    <FormControl>
+                                      <Checkbox
+                                        checked={field.value?.includes(workspace.id)}
+                                        onCheckedChange={(checked: boolean) => {
+                                          const current = field.value ?? [];
+                                          field.onChange(
+                                            checked
+                                              ? [...current, workspace.id]
+                                              : current.filter((v) => v !== workspace.id)
+                                          );
+                                        }}
+                                      />
+                                    </FormControl>
+                                    <div className="space-y-1 leading-none">
+                                      <FormLabel className="cursor-pointer font-medium">
+                                        {workspace.name}
+                                        {workspace.is_default && (
+                                          <Badge variant="secondary" className="ml-2">
+                                            Default
+                                          </Badge>
+                                        )}
+                                      </FormLabel>
+                                      {workspace.description && (
+                                        <FormDescription>{workspace.description}</FormDescription>
+                                      )}
+                                    </div>
+                                  </FormItem>
+                                )}
+                              />
+                            ))}
+                          </div>
+                        )}
                         <FormMessage />
                       </FormItem>
                     )}

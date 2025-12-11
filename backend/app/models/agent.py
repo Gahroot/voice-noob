@@ -153,6 +153,26 @@ class Agent(Base):
         Boolean, nullable=False, default=False, comment="Whether agent is published/deployed"
     )
 
+    # Text agent settings (for SMS/text channel)
+    channel_mode: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="voice",
+        comment="Channel mode: voice, text, or both",
+    )
+    text_response_delay_ms: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=3000,
+        comment="Delay in ms before responding to text (for message batching)",
+    )
+    text_max_context_messages: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=20,
+        comment="Maximum number of messages to include in context for text responses",
+    )
+
     # Statistics
     total_calls: Mapped[int] = mapped_column(
         default=0, nullable=False, comment="Total number of calls handled"

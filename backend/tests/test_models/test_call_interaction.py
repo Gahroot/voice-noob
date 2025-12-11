@@ -23,18 +23,41 @@ class TestCallInteractionModel:
         sample_call_interaction_data: dict[str, Any],
     ) -> None:
         """Test creating a call interaction with all fields."""
+        from sqlalchemy.orm import undefer
+
         user = await create_test_user()
         contact = await create_test_contact(user_id=user.id)
 
         call = CallInteraction(contact_id=contact.id, **sample_call_interaction_data)
         test_session.add(call)
         await test_session.commit()
-        await test_session.refresh(call)
+
+        # Re-query with undeferred columns (transcript, ai_summary, action_items, notes are deferred)
+        result = await test_session.execute(
+            select(CallInteraction)
+            .where(CallInteraction.id == call.id)
+            .options(
+                undefer(CallInteraction.transcript),
+                undefer(CallInteraction.ai_summary),
+                undefer(CallInteraction.action_items),
+                undefer(CallInteraction.notes),
+            )
+        )
+        call = result.scalar_one()
 
         assert call.id is not None
         assert call.contact_id == contact.id
-        assert call.call_started_at == sample_call_interaction_data["call_started_at"]
-        assert call.call_ended_at == sample_call_interaction_data["call_ended_at"]
+        # SQLite doesn't preserve timezone info, so compare without timezone
+        expected_started = sample_call_interaction_data["call_started_at"].replace(tzinfo=None)
+        actual_started = call.call_started_at
+        if actual_started.tzinfo is not None:
+            actual_started = actual_started.replace(tzinfo=None)
+        assert actual_started == expected_started
+        expected_ended = sample_call_interaction_data["call_ended_at"].replace(tzinfo=None)
+        actual_ended = call.call_ended_at
+        if actual_ended is not None and actual_ended.tzinfo is not None:
+            actual_ended = actual_ended.replace(tzinfo=None)
+        assert actual_ended == expected_ended
         assert call.duration_seconds == sample_call_interaction_data["duration_seconds"]
         assert call.agent_name == sample_call_interaction_data["agent_name"]
         assert call.agent_id == sample_call_interaction_data["agent_id"]
@@ -55,6 +78,8 @@ class TestCallInteractionModel:
         create_test_contact: Any,
     ) -> None:
         """Test creating a call interaction with minimal required fields."""
+        from sqlalchemy.orm import undefer
+
         user = await create_test_user()
         contact = await create_test_contact(user_id=user.id)
 
@@ -66,11 +91,28 @@ class TestCallInteractionModel:
         )
         test_session.add(call)
         await test_session.commit()
-        await test_session.refresh(call)
+
+        # Re-query with undeferred columns (transcript, ai_summary, action_items, notes are deferred)
+        result = await test_session.execute(
+            select(CallInteraction)
+            .where(CallInteraction.id == call.id)
+            .options(
+                undefer(CallInteraction.transcript),
+                undefer(CallInteraction.ai_summary),
+                undefer(CallInteraction.action_items),
+                undefer(CallInteraction.notes),
+            )
+        )
+        call = result.scalar_one()
 
         assert call.id is not None
         assert call.contact_id == contact.id
-        assert call.call_started_at == call_time
+        # SQLite doesn't preserve timezone info, so compare without timezone
+        expected_time = call_time.replace(tzinfo=None)
+        actual_time = call.call_started_at
+        if actual_time.tzinfo is not None:
+            actual_time = actual_time.replace(tzinfo=None)
+        assert actual_time == expected_time
         assert call.call_ended_at is None
         assert call.duration_seconds is None
         assert call.agent_name is None
@@ -161,6 +203,8 @@ class TestCallInteractionModel:
         create_test_contact: Any,
     ) -> None:
         """Test call interaction with long transcript."""
+        from sqlalchemy.orm import undefer
+
         user = await create_test_user()
         contact = await create_test_contact(user_id=user.id)
 
@@ -173,7 +217,14 @@ class TestCallInteractionModel:
         )
         test_session.add(call)
         await test_session.commit()
-        await test_session.refresh(call)
+
+        # Re-query with undeferred transcript column (it's deferred by default)
+        result = await test_session.execute(
+            select(CallInteraction)
+            .where(CallInteraction.id == call.id)
+            .options(undefer(CallInteraction.transcript))
+        )
+        call = result.scalar_one()
 
         assert call.transcript == long_transcript
 

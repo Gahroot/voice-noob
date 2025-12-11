@@ -16,6 +16,8 @@ import {
   updateEmbedSettings,
   type UpdateAgentRequest,
 } from "@/lib/api/agents";
+import { updatePhoneNumber } from "@/lib/api/phone-numbers";
+import { fetchSettings, updateSettings } from "@/lib/api/settings";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -52,6 +54,9 @@ import {
   AlertTriangle,
   ShieldAlert,
   Wand2,
+  Phone,
+  MessageSquare,
+  MessagesSquare,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { getLanguagesForTier } from "@/lib/languages";
@@ -326,6 +331,9 @@ const agentFormSchema = z.object({
   description: z.string().optional(),
   language: z.string().min(1, "Please select a language"),
 
+  // Channel Mode
+  channelMode: z.enum(["voice", "text", "both"]).default("voice"),
+
   // Voice Settings
   ttsProvider: z.enum(["elevenlabs", "openai", "google"]),
   elevenLabsModel: z.string().default("turbo-v2.5"),
@@ -368,6 +376,9 @@ const agentFormSchema = z.object({
     .string()
     .max(20, "Button text must be 20 characters or less")
     .default("Talk to us"),
+
+  // Default Text Agent Phone Number
+  defaultTextAgentPhoneNumberId: z.string().optional(),
 });
 
 type AgentFormValues = z.infer<typeof agentFormSchema>;
@@ -388,6 +399,7 @@ const TAB_FIELDS: Record<string, (keyof AgentFormValues)[]> = {
   advanced: [
     "telephonyProvider",
     "phoneNumberId",
+    "defaultTextAgentPhoneNumberId",
     "enableRecording",
     "enableTranscript",
     "turnDetectionMode",
@@ -493,6 +505,7 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
       name: "",
       description: "",
       language: "en-US",
+      channelMode: "voice",
       ttsProvider: "elevenlabs",
       elevenLabsModel: "turbo-v2.5",
       elevenLabsVoiceId: undefined,
@@ -516,6 +529,7 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
       integrationSettings: {},
       selectedWorkspaces: [],
       widgetButtonText: "Talk to us",
+      defaultTextAgentPhoneNumberId: undefined,
     },
   });
 
@@ -531,6 +545,7 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
         name: agent.name,
         description: agent.description ?? "",
         language: agent.language,
+        channelMode: agent.channel_mode ?? "voice",
         ttsProvider: "elevenlabs",
         elevenLabsModel: "turbo-v2.5",
         elevenLabsVoiceId: undefined,
@@ -578,6 +593,9 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [embedSettings]);
 
+  // Track the original phone number that had this agent as default text agent
+  const originalTextAgentPhoneNumberId = useRef<string | null>(null);
+
   // Get selected workspaces for phone number fetching
   const selectedWorkspaces = form.watch("selectedWorkspaces");
   const telephonyProvider = form.watch("telephonyProvider");
@@ -602,6 +620,71 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
     },
     enabled: !!selectedWorkspaces[0] && !!agent && !isDeleting,
   });
+
+  // Fetch SMS-capable phone numbers for default text agent selection (includes SlickText from settings)
+  const { data: smsPhoneNumbers = [], isLoading: isLoadingSmsPhoneNumbers } = useQuery({
+    queryKey: ["sms-phone-numbers", selectedWorkspaces[0]],
+    queryFn: async () => {
+      if (!selectedWorkspaces[0]) return [];
+
+      // Fetch phone numbers from database
+      const response = await api.get<{
+        phone_numbers: Array<{
+          id: string;
+          phone_number: string;
+          friendly_name: string | null;
+          default_text_agent_id: string | null;
+          default_text_agent_name: string | null;
+          can_receive_sms: boolean;
+          provider: string;
+        }>;
+      }>(`/api/v1/phone-numbers?workspace_id=${selectedWorkspaces[0]}`);
+
+      // Filter to only SMS-capable numbers
+      const dbNumbers = response.data.phone_numbers
+        .filter((pn) => pn.can_receive_sms)
+        .map((pn) => ({
+          ...pn,
+          provider: pn.provider ?? "telnyx",
+        }));
+
+      // Also fetch SlickText phone number from workspace settings
+      const settings = await fetchSettings(selectedWorkspaces[0]);
+      const allNumbers = [...dbNumbers];
+
+      if (settings.slicktext_phone_number) {
+        allNumbers.push({
+          id: "slicktext-" + settings.slicktext_phone_number,
+          phone_number: settings.slicktext_phone_number,
+          friendly_name: "SlickText",
+          default_text_agent_id: settings.slicktext_default_text_agent_id,
+          default_text_agent_name: null, // Name is not available from settings
+          can_receive_sms: true,
+          provider: "slicktext",
+        });
+      }
+
+      return allNumbers;
+    },
+    enabled: !!selectedWorkspaces[0] && !!agent && !isDeleting,
+  });
+
+  // Watch channel mode to conditionally show text agent settings
+  const channelMode = form.watch("channelMode");
+  const supportsText = channelMode === "text" || channelMode === "both";
+
+  // Initialize default text agent phone number when SMS numbers load
+  useEffect(() => {
+    if (formInitialized.current && smsPhoneNumbers.length > 0 && agentId) {
+      // Find if any phone number has this agent as default text agent
+      const phoneWithThisAgent = smsPhoneNumbers.find((pn) => pn.default_text_agent_id === agentId);
+      if (phoneWithThisAgent && originalTextAgentPhoneNumberId.current === null) {
+        originalTextAgentPhoneNumberId.current = phoneWithThisAgent.id;
+        form.setValue("defaultTextAgentPhoneNumberId", phoneWithThisAgent.id);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [smsPhoneNumbers, agentId]);
 
   // Watch the LLM provider to conditionally show/hide Voice tab
   const llmProvider = form.watch("llmProvider");
@@ -742,6 +825,7 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
       initial_greeting: data.initialGreeting?.trim() ? data.initialGreeting.trim() : null,
       language: data.language,
       voice: data.voice,
+      channel_mode: data.channelMode,
       enabled_tools: enabledIntegrations,
       enabled_tool_ids: data.enabledToolIds,
       integration_settings: data.integrationSettings,
@@ -753,7 +837,52 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
       max_tokens: data.maxTokens,
     };
 
-    // Update agent, workspaces, and embed settings
+    // Build list of phone number updates for default text agent
+    // Note: SlickText numbers have synthetic IDs starting with "slicktext-" and are stored
+    // in user_settings, not the phone_numbers table
+    const phoneNumberUpdates: Promise<unknown>[] = [];
+    const newTextAgentPhoneId = data.defaultTextAgentPhoneNumberId;
+    const oldTextAgentPhoneId = originalTextAgentPhoneNumberId.current;
+    const isSlickTextNumber = (id: string | null) => id?.startsWith("slicktext-") ?? false;
+
+    // If the selected phone number changed
+    if (newTextAgentPhoneId !== oldTextAgentPhoneId) {
+      // Handle SlickText number updates via settings API
+      const isNewSlickText = isSlickTextNumber(newTextAgentPhoneId ?? null);
+      const isOldSlickText = isSlickTextNumber(oldTextAgentPhoneId);
+
+      if (isNewSlickText || isOldSlickText) {
+        // Update SlickText default agent in workspace settings
+        const workspaceId = data.selectedWorkspaces[0];
+        if (workspaceId) {
+          phoneNumberUpdates.push(
+            updateSettings(
+              {
+                slicktext_default_text_agent_id:
+                  isNewSlickText && newTextAgentPhoneId !== "none" ? agentId : "",
+              },
+              workspaceId
+            )
+          );
+        }
+      }
+
+      // Handle regular phone number updates (non-SlickText)
+      // Clear old phone number's default text agent (if there was one and it's not a SlickText number)
+      if (oldTextAgentPhoneId && !isOldSlickText) {
+        phoneNumberUpdates.push(
+          updatePhoneNumber(oldTextAgentPhoneId, { default_text_agent_id: null })
+        );
+      }
+      // Set new phone number's default text agent (if one is selected and it's not a SlickText number)
+      if (newTextAgentPhoneId && newTextAgentPhoneId !== "none" && !isNewSlickText) {
+        phoneNumberUpdates.push(
+          updatePhoneNumber(newTextAgentPhoneId, { default_text_agent_id: agentId })
+        );
+      }
+    }
+
+    // Update agent, workspaces, embed settings, and phone numbers
     try {
       await Promise.all([
         updateAgentMutation.mutateAsync(request),
@@ -763,12 +892,18 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
             button_text: data.widgetButtonText,
           },
         }),
+        ...phoneNumberUpdates,
       ]);
+
+      // Update the ref to reflect the new state
+      originalTextAgentPhoneNumberId.current =
+        newTextAgentPhoneId === "none" ? null : (newTextAgentPhoneId ?? null);
 
       // All updates succeeded - now show success and navigate
       toast.success("Agent updated successfully");
       await queryClient.invalidateQueries({ queryKey: ["agents"] });
       await queryClient.invalidateQueries({ queryKey: ["agent", agentId] });
+      await queryClient.invalidateQueries({ queryKey: ["sms-phone-numbers"] });
       router.push("/dashboard/agents");
     } catch (error) {
       // Show specific error message
@@ -975,6 +1110,71 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
                             {...field}
                           />
                         </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="channelMode"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Channel Mode</FormLabel>
+                        <FormDescription>
+                          Select which communication channels this agent supports
+                        </FormDescription>
+                        <div className="grid grid-cols-3 gap-3 pt-2">
+                          {[
+                            {
+                              value: "voice",
+                              label: "Voice Only",
+                              description: "Phone calls only",
+                              icon: Phone,
+                            },
+                            {
+                              value: "text",
+                              label: "Text Only",
+                              description: "SMS/text messages only",
+                              icon: MessageSquare,
+                            },
+                            {
+                              value: "both",
+                              label: "Voice & Text",
+                              description: "Both channels",
+                              icon: MessagesSquare,
+                            },
+                          ].map((option) => {
+                            const Icon = option.icon;
+                            const isSelected = field.value === option.value;
+                            return (
+                              <button
+                                key={option.value}
+                                type="button"
+                                onClick={() => field.onChange(option.value)}
+                                className={`flex flex-col items-center gap-2 rounded-lg border-2 p-4 text-center transition-colors ${
+                                  isSelected
+                                    ? "border-primary bg-primary/5"
+                                    : "border-border hover:border-primary/50"
+                                }`}
+                              >
+                                <Icon
+                                  className={`h-6 w-6 ${isSelected ? "text-primary" : "text-muted-foreground"}`}
+                                />
+                                <div>
+                                  <p
+                                    className={`text-sm font-medium ${isSelected ? "text-primary" : ""}`}
+                                  >
+                                    {option.label}
+                                  </p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {option.description}
+                                  </p>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -1865,6 +2065,88 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
                       </FormItem>
                     )}
                   />
+
+                  {supportsText && (
+                    <FormField
+                      control={form.control}
+                      name="defaultTextAgentPhoneNumberId"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="flex items-center gap-2">
+                            <MessageSquare className="h-4 w-4" />
+                            Default Text Agent for Phone Number
+                          </FormLabel>
+                          {selectedWorkspaces.length === 0 ? (
+                            <div className="rounded-lg border border-dashed p-4">
+                              <p className="text-sm text-muted-foreground">
+                                Please select a workspace in the Basic tab first to see available
+                                phone numbers.
+                              </p>
+                            </div>
+                          ) : smsPhoneNumbers.length === 0 && !isLoadingSmsPhoneNumbers ? (
+                            <div className="rounded-lg border border-dashed p-4">
+                              <div className="space-y-1">
+                                <p className="text-sm font-medium">No SMS-capable phone numbers</p>
+                                <p className="text-xs text-muted-foreground">
+                                  Enable SMS on a phone number to use text agents
+                                </p>
+                              </div>
+                              <div className="mt-3">
+                                <Button type="button" variant="outline" size="sm" asChild>
+                                  <Link href="/dashboard/phone-numbers">Manage Phone Numbers</Link>
+                                </Button>
+                              </div>
+                            </div>
+                          ) : (
+                            <>
+                              <Select
+                                onValueChange={field.onChange}
+                                value={field.value ?? "none"}
+                                disabled={isLoadingSmsPhoneNumbers}
+                              >
+                                <FormControl>
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Select a phone number" />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  <SelectItem value="none">
+                                    No phone number (not default for any number)
+                                  </SelectItem>
+                                  {smsPhoneNumbers.map((pn) => (
+                                    <SelectItem key={pn.id} value={pn.id}>
+                                      <span className="flex items-center gap-2">
+                                        {pn.phone_number}
+                                        {pn.friendly_name && ` (${pn.friendly_name})`}
+                                        <Badge
+                                          variant="outline"
+                                          className="ml-1 text-[10px] capitalize"
+                                        >
+                                          {pn.provider}
+                                        </Badge>
+                                        {pn.default_text_agent_id &&
+                                          pn.default_text_agent_id !== agentId && (
+                                            <span className="text-muted-foreground">
+                                              - Currently:{" "}
+                                              {pn.default_text_agent_name ?? "Another agent"}
+                                            </span>
+                                          )}
+                                      </span>
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <FormDescription>
+                                When set, this agent will automatically respond to new SMS
+                                conversations initiated from this phone number
+                              </FormDescription>
+                            </>
+                          )}
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
 
                   <Separator />
 

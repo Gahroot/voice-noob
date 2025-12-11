@@ -344,6 +344,7 @@ class SMSService:
         to_number: str,
         workspace_id: uuid.UUID,
         user_id: uuid.UUID,
+        initiated_by: str = "platform",
     ) -> SMSConversation:
         """Get or create a conversation for the given phone numbers.
 
@@ -353,10 +354,13 @@ class SMSService:
             to_number: Contact's phone number
             workspace_id: Workspace ID
             user_id: User ID
+            initiated_by: Who initiated: "platform" or "external"
 
         Returns:
             Existing or new conversation
         """
+        from app.models.phone_number import PhoneNumber
+
         # Look for existing conversation
         result = await db.execute(
             select(SMSConversation).where(
@@ -379,13 +383,29 @@ class SMSService:
         )
         contact = contact_result.scalar_one_or_none()
 
-        # Create new conversation
+        # Look up default text agent from phone number configuration
+        default_agent_id = None
+        if initiated_by == "platform":
+            phone_result = await db.execute(
+                select(PhoneNumber).where(
+                    PhoneNumber.workspace_id == workspace_id,
+                    PhoneNumber.phone_number == from_number,
+                )
+            )
+            phone_number = phone_result.scalar_one_or_none()
+            if phone_number:
+                default_agent_id = phone_number.default_text_agent_id
+
+        # Create new conversation - platform-initiated conversations can have AI respond
         conversation = SMSConversation(
             user_id=user_id,
             workspace_id=workspace_id,
             contact_id=contact.id if contact else None,
             from_number=from_number,
             to_number=to_number,
+            initiated_by=initiated_by,
+            assigned_agent_id=default_agent_id,
+            ai_enabled=default_agent_id is not None,
         )
         db.add(conversation)
         await db.flush()
@@ -394,6 +414,8 @@ class SMSService:
             "conversation_created",
             conversation_id=str(conversation.id),
             contact_id=contact.id if contact else None,
+            initiated_by=initiated_by,
+            assigned_agent_id=str(default_agent_id) if default_agent_id else None,
         )
 
         return conversation

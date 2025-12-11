@@ -17,6 +17,27 @@ export interface SMSConversation {
   last_message_at: string | null;
   last_message_direction: string | null;
   created_at: string;
+  // AI text agent fields
+  assigned_agent_id: string | null;
+  assigned_agent_name: string | null;
+  ai_enabled: boolean;
+  ai_paused: boolean;
+}
+
+export interface TextAgent {
+  id: string;
+  name: string;
+  channel_mode: "voice" | "text" | "both";
+}
+
+export interface AssignAgentRequest {
+  agent_id: string | null;
+}
+
+export interface UpdateAISettingsRequest {
+  ai_enabled?: boolean;
+  ai_paused?: boolean;
+  pause_duration_minutes?: number;
 }
 
 export interface SMSMessage {
@@ -137,6 +158,34 @@ export async function markConversationRead(
   workspaceId: string
 ): Promise<void> {
   await api.post(`/api/v1/sms/conversations/${conversationId}/read?workspace_id=${workspaceId}`);
+}
+
+// AI Text Agent API
+export async function listTextAgents(workspaceId: string): Promise<TextAgent[]> {
+  const response = await api.get(`/api/v1/sms/text-agents?workspace_id=${workspaceId}`);
+  return response.data;
+}
+
+export async function assignAgentToConversation(
+  conversationId: string,
+  request: AssignAgentRequest
+): Promise<SMSConversation> {
+  const response = await api.post(
+    `/api/v1/sms/conversations/${conversationId}/assign-agent`,
+    request
+  );
+  return response.data;
+}
+
+export async function updateConversationAISettings(
+  conversationId: string,
+  request: UpdateAISettingsRequest
+): Promise<SMSConversation> {
+  const response = await api.post(
+    `/api/v1/sms/conversations/${conversationId}/ai-settings`,
+    request
+  );
+  return response.data;
 }
 
 // Message API

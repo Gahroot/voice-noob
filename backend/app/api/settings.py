@@ -34,6 +34,7 @@ class UpdateSettingsRequest(BaseModel):
     slicktext_textword_id: str | None = None
     slicktext_webhook_secret: str | None = None
     slicktext_phone_number: str | None = None
+    slicktext_default_text_agent_id: str | None = None
 
 
 class SettingsResponse(BaseModel):
@@ -52,6 +53,7 @@ class SettingsResponse(BaseModel):
     slicktext_private_key_set: bool = False
     slicktext_textword_id: str | None = None
     slicktext_phone_number: str | None = None
+    slicktext_default_text_agent_id: str | None = None
     workspace_id: str | None = None
 
 
@@ -121,6 +123,7 @@ async def get_settings(
             slicktext_private_key_set=False,
             slicktext_textword_id=None,
             slicktext_phone_number=None,
+            slicktext_default_text_agent_id=None,
             workspace_id=workspace_id,
         )
 
@@ -136,6 +139,11 @@ async def get_settings(
         slicktext_private_key_set=bool(settings.slicktext_private_key),
         slicktext_textword_id=settings.slicktext_textword_id,
         slicktext_phone_number=settings.slicktext_phone_number,
+        slicktext_default_text_agent_id=(
+            str(settings.slicktext_default_text_agent_id)
+            if settings.slicktext_default_text_agent_id
+            else None
+        ),
         workspace_id=str(settings.workspace_id) if settings.workspace_id else None,
     )
 
@@ -203,6 +211,12 @@ async def update_settings(  # noqa: PLR0912
             settings.slicktext_webhook_secret = request.slicktext_webhook_secret or None
         if request.slicktext_phone_number is not None:
             settings.slicktext_phone_number = request.slicktext_phone_number or None
+        if request.slicktext_default_text_agent_id is not None:
+            settings.slicktext_default_text_agent_id = (
+                uuid.UUID(request.slicktext_default_text_agent_id)
+                if request.slicktext_default_text_agent_id
+                else None
+            )
 
         db.add(settings)
     else:
@@ -224,6 +238,11 @@ async def update_settings(  # noqa: PLR0912
             slicktext_textword_id=request.slicktext_textword_id,
             slicktext_webhook_secret=request.slicktext_webhook_secret,
             slicktext_phone_number=request.slicktext_phone_number,
+            slicktext_default_text_agent_id=(
+                uuid.UUID(request.slicktext_default_text_agent_id)
+                if request.slicktext_default_text_agent_id
+                else None
+            ),
         )
         db.add(settings)
 
