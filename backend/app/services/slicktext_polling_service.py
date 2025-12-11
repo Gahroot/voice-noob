@@ -29,7 +29,7 @@ from app.services.text_agent_service import schedule_ai_response
 logger = structlog.get_logger()
 
 # Default poll interval in seconds
-DEFAULT_POLL_INTERVAL_SECONDS = 30
+DEFAULT_POLL_INTERVAL_SECONDS = 10
 
 
 class SlickTextPollingService:
