@@ -194,12 +194,13 @@ export default function SMSPage() {
 
   // Fetch messages for selected conversation
   const { data: messages = [], isLoading: messagesLoading } = useQuery<SMSMessage[]>({
-    queryKey: ["sms-messages", selectedConversationId],
+    queryKey: ["sms-messages", selectedConversationId, activeWorkspaceId],
     queryFn: () => {
-      if (!selectedConversationId) throw new Error("No conversation selected");
-      return getConversationMessages(selectedConversationId);
+      if (!selectedConversationId || !activeWorkspaceId)
+        throw new Error("No conversation or workspace selected");
+      return getConversationMessages(selectedConversationId, activeWorkspaceId);
     },
-    enabled: !!selectedConversationId,
+    enabled: !!selectedConversationId && !!activeWorkspaceId,
     refetchInterval: 3000, // Poll for new messages every 3 seconds
   });
 

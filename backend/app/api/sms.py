@@ -313,15 +313,20 @@ async def get_conversation(
     conversation_id: str,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
+    workspace_id: str = Query(..., description="Workspace ID for access validation"),
 ) -> ConversationResponse:
     """Get a single conversation."""
+    workspace_uuid = uuid.UUID(workspace_id)
     result = await db.execute(
         select(SMSConversation)
         .options(
             selectinload(SMSConversation.contact),
             selectinload(SMSConversation.assigned_agent),
         )
-        .where(SMSConversation.id == uuid.UUID(conversation_id))
+        .where(
+            SMSConversation.id == uuid.UUID(conversation_id),
+            SMSConversation.workspace_id == workspace_uuid,
+        )
     )
     conv = result.scalar_one_or_none()
 
@@ -356,13 +361,27 @@ async def get_conversation_messages(
     conversation_id: str,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
+    workspace_id: str = Query(..., description="Workspace ID for access validation"),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ) -> list[MessageResponse]:
     """Get messages in a conversation."""
+    workspace_uuid = uuid.UUID(workspace_id)
+    conv_uuid = uuid.UUID(conversation_id)
+
+    # Verify conversation exists and belongs to workspace
+    conv_result = await db.execute(
+        select(SMSConversation).where(
+            SMSConversation.id == conv_uuid,
+            SMSConversation.workspace_id == workspace_uuid,
+        )
+    )
+    if not conv_result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
     result = await db.execute(
         select(SMSMessage)
-        .where(SMSMessage.conversation_id == uuid.UUID(conversation_id))
+        .where(SMSMessage.conversation_id == conv_uuid)
         .order_by(SMSMessage.created_at.desc())
         .offset(offset)
         .limit(limit)
@@ -663,6 +682,142 @@ async def list_text_agents(
     ]
 
 
+class AgentTextSettingsResponse(BaseModel):
+    """Agent text settings response for debugging."""
+
+    id: str
+    name: str
+    channel_mode: str
+    is_active: bool
+    text_response_delay_ms: int
+    text_max_context_messages: int
+    system_prompt_preview: str  # First 200 chars
+    can_respond_to_sms: bool  # True if channel_mode is "text" or "both" and is_active
+
+
+class UpdateAgentTextSettingsRequest(BaseModel):
+    """Request to update agent text settings."""
+
+    channel_mode: str | None = Field(None, pattern="^(voice|text|both)$")
+    is_active: bool | None = None
+    text_response_delay_ms: int | None = Field(None, ge=0, le=30000)
+    text_max_context_messages: int | None = Field(None, ge=1, le=100)
+
+
+@router.get("/text-agents/{agent_id}", response_model=AgentTextSettingsResponse)
+async def get_agent_text_settings(
+    agent_id: str,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+    workspace_id: str = Query(..., description="Workspace ID"),
+) -> AgentTextSettingsResponse:
+    """Get text settings for a specific agent (for debugging SMS issues)."""
+    from app.models.agent import Agent
+    from app.models.workspace import AgentWorkspace
+
+    workspace_uuid = uuid.UUID(workspace_id)
+    agent_uuid = uuid.UUID(agent_id)
+
+    # Verify agent belongs to workspace
+    result = await db.execute(
+        select(Agent)
+        .join(AgentWorkspace, Agent.id == AgentWorkspace.agent_id)
+        .where(
+            Agent.id == agent_uuid,
+            AgentWorkspace.workspace_id == workspace_uuid,
+        )
+    )
+    agent = result.scalar_one_or_none()
+
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found in workspace")
+
+    can_respond = agent.channel_mode in ("text", "both") and agent.is_active
+
+    return AgentTextSettingsResponse(
+        id=str(agent.id),
+        name=agent.name,
+        channel_mode=agent.channel_mode,
+        is_active=agent.is_active,
+        text_response_delay_ms=agent.text_response_delay_ms,
+        text_max_context_messages=agent.text_max_context_messages,
+        system_prompt_preview=agent.system_prompt[:200] + "..."
+        if len(agent.system_prompt) > 200  # noqa: PLR2004
+        else agent.system_prompt,
+        can_respond_to_sms=can_respond,
+    )
+
+
+@router.patch("/text-agents/{agent_id}", response_model=AgentTextSettingsResponse)
+async def update_agent_text_settings(
+    agent_id: str,
+    update_request: UpdateAgentTextSettingsRequest,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+    workspace_id: str = Query(..., description="Workspace ID"),
+) -> AgentTextSettingsResponse:
+    """Update text settings for an agent.
+
+    Use this to enable text mode for an agent that was originally voice-only.
+    Set channel_mode to "text" (text only) or "both" (voice and text).
+    """
+    from app.models.agent import Agent
+    from app.models.workspace import AgentWorkspace
+
+    workspace_uuid = uuid.UUID(workspace_id)
+    agent_uuid = uuid.UUID(agent_id)
+
+    # Verify agent belongs to workspace
+    result = await db.execute(
+        select(Agent)
+        .join(AgentWorkspace, Agent.id == AgentWorkspace.agent_id)
+        .where(
+            Agent.id == agent_uuid,
+            AgentWorkspace.workspace_id == workspace_uuid,
+        )
+    )
+    agent = result.scalar_one_or_none()
+
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found in workspace")
+
+    # Update fields if provided
+    if update_request.channel_mode is not None:
+        agent.channel_mode = update_request.channel_mode
+        logger.info(
+            "agent_channel_mode_updated",
+            agent_id=agent_id,
+            new_channel_mode=update_request.channel_mode,
+        )
+
+    if update_request.is_active is not None:
+        agent.is_active = update_request.is_active
+
+    if update_request.text_response_delay_ms is not None:
+        agent.text_response_delay_ms = update_request.text_response_delay_ms
+
+    if update_request.text_max_context_messages is not None:
+        agent.text_max_context_messages = update_request.text_max_context_messages
+
+    await db.commit()
+    await db.refresh(agent)
+
+    can_respond = agent.channel_mode in ("text", "both") and agent.is_active
+
+    return AgentTextSettingsResponse(
+        id=str(agent.id),
+        name=agent.name,
+        channel_mode=agent.channel_mode,
+        is_active=agent.is_active,
+        text_response_delay_ms=agent.text_response_delay_ms,
+        text_max_context_messages=agent.text_max_context_messages,
+        system_prompt_preview=agent.system_prompt[:200] + "..."
+        if len(agent.system_prompt) > 200  # noqa: PLR2004
+        else agent.system_prompt,
+        can_respond_to_sms=can_respond,
+    )
+
+
 # =============================================================================
 # Message Endpoints
 # =============================================================================
@@ -670,7 +825,7 @@ async def list_text_agents(
 
 @router.post("/messages", response_model=MessageResponse)
 @limiter.limit("30/minute")
-async def send_message(
+async def send_message(  # noqa: PLR0915
     send_request: SendMessageRequest,
     request: Request,
     current_user: CurrentUser,
@@ -686,7 +841,49 @@ async def send_message(
         provider=send_request.provider,
         from_number=send_request.from_number,
         to_number=send_request.to_number,
+        workspace_id=str(workspace_uuid),
     )
+
+    # Validate that from_number belongs to this workspace (prevents cross-workspace routing issues)
+    from app.models.phone_number import PhoneNumber
+    from app.models.user_settings import UserSettings
+
+    # Check PhoneNumber table first
+    from_number_normalized = normalize_e164(send_request.from_number)
+    from_number_digits = from_number_normalized.lstrip("+")
+    phone_check = await db.execute(
+        select(PhoneNumber).where(
+            PhoneNumber.workspace_id == workspace_uuid,
+            PhoneNumber.phone_number.in_(
+                [from_number_normalized, f"+{from_number_digits}", from_number_digits]
+            ),
+        )
+    )
+    phone_in_workspace = phone_check.scalar_one_or_none() is not None
+
+    # If not found in PhoneNumber table, check UserSettings for SlickText numbers
+    if not phone_in_workspace and send_request.provider == "slicktext":
+        settings_check = await db.execute(
+            select(UserSettings).where(
+                UserSettings.workspace_id == workspace_uuid,
+                UserSettings.slicktext_phone_number.in_(
+                    [from_number_normalized, f"+{from_number_digits}", from_number_digits]
+                ),
+            )
+        )
+        phone_in_workspace = settings_check.scalar_one_or_none() is not None
+
+    if not phone_in_workspace:
+        logger.warning(
+            "send_from_number_not_in_workspace",
+            from_number=send_request.from_number,
+            workspace_id=str(workspace_uuid),
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=f"Phone number {send_request.from_number} does not belong to this workspace. "
+            "Please select a phone number assigned to your workspace.",
+        )
 
     # Route to SlickText if provider is slicktext
     if send_request.provider == "slicktext":
@@ -904,9 +1101,42 @@ async def create_campaign(
 ) -> CampaignResponse:
     """Create an SMS campaign."""
     from app.models.agent import Agent
+    from app.models.phone_number import PhoneNumber
+    from app.models.user_settings import UserSettings
 
     workspace_uuid = uuid.UUID(workspace_id)
     user_uuid = user_id_to_uuid(current_user.id)
+
+    # Validate that from_phone_number belongs to this workspace
+    from_number_normalized = normalize_e164(campaign_request.from_phone_number)
+    from_number_digits = from_number_normalized.lstrip("+")
+    phone_check = await db.execute(
+        select(PhoneNumber).where(
+            PhoneNumber.workspace_id == workspace_uuid,
+            PhoneNumber.phone_number.in_(
+                [from_number_normalized, f"+{from_number_digits}", from_number_digits]
+            ),
+        )
+    )
+    phone_in_workspace = phone_check.scalar_one_or_none() is not None
+
+    # Also check UserSettings for SlickText numbers
+    if not phone_in_workspace:
+        settings_check = await db.execute(
+            select(UserSettings).where(
+                UserSettings.workspace_id == workspace_uuid,
+                UserSettings.slicktext_phone_number.in_(
+                    [from_number_normalized, f"+{from_number_digits}", from_number_digits]
+                ),
+            )
+        )
+        phone_in_workspace = settings_check.scalar_one_or_none() is not None
+
+    if not phone_in_workspace:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Phone number {campaign_request.from_phone_number} does not belong to this workspace.",
+        )
 
     # Validate agent if provided
     agent = None
@@ -1206,32 +1436,107 @@ async def add_contacts_to_campaign(
 # =============================================================================
 
 
-async def _handle_inbound_message(
+async def _handle_inbound_message(  # noqa: PLR0912, PLR0915
     db: AsyncSession,
     payload: dict,  # type: ignore[type-arg]
 ) -> str | None:
     """Handle inbound SMS message from Telnyx webhook."""
     from app.models.agent import Agent
     from app.models.phone_number import PhoneNumber
+    from app.models.user_settings import UserSettings
     from app.services.text_agent_service import schedule_ai_response
 
-    from_number = payload.get("from", {}).get("phone_number", "")
-    to_number = payload.get("to", [{}])[0].get("phone_number", "")
+    from_number_raw = payload.get("from", {}).get("phone_number", "")
+    to_number_raw = payload.get("to", [{}])[0].get("phone_number", "")
     message_text = payload.get("text", "")
     message_id = payload.get("id", "")
 
+    # Normalize phone numbers for consistent lookup
+    try:
+        from_number = normalize_e164(from_number_raw)
+        to_number = normalize_e164(to_number_raw)
+    except ValueError as e:
+        logger.warning(
+            "invalid_phone_number_format_telnyx",
+            from_number=from_number_raw,
+            to_number=to_number_raw,
+            error=str(e),
+        )
+        return None
+
+    log = logger.bind(
+        from_number=from_number,
+        to_number=to_number,
+        to_number_raw=to_number_raw,
+        message_id=message_id,
+    )
+
+    # Try to find phone number with normalized lookup (try multiple formats)
+    to_number_digits = to_number.lstrip("+")
     phone_result = await db.execute(
-        select(PhoneNumber).where(PhoneNumber.phone_number == to_number)
+        select(PhoneNumber).where(
+            PhoneNumber.phone_number.in_([to_number, f"+{to_number_digits}", to_number_digits])
+        )
     )
     phone = phone_result.scalar_one_or_none()
 
-    if not phone:
+    # If not found in PhoneNumber table, try fallback: find existing conversation
+    # or look up workspace with Telnyx configured
+    workspace_id = None
+    user_id = None
+
+    if phone:
+        workspace_id = phone.workspace_id
+        user_id = phone.user_id
+        log.info("found_phone_in_phone_number_table", workspace_id=str(workspace_id))
+    else:
+        # Fallback 1: Check if there's an existing conversation with these phone numbers
+        existing_conv_result = await db.execute(
+            select(SMSConversation).where(
+                SMSConversation.from_number == to_number,
+                SMSConversation.to_number == from_number,
+            )
+        )
+        existing_conv = existing_conv_result.scalar_one_or_none()
+
+        if existing_conv:
+            workspace_id = existing_conv.workspace_id
+            user_id = existing_conv.user_id
+            log.info(
+                "found_existing_conversation_fallback",
+                conversation_id=str(existing_conv.id),
+                workspace_id=str(workspace_id),
+            )
+        else:
+            # Fallback 2: Find workspace with Telnyx configured
+            # This handles cases where phone numbers weren't synced
+            settings_result = await db.execute(
+                select(UserSettings).where(
+                    UserSettings.telnyx_api_key.isnot(None),
+                    UserSettings.telnyx_api_key != "",
+                )
+            )
+            user_settings = settings_result.scalars().first()
+
+            if user_settings and user_settings.workspace_id:
+                workspace_id = user_settings.workspace_id
+                user_id = user_settings.user_id
+                log.info(
+                    "found_workspace_via_telnyx_settings_fallback",
+                    workspace_id=str(workspace_id),
+                )
+            else:
+                log.warning("phone_number_not_found_and_no_fallback", to_number=to_number)
+                return None
+
+    if not workspace_id or not user_id:
+        log.warning("missing_workspace_or_user")
         return None
 
     # Find or create conversation
     conv_result = await db.execute(
         select(SMSConversation).where(
-            SMSConversation.workspace_id == phone.workspace_id,
+            SMSConversation.workspace_id == workspace_id,
             SMSConversation.from_number == to_number,
             SMSConversation.to_number == from_number,
         )
@@ -1242,36 +1547,54 @@ async def _handle_inbound_message(
     if not conversation:
         contact_result = await db.execute(
             select(Contact).where(
-                Contact.workspace_id == phone.workspace_id,
+                Contact.workspace_id == workspace_id,
                 Contact.phone_number == from_number,
             )
         )
         contact = contact_result.scalar_one_or_none()
 
-        # NEW CONVERSATION from external party - do NOT enable AI auto-response
-        # AI should only auto-respond to conversations WE initiated (platform-initiated)
+        # Auto-create contact for unknown phone numbers
+        if not contact:
+            contact = Contact(
+                user_id=user_id,
+                workspace_id=workspace_id,
+                phone_number=from_number,
+                first_name="Unknown",
+                source="sms_inbound",
+            )
+            db.add(contact)
+            await db.flush()
+            log.info(
+                "auto_created_contact_for_inbound_sms",
+                contact_id=contact.id,
+                phone_number=from_number,
+            )
+
+        # Get default text agent from the phone number configuration
+        default_text_agent_id = phone.default_text_agent_id if phone else None
+
+        # NEW CONVERSATION - enable AI if a default agent is configured
         conversation = SMSConversation(
-            user_id=phone.user_id,
-            workspace_id=phone.workspace_id,
+            user_id=user_id,
+            workspace_id=workspace_id,
             contact_id=contact.id if contact else None,
             from_number=to_number,
             to_number=from_number,
-            # Mark as externally initiated - AI will NOT auto-respond
             initiated_by="external",
-            # Do NOT auto-assign agent for external conversations
-            assigned_agent_id=None,
-            ai_enabled=False,  # Disable AI for external conversations
+            # Auto-assign default text agent so AI can respond
+            assigned_agent_id=default_text_agent_id,
+            ai_enabled=default_text_agent_id is not None,
         )
         db.add(conversation)
         await db.flush()
-        logger.info(
-            "created_external_conversation_telnyx",
+        log.info(
+            "created_conversation_telnyx",
             conversation_id=str(conversation.id),
-            ai_enabled=False,
+            ai_enabled=default_text_agent_id is not None,
+            assigned_agent_id=str(default_text_agent_id) if default_text_agent_id else None,
         )
-    # EXISTING conversation - auto-assign agent if it's platform-initiated
-    # but doesn't have an agent yet
-    elif conversation.initiated_by == "platform" and not conversation.assigned_agent_id:
+    # EXISTING conversation - auto-assign agent if it doesn't have one yet
+    elif not conversation.assigned_agent_id:
         # First, check if conversation is part of a campaign and use campaign's agent
         campaign_agent_id = None
         campaign_contact_result = await db.execute(
@@ -1283,7 +1606,7 @@ async def _handle_inbound_message(
 
         if campaign_contact and campaign_contact.campaign and campaign_contact.campaign.agent_id:
             campaign_agent_id = campaign_contact.campaign.agent_id
-            logger.info(
+            log.info(
                 "found_campaign_agent_for_conversation",
                 conversation_id=str(conversation.id),
                 campaign_id=str(campaign_contact.campaign_id),
@@ -1291,12 +1614,13 @@ async def _handle_inbound_message(
             )
 
         # Use campaign agent first, then fall back to phone default agent
-        agent_to_assign = campaign_agent_id or phone.default_text_agent_id
+        default_text_agent_id = phone.default_text_agent_id if phone else None
+        agent_to_assign = campaign_agent_id or default_text_agent_id
 
         if agent_to_assign:
             conversation.assigned_agent_id = agent_to_assign
             conversation.ai_enabled = True
-            logger.info(
+            log.info(
                 "auto_assigned_agent_to_existing_conversation",
                 conversation_id=str(conversation.id),
                 agent_id=str(agent_to_assign),
@@ -1332,7 +1656,7 @@ async def _handle_inbound_message(
         conversation.assigned_agent_id
         and conversation.ai_enabled
         and not conversation.ai_paused
-        and phone.workspace_id  # Must have workspace for AI response
+        and workspace_id  # Must have workspace for AI response
     ):
         # Get agent to determine delay
         agent_result = await db.execute(
@@ -1344,10 +1668,11 @@ async def _handle_inbound_message(
         # Schedule response with debounce
         await schedule_ai_response(
             conversation_id=conversation.id,
-            workspace_id=phone.workspace_id,
+            workspace_id=workspace_id,
             delay_ms=delay_ms,
+            provider="telnyx",  # Explicitly pass provider for response routing
         )
-        logger.info(
+        log.info(
             "scheduled_ai_response",
             conversation_id=str(conversation.id),
             agent_id=str(conversation.assigned_agent_id),
@@ -1475,27 +1800,39 @@ async def _handle_slicktext_inbound_message(  # noqa: PLR0912, PLR0915
     chat_message = payload.get("ChatMessage", {})
 
     # Extract fields from SlickText payload
-    from_number = chat_message.get("FromNumber", "")
-    to_number = chat_thread.get("WithNumber", "")
+    from_number_raw = chat_message.get("FromNumber", "")
+    to_number_raw = chat_thread.get("WithNumber", "")
     message_text = chat_message.get("Body", "")
     message_id = chat_message.get("ChatMessageId", "")
 
-    # Normalize phone numbers to E.164
-    if from_number and not from_number.startswith("+"):
-        from_number = f"+{from_number}"
-    if to_number and not to_number.startswith("+"):
-        to_number = f"+{to_number}"
+    # Normalize phone numbers to E.164 using proper normalization
+    try:
+        from_number = normalize_e164(from_number_raw) if from_number_raw else ""
+        to_number = normalize_e164(to_number_raw) if to_number_raw else ""
+    except ValueError as e:
+        logger.warning(
+            "invalid_phone_number_format_slicktext",
+            from_number=from_number_raw,
+            to_number=to_number_raw,
+            error=str(e),
+        )
+        return None
 
     log = logger.bind(
         from_number=from_number,
         to_number=to_number,
+        to_number_raw=to_number_raw,
         message_id=message_id,
     )
     log.info("processing_slicktext_inbound")
 
     # First, try to find phone number in PhoneNumber table (for consistency with Telnyx)
+    # Try multiple formats for robust matching
+    to_number_digits = to_number.lstrip("+")
     phone_result = await db.execute(
-        select(PhoneNumber).where(PhoneNumber.phone_number == to_number)
+        select(PhoneNumber).where(
+            PhoneNumber.phone_number.in_([to_number, f"+{to_number_digits}", to_number_digits])
+        )
     )
     phone = phone_result.scalar_one_or_none()
 
@@ -1559,30 +1896,52 @@ async def _handle_slicktext_inbound_message(  # noqa: PLR0912, PLR0915
         )
         contact = contact_result.scalar_one_or_none()
 
-        # NEW CONVERSATION from external party - do NOT enable AI auto-response
-        # AI should only auto-respond to conversations WE initiated (platform-initiated)
+        # Auto-create contact for unknown phone numbers
+        if not contact:
+            contact = Contact(
+                user_id=user_id,
+                workspace_id=workspace_id,
+                phone_number=from_number,
+                first_name="Unknown",
+                source="sms_inbound",
+            )
+            db.add(contact)
+            await db.flush()
+            log.info(
+                "auto_created_contact_for_inbound_sms_slicktext",
+                contact_id=contact.id,
+                phone_number=from_number,
+            )
+
+        # Get default agent from phone number or user settings
+        default_text_agent_id = None
+        if phone and phone.default_text_agent_id:
+            default_text_agent_id = phone.default_text_agent_id
+        elif user_settings and user_settings.slicktext_default_text_agent_id:
+            default_text_agent_id = user_settings.slicktext_default_text_agent_id
+
+        # NEW CONVERSATION - enable AI if a default agent is configured
         conversation = SMSConversation(
             user_id=user_id,
             workspace_id=workspace_id,
             contact_id=contact.id if contact else None,
             from_number=to_number,
             to_number=from_number,
-            # Mark as externally initiated - AI will NOT auto-respond
             initiated_by="external",
-            # Do NOT auto-assign agent for external conversations
-            assigned_agent_id=None,
-            ai_enabled=False,  # Disable AI for external conversations
+            # Auto-assign default text agent so AI can respond
+            assigned_agent_id=default_text_agent_id,
+            ai_enabled=default_text_agent_id is not None,
         )
         db.add(conversation)
         await db.flush()
         log.info(
-            "created_external_conversation",
+            "created_conversation_slicktext",
             conversation_id=str(conversation.id),
-            ai_enabled=False,
+            ai_enabled=default_text_agent_id is not None,
+            assigned_agent_id=str(default_text_agent_id) if default_text_agent_id else None,
         )
-    # EXISTING conversation - auto-assign agent if it's platform-initiated
-    # but doesn't have an agent yet
-    elif conversation.initiated_by == "platform" and not conversation.assigned_agent_id:
+    # EXISTING conversation - auto-assign agent if it doesn't have one yet
+    elif not conversation.assigned_agent_id:
         # First, check if conversation is part of a campaign and use campaign's agent
         campaign_agent_id = None
         campaign_contact_result = await db.execute(

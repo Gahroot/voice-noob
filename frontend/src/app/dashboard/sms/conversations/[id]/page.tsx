@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 // Card components available if needed for future enhancements
 import { Button } from "@/components/ui/button";
@@ -25,6 +25,7 @@ import { cn } from "@/lib/utils";
 import {
   getConversation,
   getConversationMessages,
+  markConversationRead,
   sendMessage,
   type SMSConversation,
   type SMSMessage,
@@ -35,8 +36,10 @@ import Link from "next/link";
 export default function ConversationDetailPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const conversationId = params.id as string;
+  const workspaceId = searchParams.get("workspace_id") ?? "";
   const [newMessage, setNewMessage] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -47,9 +50,9 @@ export default function ConversationDetailPage() {
     isLoading: conversationLoading,
     error: conversationError,
   } = useQuery<SMSConversation>({
-    queryKey: ["sms-conversation", conversationId],
-    queryFn: () => getConversation(conversationId),
-    enabled: !!conversationId,
+    queryKey: ["sms-conversation", conversationId, workspaceId],
+    queryFn: () => getConversation(conversationId, workspaceId),
+    enabled: !!conversationId && !!workspaceId,
   });
 
   // Fetch messages
@@ -58,20 +61,20 @@ export default function ConversationDetailPage() {
     isLoading: messagesLoading,
     error: messagesError,
   } = useQuery<SMSMessage[]>({
-    queryKey: ["sms-messages", conversationId],
-    queryFn: () => getConversationMessages(conversationId),
-    enabled: !!conversationId,
+    queryKey: ["sms-messages", conversationId, workspaceId],
+    queryFn: () => getConversationMessages(conversationId, workspaceId),
+    enabled: !!conversationId && !!workspaceId,
     refetchInterval: 5000, // Poll for new messages every 5 seconds
   });
 
   // Mark as read when viewing
   useEffect(() => {
-    if (conversation && conversation.unread_count > 0) {
-      // We need workspace_id, but it's not in the conversation response
-      // For now, we'll just invalidate the query to refresh the unread count
-      void queryClient.invalidateQueries({ queryKey: ["sms-conversations"] });
+    if (conversation && conversation.unread_count > 0 && workspaceId) {
+      void markConversationRead(conversationId, workspaceId).then(() => {
+        void queryClient.invalidateQueries({ queryKey: ["sms-conversations"] });
+      });
     }
-  }, [conversation, queryClient]);
+  }, [conversation, conversationId, workspaceId, queryClient]);
 
   // Scroll to bottom when messages change
   useEffect(() => {
@@ -86,10 +89,7 @@ export default function ConversationDetailPage() {
   // Send message mutation
   const sendMessageMutation = useMutation({
     mutationFn: async (body: string) => {
-      if (!conversation) throw new Error("No conversation");
-      // We need workspace_id for the API call - extract from URL or context
-      // For now, we'll pass it as a query param workaround
-      const workspaceId = new URLSearchParams(window.location.search).get("workspace_id") ?? "";
+      if (!conversation || !workspaceId) throw new Error("No conversation or workspace");
       return sendMessage(
         {
           to_number: conversation.to_number,
@@ -102,8 +102,12 @@ export default function ConversationDetailPage() {
     },
     onSuccess: () => {
       setNewMessage("");
-      void queryClient.invalidateQueries({ queryKey: ["sms-messages", conversationId] });
-      void queryClient.invalidateQueries({ queryKey: ["sms-conversation", conversationId] });
+      void queryClient.invalidateQueries({
+        queryKey: ["sms-messages", conversationId, workspaceId],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["sms-conversation", conversationId, workspaceId],
+      });
     },
     onError: (error: Error) => {
       toast.error(error.message || "Failed to send message");
@@ -146,6 +150,20 @@ export default function ConversationDetailPage() {
         return <Clock className="h-3 w-3 text-muted-foreground" />;
     }
   };
+
+  // Check for missing workspace_id
+  if (!workspaceId) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-4">
+        <AlertCircle className="h-12 w-12 text-destructive" />
+        <p className="text-muted-foreground">Missing workspace context</p>
+        <Button variant="outline" onClick={() => router.push("/dashboard/sms")}>
+          <ArrowLeft className="mr-2 h-4 w-4" />
+          Go to SMS Dashboard
+        </Button>
+      </div>
+    );
+  }
 
   if (conversationLoading || messagesLoading) {
     return (

@@ -141,6 +141,11 @@ async def generate_text_response(  # noqa: PLR0912, PLR0915
     user_uuid = user_id_to_uuid(agent.user_id)
     user_settings = await get_user_api_keys(user_uuid, db, workspace_id=workspace_id)
 
+    # If workspace settings don't have OpenAI key, try user-level settings as fallback
+    if not user_settings or not user_settings.openai_api_key:
+        log.info("workspace_settings_missing_openai_key_trying_user_level")
+        user_settings = await get_user_api_keys(user_uuid, db, workspace_id=None)
+
     if not user_settings or not user_settings.openai_api_key:
         log.error("no_openai_api_key")
         return None
@@ -354,7 +359,7 @@ async def process_inbound_message_with_ai(  # noqa: PLR0911, PLR0912, PLR0915
         db: Database session
         provider: SMS provider to use for response ("telnyx" or "slicktext")
     """
-    log = logger.bind(conversation_id=str(conversation_id))
+    log = logger.bind(conversation_id=str(conversation_id), workspace_id=str(workspace_id))
     log.info("processing_inbound_for_ai")
 
     # Get conversation with agent
@@ -365,9 +370,18 @@ async def process_inbound_message_with_ai(  # noqa: PLR0911, PLR0912, PLR0915
         log.warning("conversation_not_found")
         return
 
+    log.info(
+        "conversation_state",
+        ai_enabled=conversation.ai_enabled,
+        ai_paused=conversation.ai_paused,
+        assigned_agent_id=str(conversation.assigned_agent_id)
+        if conversation.assigned_agent_id
+        else None,
+    )
+
     # Check if AI is enabled and not paused
     if not conversation.ai_enabled:
-        log.debug("ai_disabled_for_conversation")
+        log.info("ai_disabled_for_conversation")  # Changed to INFO for visibility
         return
 
     if conversation.ai_paused:
@@ -376,12 +390,12 @@ async def process_inbound_message_with_ai(  # noqa: PLR0911, PLR0912, PLR0915
             conversation.ai_paused = False
             conversation.ai_paused_until = None
         else:
-            log.debug("ai_paused_for_conversation")
+            log.info("ai_paused_for_conversation")  # Changed to INFO for visibility
             return
 
     # Get assigned agent
     if not conversation.assigned_agent_id:
-        log.debug("no_agent_assigned")
+        log.info("no_agent_assigned")  # Changed to INFO for visibility
         return
 
     agent_result = await db.execute(select(Agent).where(Agent.id == conversation.assigned_agent_id))
@@ -390,6 +404,14 @@ async def process_inbound_message_with_ai(  # noqa: PLR0911, PLR0912, PLR0915
     if not agent:
         log.warning("agent_not_found")
         return
+
+    log.info(
+        "agent_state",
+        agent_id=str(agent.id),
+        agent_name=agent.name,
+        channel_mode=agent.channel_mode,
+        is_active=agent.is_active,
+    )
 
     # Check if agent supports text channel
     if agent.channel_mode not in ("text", "both"):
@@ -530,22 +552,27 @@ async def schedule_ai_response(
 
     async def delayed_response() -> None:
         """Execute response after delay."""
+        log.info("delayed_response_task_started", delay_seconds=delay_ms / 1000.0)
         try:
             await asyncio.sleep(delay_ms / 1000.0)
+            log.info("delayed_response_sleep_completed")
 
             # Process in new database session
             async with AsyncSessionLocal() as db:
+                log.info("delayed_response_db_session_created")
                 await process_inbound_message_with_ai(
                     conversation_id, workspace_id, db, provider=provider
                 )
+                log.info("delayed_response_processing_completed")
 
         except asyncio.CancelledError:
-            log.debug("response_cancelled")
+            log.info("response_cancelled")  # Changed to INFO for visibility
         except Exception:
             log.exception("delayed_response_error")
         finally:
             # Clean up
             _pending_responses.pop(key, None)
+            log.info("delayed_response_task_finished")
 
     # Schedule new response
     task = asyncio.create_task(delayed_response())

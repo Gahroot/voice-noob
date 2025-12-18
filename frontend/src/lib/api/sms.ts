@@ -137,17 +137,24 @@ export async function listConversations(
   return response.data;
 }
 
-export async function getConversation(conversationId: string): Promise<SMSConversation> {
-  const response = await api.get(`/api/v1/sms/conversations/${conversationId}`);
+export async function getConversation(
+  conversationId: string,
+  workspaceId: string
+): Promise<SMSConversation> {
+  const response = await api.get(
+    `/api/v1/sms/conversations/${conversationId}?workspace_id=${workspaceId}`
+  );
   return response.data;
 }
 
 export async function getConversationMessages(
   conversationId: string,
+  workspaceId: string,
   limit = 100,
   offset = 0
 ): Promise<SMSMessage[]> {
   const params = new URLSearchParams({
+    workspace_id: workspaceId,
     limit: limit.toString(),
     offset: offset.toString(),
   });
