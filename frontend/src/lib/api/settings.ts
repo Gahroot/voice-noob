@@ -59,6 +59,9 @@ export interface SettingsResponse {
   slicktext_textword_id: string | null;
   slicktext_phone_number: string | null;
   slicktext_default_text_agent_id: string | null;
+  // Hume AI (EVI and Octave TTS)
+  hume_api_key_set: boolean;
+  hume_secret_key_set: boolean;
   workspace_id: string | null;
 }
 
@@ -79,6 +82,9 @@ export interface UpdateSettingsRequest {
   slicktext_webhook_secret?: string;
   slicktext_phone_number?: string;
   slicktext_default_text_agent_id?: string;
+  // Hume AI (EVI and Octave TTS)
+  hume_api_key?: string;
+  hume_secret_key?: string;
 }
 
 export async function fetchSettings(workspaceId?: string): Promise<SettingsResponse> {
@@ -108,5 +114,27 @@ export async function updateSettings(
     throw new Error(error.detail ?? "Failed to update settings");
   }
 
+  return response.json();
+}
+
+// Hume AI Voices
+export interface HumeVoice {
+  id: string;
+  name: string;
+  description: string | null;
+  is_custom: boolean;
+}
+
+export interface HumeVoicesResponse {
+  voices: HumeVoice[];
+  total: number;
+}
+
+export async function fetchHumeVoices(workspaceId?: string): Promise<HumeVoicesResponse> {
+  const params = workspaceId ? `?workspace_id=${workspaceId}` : "";
+  const response = await fetchWithTimeout(`${API_BASE}/api/v1/settings/hume/voices${params}`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch Hume voices: ${response.statusText}`);
+  }
   return response.json();
 }

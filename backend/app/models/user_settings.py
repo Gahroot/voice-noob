@@ -59,6 +59,14 @@ class UserSettings(Base):
         Text, nullable=True, comment="Twilio Auth Token"
     )
 
+    # Hume AI API Keys (EVI voice-to-voice and Octave TTS)
+    hume_api_key: Mapped[str | None] = mapped_column(
+        Text, nullable=True, comment="Hume AI API key for EVI and Octave TTS"
+    )
+    hume_secret_key: Mapped[str | None] = mapped_column(
+        Text, nullable=True, comment="Hume AI Secret key for OAuth token generation"
+    )
+
     # SlickText API Keys
     # V2 API (accounts created after Jan 22, 2025) uses single Bearer token
     slicktext_api_key: Mapped[str | None] = mapped_column(

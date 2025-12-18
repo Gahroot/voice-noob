@@ -2,6 +2,7 @@
 
 import uuid
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import and_, select
@@ -11,8 +12,10 @@ from app.core.auth import CurrentUser, user_id_to_uuid
 from app.db.session import get_db
 from app.models.user_settings import UserSettings
 from app.models.workspace import Workspace
+from app.services.hume_tts import HUME_VOICES, HumeOctaveTTS
 
 router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
+logger = structlog.get_logger()
 
 
 class UpdateSettingsRequest(BaseModel):
@@ -21,6 +24,10 @@ class UpdateSettingsRequest(BaseModel):
     openai_api_key: str | None = None
     deepgram_api_key: str | None = None
     elevenlabs_api_key: str | None = None
+    # Hume AI (EVI voice-to-voice and Octave TTS)
+    hume_api_key: str | None = None
+    hume_secret_key: str | None = None
+    # Telephony
     telnyx_api_key: str | None = None
     telnyx_public_key: str | None = None
     telnyx_messaging_profile_id: str | None = None
@@ -43,6 +50,10 @@ class SettingsResponse(BaseModel):
     openai_api_key_set: bool
     deepgram_api_key_set: bool
     elevenlabs_api_key_set: bool
+    # Hume AI
+    hume_api_key_set: bool = False
+    hume_secret_key_set: bool = False
+    # Telephony
     telnyx_api_key_set: bool
     telnyx_messaging_profile_id_set: bool
     twilio_account_sid_set: bool
@@ -115,6 +126,8 @@ async def get_settings(
             openai_api_key_set=False,
             deepgram_api_key_set=False,
             elevenlabs_api_key_set=False,
+            hume_api_key_set=False,
+            hume_secret_key_set=False,
             telnyx_api_key_set=False,
             telnyx_messaging_profile_id_set=False,
             twilio_account_sid_set=False,
@@ -131,6 +144,8 @@ async def get_settings(
         openai_api_key_set=bool(settings.openai_api_key),
         deepgram_api_key_set=bool(settings.deepgram_api_key),
         elevenlabs_api_key_set=bool(settings.elevenlabs_api_key),
+        hume_api_key_set=bool(settings.hume_api_key),
+        hume_secret_key_set=bool(settings.hume_secret_key),
         telnyx_api_key_set=bool(settings.telnyx_api_key),
         telnyx_messaging_profile_id_set=bool(settings.telnyx_messaging_profile_id),
         twilio_account_sid_set=bool(settings.twilio_account_sid),
@@ -149,7 +164,7 @@ async def get_settings(
 
 
 @router.post("", status_code=status.HTTP_200_OK)
-async def update_settings(  # noqa: PLR0912
+async def update_settings(  # noqa: PLR0912, PLR0915
     request: UpdateSettingsRequest,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
@@ -189,6 +204,10 @@ async def update_settings(  # noqa: PLR0912
             settings.deepgram_api_key = request.deepgram_api_key or None
         if request.elevenlabs_api_key is not None:
             settings.elevenlabs_api_key = request.elevenlabs_api_key or None
+        if request.hume_api_key is not None:
+            settings.hume_api_key = request.hume_api_key or None
+        if request.hume_secret_key is not None:
+            settings.hume_secret_key = request.hume_secret_key or None
         if request.telnyx_api_key is not None:
             settings.telnyx_api_key = request.telnyx_api_key or None
         if request.telnyx_public_key is not None:
@@ -227,6 +246,8 @@ async def update_settings(  # noqa: PLR0912
             openai_api_key=request.openai_api_key,
             deepgram_api_key=request.deepgram_api_key,
             elevenlabs_api_key=request.elevenlabs_api_key,
+            hume_api_key=request.hume_api_key,
+            hume_secret_key=request.hume_secret_key,
             telnyx_api_key=request.telnyx_api_key,
             telnyx_public_key=request.telnyx_public_key,
             telnyx_messaging_profile_id=request.telnyx_messaging_profile_id,
@@ -249,6 +270,88 @@ async def update_settings(  # noqa: PLR0912
     await db.commit()
 
     return {"message": "Settings updated successfully"}
+
+
+class HumeVoiceResponse(BaseModel):
+    """Response for a single Hume voice."""
+
+    id: str
+    name: str
+    description: str | None = None
+    is_custom: bool = False
+
+
+class HumeVoicesResponse(BaseModel):
+    """Response for listing Hume voices."""
+
+    voices: list[HumeVoiceResponse]
+    total: int
+
+
+@router.get("/hume/voices", response_model=HumeVoicesResponse)
+async def list_hume_voices(
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+    workspace_id: str | None = None,
+) -> HumeVoicesResponse:
+    """List available Hume AI voices.
+
+    Returns pre-built voices and user's custom voices from Hume.
+
+    Args:
+        current_user: Authenticated user
+        db: Database session
+        workspace_id: Optional workspace ID for workspace-specific API keys
+
+    Returns:
+        List of available Hume voices
+    """
+    user_uuid = user_id_to_uuid(current_user.id)
+    workspace_uuid: uuid.UUID | None = None
+
+    if workspace_id:
+        workspace_uuid = await _validate_workspace_ownership(workspace_id, current_user.id, db)
+
+    # Get user's Hume API key
+    settings = await get_user_api_keys(user_uuid, db, workspace_uuid)
+
+    # Start with pre-built voices
+    voices: list[HumeVoiceResponse] = [
+        HumeVoiceResponse(
+            id=voice_id,
+            name=voice_info["name"],
+            description=voice_info["description"],
+            is_custom=False,
+        )
+        for voice_id, voice_info in HUME_VOICES.items()
+    ]
+
+    # If user has Hume API key, fetch their custom voices
+    if settings and settings.hume_api_key:
+        try:
+            tts = HumeOctaveTTS(api_key=settings.hume_api_key)
+            custom_voices = await tts.list_voices()
+
+            for voice in custom_voices:
+                # Skip pre-built voices we already have
+                if voice["id"] not in HUME_VOICES:
+                    voices.append(
+                        HumeVoiceResponse(
+                            id=voice["id"],
+                            name=voice["name"],
+                            description=voice.get("description"),
+                            is_custom=True,
+                        )
+                    )
+        except Exception as e:
+            # Log but don't fail - user can still use pre-built voices
+            logger.warning(
+                "failed_to_fetch_hume_custom_voices",
+                error=str(e),
+                user_id=str(user_uuid),
+            )
+
+    return HumeVoicesResponse(voices=voices, total=len(voices))
 
 
 async def get_user_api_keys(

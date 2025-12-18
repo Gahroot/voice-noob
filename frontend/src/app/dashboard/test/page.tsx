@@ -5,7 +5,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { updateAgent } from "@/lib/api/agents";
+import { updateAgent, Agent } from "@/lib/api/agents";
 import { api } from "@/lib/api";
 import { getWhisperCode, getLanguagesForTier } from "@/lib/languages";
 import { Button } from "@/components/ui/button";
@@ -36,6 +36,7 @@ interface WorkspaceAgent {
   agent_id: string;
   agent_name: string;
   is_default: boolean;
+  pricing_tier: string;
 }
 
 type TranscriptItem = {
@@ -250,10 +251,11 @@ export default function TestAgentPage() {
   });
 
   // Fetch all agents (for "All Workspaces" / admin mode)
+  // Pass all_users=true to get agents from ALL users (superuser only)
   const { data: allAgents = [] } = useQuery<{ id: string; name: string; pricing_tier: string }[]>({
-    queryKey: ["agents"],
+    queryKey: ["agents", "all-users"],
     queryFn: async () => {
-      const response = await api.get("/api/v1/agents");
+      const response = await api.get("/api/v1/agents?all_users=true");
       return response.data;
     },
     enabled: selectedWorkspaceId === "all",
@@ -271,11 +273,10 @@ export default function TestAgentPage() {
   });
 
   // Get the list of agents based on selection mode
+  // Show all agents for admin mode (All Workspaces)
   const availableAgents =
     selectedWorkspaceId === "all"
-      ? allAgents
-          .filter((a) => a.pricing_tier === "premium" || a.pricing_tier === "premium-mini")
-          .map((a) => ({ agent_id: a.id, agent_name: a.name, is_default: false }))
+      ? allAgents.map((a) => ({ agent_id: a.id, agent_name: a.name, is_default: false }))
       : workspaceAgents;
 
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
@@ -304,11 +305,11 @@ export default function TestAgentPage() {
   }, [transcript]);
 
   // Fetch selected agent details
-  const { data: selectedAgent } = useQuery({
+  const { data: selectedAgent } = useQuery<Agent | null>({
     queryKey: ["agent", selectedAgentId],
     queryFn: async () => {
       if (!selectedAgentId) return null;
-      const response = await api.get(`/api/v1/agents/${selectedAgentId}`);
+      const response = await api.get<Agent>(`/api/v1/agents/${selectedAgentId}`);
       return response.data;
     },
     enabled: !!selectedAgentId,
@@ -573,6 +574,9 @@ export default function TestAgentPage() {
   // Use batched version for high-frequency updates (history_updated handler)
   const addTranscript = addTranscriptBatched;
 
+  // Hume WebSocket ref for cleanup
+  const humeSocketRef = useRef<WebSocket | null>(null);
+
   const handleConnect = async () => {
     if (connectionStatus === "connected") {
       // Save transcript before cleanup (fire and forget)
@@ -580,6 +584,11 @@ export default function TestAgentPage() {
 
       // Disconnect
       cleanup();
+      // Also close Hume WebSocket if open
+      if (humeSocketRef.current) {
+        humeSocketRef.current.close();
+        humeSocketRef.current = null;
+      }
       setConnectionStatus("idle");
       setAudioStream(null);
       setCallDuration(0);
@@ -613,14 +622,244 @@ export default function TestAgentPage() {
     sessionIdRef.current = crypto.randomUUID();
     sessionStartTimeRef.current = Date.now();
 
+    const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    const authToken = localStorage.getItem("access_token");
+
+    // Check if this is a Hume EVI agent
+    const isHumeAgent = selectedAgent.pricing_tier === "hume-evi";
+
+    if (isHumeAgent) {
+      // === HUME EVI CONNECTION ===
+      try {
+        addTranscriptImmediate("system", `Connecting to ${selectedAgent.name} (Hume EVI)...`);
+
+        // Fetch Hume access token from our backend
+        const tokenUrl = isAdminMode
+          ? `${apiBase}/api/v1/realtime/hume-token/${selectedAgentId}`
+          : `${apiBase}/api/v1/realtime/hume-token/${selectedAgentId}?workspace_id=${selectedWorkspaceId}`;
+        const tokenResponse = await fetch(tokenUrl, {
+          headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+        });
+
+        if (!tokenResponse.ok) {
+          const errorText = await tokenResponse.text();
+          throw new Error(`Failed to get Hume token: ${errorText}`);
+        }
+
+        const tokenData = await tokenResponse.json();
+        const accessToken = tokenData.access_token;
+
+        if (!accessToken) {
+          throw new Error("No access token received from server");
+        }
+
+        console.log("[Hume] Got access token");
+
+        // Get microphone
+        const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        setAudioStream(micStream);
+
+        // Connect to Hume EVI WebSocket
+        const humeWsUrl = `wss://api.hume.ai/v0/evi/chat?access_token=${accessToken}`;
+        const humeSocket = new WebSocket(humeWsUrl);
+        humeSocketRef.current = humeSocket;
+
+        // Audio context for recording
+        const audioContext = new AudioContext({ sampleRate: 16000 });
+        const source = audioContext.createMediaStreamSource(micStream);
+        const processor = audioContext.createScriptProcessor(4096, 1, 1);
+
+        humeSocket.onopen = () => {
+          console.log("[Hume] WebSocket connected");
+          setConnectionStatus("connected");
+
+          // Start call timer
+          setCallDuration(0);
+          callTimerRef.current = setInterval(() => {
+            setCallDuration((prev) => prev + 1);
+          }, 1000);
+
+          // Send session settings with system prompt and tools
+          const sessionSettings = {
+            type: "session_settings",
+            system_prompt: tokenData.agent?.system_prompt ?? editedSystemPrompt,
+            language: tokenData.config?.language ?? language,
+            tools: tokenData.tools ?? [],
+          };
+          humeSocket.send(JSON.stringify(sessionSettings));
+          console.log("[Hume] Sent session settings");
+
+          // Trigger initial greeting if configured
+          const initialGreeting = tokenData.agent?.initial_greeting;
+          if (initialGreeting) {
+            humeSocket.send(
+              JSON.stringify({
+                type: "user_input",
+                text: `[Call connected. Say this greeting now: ${initialGreeting}]`,
+              })
+            );
+            console.log("[Hume] Sent initial greeting trigger");
+          }
+
+          // Connect audio processor
+          source.connect(processor);
+          processor.connect(audioContext.destination);
+
+          processor.onaudioprocess = (e) => {
+            if (humeSocket.readyState === WebSocket.OPEN) {
+              const inputData = e.inputBuffer.getChannelData(0);
+              // Convert float32 to int16
+              const int16Data = new Int16Array(inputData.length);
+              for (let i = 0; i < inputData.length; i++) {
+                const sample = inputData[i] ?? 0;
+                const s = Math.max(-1, Math.min(1, sample));
+                int16Data[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+              }
+              // Send as base64
+              const base64Audio = btoa(String.fromCharCode(...new Uint8Array(int16Data.buffer)));
+              humeSocket.send(JSON.stringify({ type: "audio_input", data: base64Audio }));
+            }
+          };
+        };
+
+        // Audio playback context
+        const playbackContext = new AudioContext({ sampleRate: 24000 });
+
+        humeSocket.onmessage = async (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            console.log("[Hume] Event:", data.type, data);
+
+            if (data.type === "user_message") {
+              // User speech with emotions
+              const content = data.message?.content ?? "";
+              if (content.trim()) {
+                addTranscriptImmediate("user", content);
+                transcriptEntriesRef.current.push({ role: "user", content: content.trim() });
+              }
+            } else if (data.type === "assistant_message") {
+              // Assistant response
+              const content = data.message?.content ?? "";
+              if (content.trim()) {
+                addTranscriptImmediate("assistant", content);
+                transcriptEntriesRef.current.push({ role: "assistant", content: content.trim() });
+              }
+            } else if (data.type === "audio_output") {
+              // Play audio from Hume
+              if (data.data) {
+                const audioBytes = Uint8Array.from(atob(data.data), (c) => c.charCodeAt(0));
+                const audioBuffer = await playbackContext.decodeAudioData(audioBytes.buffer);
+                const source = playbackContext.createBufferSource();
+                source.buffer = audioBuffer;
+                source.connect(playbackContext.destination);
+                source.start();
+              }
+            } else if (data.type === "tool_call") {
+              // Handle tool call
+              const toolCallId = data.tool_call_id;
+              const toolName = data.name;
+              const args = JSON.parse(data.parameters ?? "{}");
+
+              console.log("[Hume] Tool call:", toolName, args);
+
+              try {
+                const toolResponse = await fetch(`${apiBase}/api/v1/tools/execute`, {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    ...(authToken && { Authorization: `Bearer ${authToken}` }),
+                  },
+                  body: JSON.stringify({
+                    tool_name: toolName,
+                    arguments: args,
+                    agent_id: selectedAgentId,
+                  }),
+                });
+
+                const toolResult = await toolResponse.json();
+                console.log("[Hume] Tool result:", toolResult);
+
+                // Send tool response back to Hume
+                humeSocket.send(
+                  JSON.stringify({
+                    type: "tool_response",
+                    tool_call_id: toolCallId,
+                    content: JSON.stringify(toolResult),
+                  })
+                );
+
+                // Handle end_call action
+                if (toolResult.action === "end_call") {
+                  setTimeout(() => {
+                    void saveTranscript();
+                    humeSocket.close();
+                    cleanup();
+                    setConnectionStatus("idle");
+                    setAudioStream(null);
+                    setCallDuration(0);
+                  }, 3000);
+                }
+              } catch (toolError) {
+                console.error("[Hume] Tool error:", toolError);
+                humeSocket.send(
+                  JSON.stringify({
+                    type: "tool_error",
+                    tool_call_id: toolCallId,
+                    error: String(toolError),
+                  })
+                );
+              }
+            } else if (data.type === "error") {
+              console.error("[Hume] Error:", data);
+              addTranscript("system", `Error: ${data.message ?? "Unknown error"}`);
+            }
+          } catch (e) {
+            console.error("[Hume] Failed to parse message:", e);
+          }
+        };
+
+        humeSocket.onerror = (error) => {
+          console.error("[Hume] WebSocket error:", error);
+          toast.error("Hume connection error");
+        };
+
+        humeSocket.onclose = () => {
+          console.log("[Hume] WebSocket closed");
+          processor.disconnect();
+          source.disconnect();
+          void audioContext.close();
+          void playbackContext.close();
+          if (callTimerRef.current) {
+            clearInterval(callTimerRef.current);
+            callTimerRef.current = null;
+          }
+          setConnectionStatus("idle");
+          setAudioStream(null);
+        };
+      } catch (error: unknown) {
+        const err = error as Error;
+        console.error("[Hume] Connection error:", err);
+        addTranscript("system", `Error: ${err.message}`);
+        cleanup();
+        setConnectionStatus("idle");
+        setAudioStream(null);
+
+        if (err.name === "NotAllowedError") {
+          toast.error("Microphone access denied.");
+        } else {
+          toast.error(`Connection failed: ${err.message}`);
+        }
+      }
+      return;
+    }
+
+    // === OPENAI REALTIME CONNECTION (WebRTC) ===
     try {
       addTranscriptImmediate("system", `Connecting to ${selectedAgent.name}...`);
 
       // Fetch ephemeral token from our backend
       // - For specific workspace: include workspace_id to use workspace API keys
       // - For "all" (admin mode): no workspace_id, uses user-level API keys
-      const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-      const authToken = localStorage.getItem("access_token");
       const tokenUrl = isAdminMode
         ? `${apiBase}/api/v1/realtime/token/${selectedAgentId}`
         : `${apiBase}/api/v1/realtime/token/${selectedAgentId}?workspace_id=${selectedWorkspaceId}`;
@@ -1033,7 +1272,7 @@ export default function TestAgentPage() {
                 <SelectTrigger>
                   <SelectValue placeholder="Select a workspace" />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="max-h-[300px]">
                   <SelectItem value="all">All Workspaces (Admin)</SelectItem>
                   {workspaces.map((ws) => (
                     <SelectItem key={ws.id} value={ws.id}>
@@ -1059,13 +1298,13 @@ export default function TestAgentPage() {
                         ? "Select a workspace first"
                         : availableAgents.length === 0
                           ? selectedWorkspaceId === "all"
-                            ? "No premium agents found"
+                            ? "No agents found"
                             : "No agents in this workspace"
                           : "Select an agent"
                     }
                   />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="max-h-[300px]">
                   {availableAgents.map((agent) => (
                     <SelectItem key={agent.agent_id} value={agent.agent_id}>
                       {agent.agent_name}

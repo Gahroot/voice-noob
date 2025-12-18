@@ -3,7 +3,7 @@
 import React from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Check, Zap, TrendingUp, Crown, Sparkles } from "lucide-react";
+import { Check, Zap, TrendingUp, Crown, Sparkles, Heart } from "lucide-react";
 import { PRICING_TIERS } from "@/lib/pricing-tiers";
 import { cn } from "@/lib/utils";
 
@@ -17,6 +17,7 @@ const tierIcons = {
   balanced: TrendingUp,
   "premium-mini": Sparkles,
   premium: Crown,
+  "hume-evi": Heart,
 };
 
 export const TierSelector = React.memo(function TierSelector({
@@ -47,7 +48,8 @@ export const TierSelector = React.memo(function TierSelector({
                       tier.id === "budget" && "bg-green-500/10 text-green-600",
                       tier.id === "balanced" && "bg-blue-500/10 text-blue-600",
                       tier.id === "premium-mini" && "bg-orange-500/10 text-orange-600",
-                      tier.id === "premium" && "bg-purple-500/10 text-purple-600"
+                      tier.id === "premium" && "bg-purple-500/10 text-purple-600",
+                      tier.id === "hume-evi" && "bg-pink-500/10 text-pink-600"
                     )}
                   >
                     <Icon className="h-5 w-5" />

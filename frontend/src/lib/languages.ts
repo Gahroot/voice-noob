@@ -121,11 +121,26 @@ const BALANCED_ADDITIONAL_LANGUAGES: Language[] = [
   { code: "ca-ES", name: "Catalan", whisperCode: "ca" },
 ];
 
-export type PricingTierType = "budget" | "balanced" | "premium-mini" | "premium";
+export type PricingTierType = "budget" | "balanced" | "premium-mini" | "premium" | "hume-evi";
 
 /**
  * Get languages available for a specific pricing tier.
  */
+// Hume EVI supported languages (EVI 3 is English-only, EVI 4-mini supports 11 languages)
+const HUME_EVI_LANGUAGES: Language[] = [
+  { code: "en-US", name: "English (US)", whisperCode: "en" },
+  { code: "ja-JP", name: "Japanese", whisperCode: "ja" },
+  { code: "ko-KR", name: "Korean", whisperCode: "ko" },
+  { code: "es-ES", name: "Spanish (Spain)", whisperCode: "es" },
+  { code: "fr-FR", name: "French", whisperCode: "fr" },
+  { code: "pt-BR", name: "Portuguese (Brazil)", whisperCode: "pt" },
+  { code: "it-IT", name: "Italian", whisperCode: "it" },
+  { code: "de-DE", name: "German", whisperCode: "de" },
+  { code: "ru-RU", name: "Russian", whisperCode: "ru" },
+  { code: "hi-IN", name: "Hindi", whisperCode: "hi" },
+  { code: "ar-SA", name: "Arabic", whisperCode: "ar" },
+];
+
 export function getLanguagesForTier(tier: PricingTierType): Language[] {
   switch (tier) {
     case "budget":
@@ -144,6 +159,10 @@ export function getLanguagesForTier(tier: PricingTierType): Language[] {
       return [...COMMON_LANGUAGES, ...PREMIUM_ADDITIONAL_LANGUAGES].sort((a, b) =>
         a.name.localeCompare(b.name)
       );
+
+    case "hume-evi":
+      // Hume EVI - 11 languages (EVI 3 is English-only, EVI 4-mini supports all)
+      return [...HUME_EVI_LANGUAGES].sort((a, b) => a.name.localeCompare(b.name));
 
     default:
       return COMMON_LANGUAGES;

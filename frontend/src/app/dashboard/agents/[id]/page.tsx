@@ -17,7 +17,7 @@ import {
   type UpdateAgentRequest,
 } from "@/lib/api/agents";
 import { updatePhoneNumber } from "@/lib/api/phone-numbers";
-import { fetchSettings, updateSettings } from "@/lib/api/settings";
+import { fetchSettings, updateSettings, fetchHumeVoices } from "@/lib/api/settings";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -335,9 +335,10 @@ const agentFormSchema = z.object({
   channelMode: z.enum(["voice", "text", "both"]).default("voice"),
 
   // Voice Settings
-  ttsProvider: z.enum(["elevenlabs", "openai", "google"]),
+  ttsProvider: z.enum(["elevenlabs", "openai", "google", "hume"]),
   elevenLabsModel: z.string().default("turbo-v2.5"),
   elevenLabsVoiceId: z.string().optional(),
+  humeVoiceId: z.string().optional(),
   ttsSpeed: z.number().min(0.5).max(2).default(1),
 
   // STT Settings
@@ -390,6 +391,7 @@ const TAB_FIELDS: Record<string, (keyof AgentFormValues)[]> = {
     "ttsProvider",
     "elevenLabsModel",
     "elevenLabsVoiceId",
+    "humeVoiceId",
     "ttsSpeed",
     "sttProvider",
     "deepgramModel",
@@ -509,6 +511,7 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
       ttsProvider: "elevenlabs",
       elevenLabsModel: "turbo-v2.5",
       elevenLabsVoiceId: undefined,
+      humeVoiceId: undefined,
       ttsSpeed: 1,
       sttProvider: "deepgram",
       deepgramModel: "nova-3",
@@ -549,6 +552,7 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
         ttsProvider: "elevenlabs",
         elevenLabsModel: "turbo-v2.5",
         elevenLabsVoiceId: undefined,
+        humeVoiceId: undefined,
         ttsSpeed: 1,
         sttProvider: "deepgram",
         deepgramModel: "nova-3",
@@ -690,10 +694,20 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
   const llmProvider = form.watch("llmProvider");
   const isRealtimeProvider = llmProvider === "openai-realtime";
 
+  // Watch the TTS provider to conditionally show provider-specific options
+  const ttsProvider = form.watch("ttsProvider");
+
+  // Fetch Hume voices when Hume is selected as TTS provider
+  const { data: humeVoicesData, isLoading: isLoadingHumeVoices } = useQuery({
+    queryKey: ["hume-voices", selectedWorkspaces[0]],
+    queryFn: () => fetchHumeVoices(selectedWorkspaces[0]),
+    enabled: ttsProvider === "hume" && !isDeleting,
+    staleTime: 5 * 60 * 1000, // Cache for 5 minutes
+  });
+
   // Get available languages based on agent's pricing tier
   const availableLanguages = useMemo(() => {
-    const tier = (agent?.pricing_tier ?? "balanced") as "budget" | "balanced" | "premium";
-    return getLanguagesForTier(tier);
+    return getLanguagesForTier(agent?.pricing_tier ?? "premium");
   }, [agent?.pricing_tier]);
 
   // Track user-initiated provider changes vs data-loading changes
@@ -803,12 +817,20 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
   };
 
   async function onSubmit(data: AgentFormValues) {
-    // Determine pricing tier based on LLM provider
-    let pricingTier: "budget" | "balanced" | "premium" = "balanced";
-    if (data.llmProvider === "openai-realtime") {
-      pricingTier = "premium";
-    } else if (data.llmModel === "gpt-4o-mini" || data.llmModel === "claude-haiku-4-5") {
-      pricingTier = "budget";
+    // Preserve the agent's existing pricing tier - it was set during creation
+    // and determines the voice provider stack (OpenAI Realtime, Hume EVI, etc.)
+    const pricingTier = agent?.pricing_tier ?? "premium";
+
+    // Determine voice based on TTS provider
+    let voice = data.voice; // Default: OpenAI Realtime voice
+    const isRealtime = data.llmProvider === "openai-realtime";
+    if (!isRealtime) {
+      // Non-realtime providers use separate TTS - select voice based on TTS provider
+      if (data.ttsProvider === "hume" && data.humeVoiceId) {
+        voice = data.humeVoiceId;
+      } else if (data.ttsProvider === "elevenlabs" && data.elevenLabsVoiceId) {
+        voice = data.elevenLabsVoiceId;
+      }
     }
 
     // Derive enabled_tools (integration IDs) from enabledToolIds
@@ -824,7 +846,7 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
       system_prompt: data.systemPrompt,
       initial_greeting: data.initialGreeting?.trim() ? data.initialGreeting.trim() : null,
       language: data.language,
-      voice: data.voice,
+      voice: voice,
       channel_mode: data.channelMode,
       enabled_tools: enabledIntegrations,
       enabled_tool_ids: data.enabledToolIds,
@@ -1292,6 +1314,7 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
                             </FormControl>
                             <SelectContent>
                               <SelectItem value="elevenlabs">ElevenLabs (Recommended)</SelectItem>
+                              <SelectItem value="hume">Hume AI (~100ms latency)</SelectItem>
                               <SelectItem value="openai">OpenAI TTS</SelectItem>
                               <SelectItem value="google">Google Gemini TTS</SelectItem>
                             </SelectContent>
@@ -1302,72 +1325,128 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
                       )}
                     />
 
-                    <FormField
-                      control={form.control}
-                      name="elevenLabsModel"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>ElevenLabs Model</FormLabel>
-                          <Select onValueChange={field.onChange} value={field.value}>
-                            <FormControl>
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              <SelectItem value="eleven_turbo_v2_5">
-                                Turbo v2.5 (Recommended - Best Quality)
-                              </SelectItem>
-                              <SelectItem value="eleven_flash_v2_5">
-                                Flash v2.5 (Fastest - 75ms latency)
-                              </SelectItem>
-                              <SelectItem value="eleven_multilingual_v2">
-                                Multilingual v2 (29 languages)
-                              </SelectItem>
-                              <SelectItem value="eleven_v3">
-                                V3 Alpha (Most Expressive - 70+ languages)
-                              </SelectItem>
-                            </SelectContent>
-                          </Select>
-                          <FormDescription>
-                            Turbo v2.5: ~300ms latency, best quality | Flash v2.5: ~75ms latency
-                          </FormDescription>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
+                    {/* ElevenLabs-specific options */}
+                    {ttsProvider === "elevenlabs" && (
+                      <>
+                        <FormField
+                          control={form.control}
+                          name="elevenLabsModel"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>ElevenLabs Model</FormLabel>
+                              <Select onValueChange={field.onChange} value={field.value}>
+                                <FormControl>
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  <SelectItem value="eleven_turbo_v2_5">
+                                    Turbo v2.5 (Recommended - Best Quality)
+                                  </SelectItem>
+                                  <SelectItem value="eleven_flash_v2_5">
+                                    Flash v2.5 (Fastest - 75ms latency)
+                                  </SelectItem>
+                                  <SelectItem value="eleven_multilingual_v2">
+                                    Multilingual v2 (29 languages)
+                                  </SelectItem>
+                                  <SelectItem value="eleven_v3">
+                                    V3 Alpha (Most Expressive - 70+ languages)
+                                  </SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <FormDescription>
+                                Turbo v2.5: ~300ms latency, best quality | Flash v2.5: ~75ms latency
+                              </FormDescription>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
 
-                    <FormField
-                      control={form.control}
-                      name="elevenLabsVoiceId"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Voice</FormLabel>
-                          <Select onValueChange={field.onChange} value={field.value}>
-                            <FormControl>
-                              <SelectTrigger>
-                                <SelectValue placeholder="Select a voice" />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              <SelectItem value="21m00Tcm4TlvDq8ikWAM">
-                                Rachel (Female, American)
-                              </SelectItem>
-                              <SelectItem value="ErXwobaYiN019PkySvjV">
-                                Antoni (Male, American)
-                              </SelectItem>
-                              <SelectItem value="MF3mGyEYCl7XYWbV9V6O">
-                                Elli (Female, American)
-                              </SelectItem>
-                              <SelectItem value="pNInz6obpgDQGcFmaJgB">
-                                Adam (Male, American)
-                              </SelectItem>
-                            </SelectContent>
-                          </Select>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
+                        <FormField
+                          control={form.control}
+                          name="elevenLabsVoiceId"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Voice</FormLabel>
+                              <Select onValueChange={field.onChange} value={field.value}>
+                                <FormControl>
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Select a voice" />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  <SelectItem value="21m00Tcm4TlvDq8ikWAM">
+                                    Rachel (Female, American)
+                                  </SelectItem>
+                                  <SelectItem value="ErXwobaYiN019PkySvjV">
+                                    Antoni (Male, American)
+                                  </SelectItem>
+                                  <SelectItem value="MF3mGyEYCl7XYWbV9V6O">
+                                    Elli (Female, American)
+                                  </SelectItem>
+                                  <SelectItem value="pNInz6obpgDQGcFmaJgB">
+                                    Adam (Male, American)
+                                  </SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </>
+                    )}
+
+                    {/* Hume AI-specific options */}
+                    {ttsProvider === "hume" && (
+                      <FormField
+                        control={form.control}
+                        name="humeVoiceId"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Hume Voice</FormLabel>
+                            <Select
+                              onValueChange={field.onChange}
+                              value={field.value}
+                              disabled={isLoadingHumeVoices}
+                            >
+                              <FormControl>
+                                <SelectTrigger>
+                                  <SelectValue
+                                    placeholder={
+                                      isLoadingHumeVoices ? "Loading voices..." : "Select a voice"
+                                    }
+                                  />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                {humeVoicesData?.voices.map((voice) => (
+                                  <SelectItem key={voice.id} value={voice.id}>
+                                    <span className="flex items-center gap-2">
+                                      {voice.name}
+                                      {voice.is_custom && (
+                                        <Badge variant="secondary" className="text-[10px]">
+                                          Custom
+                                        </Badge>
+                                      )}
+                                    </span>
+                                    {voice.description && (
+                                      <span className="ml-2 text-xs text-muted-foreground">
+                                        - {voice.description}
+                                      </span>
+                                    )}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <FormDescription>
+                              Hume Octave TTS: ~100ms latency, emotional intelligence, custom voices
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    )}
                   </CardContent>
                 </Card>
 

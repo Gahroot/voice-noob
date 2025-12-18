@@ -124,6 +124,7 @@ class AgentWorkspaceResponse(BaseModel):
     agent_id: str
     agent_name: str
     is_default: bool
+    pricing_tier: str
 
 
 class AddAgentToWorkspaceRequest(BaseModel):
@@ -468,6 +469,7 @@ async def list_workspace_agents(
             "agent_id": str(aw.agent_id),
             "agent_name": agent.name,
             "is_default": aw.is_default,
+            "pricing_tier": agent.pricing_tier,
         }
         for aw, agent in agent_workspaces
     ]

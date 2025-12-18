@@ -55,6 +55,7 @@ import {
   Volume2,
   Phone,
   MessageSquareText,
+  Heart,
 } from "lucide-react";
 
 interface Workspace {
@@ -127,6 +128,29 @@ const API_KEY_PROVIDERS: ApiKeyProvider[] = [
         label: "API Key",
         placeholder: "Enter your ElevenLabs API key",
         settingsKey: "elevenlabs_api_key_set",
+      },
+    ],
+  },
+  {
+    id: "hume",
+    name: "Hume AI",
+    description:
+      "Empathic voice AI with emotion detection (EVI) and ultra-low latency TTS (Octave).",
+    category: "voice-ai",
+    icon: Heart,
+    documentationUrl: "https://dev.hume.ai/docs/introduction/api-key",
+    fields: [
+      {
+        name: "hume_api_key",
+        label: "API Key",
+        placeholder: "Enter your Hume API key",
+        settingsKey: "hume_api_key_set",
+      },
+      {
+        name: "hume_secret_key",
+        label: "Secret Key (Optional)",
+        placeholder: "For OAuth token generation",
+        settingsKey: "hume_secret_key_set",
       },
     ],
   },

@@ -158,6 +158,7 @@ export function CompliancePanel({ open, onOpenChange, initialTab = "gdpr" }: Com
     queryFn: fetchComplianceStatus,
     enabled: open,
     staleTime: 30000,
+    retry: false,
   });
 
   const { data: privacySettings } = useQuery({
@@ -165,6 +166,7 @@ export function CompliancePanel({ open, onOpenChange, initialTab = "gdpr" }: Com
     queryFn: fetchPrivacySettings,
     enabled: open,
     staleTime: 30000,
+    retry: false,
   });
 
   const updateSettingsMutation = useMutation({

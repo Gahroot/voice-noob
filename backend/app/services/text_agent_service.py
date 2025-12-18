@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.integrations import get_workspace_integrations
 from app.api.settings import get_user_api_keys
 from app.core.auth import user_id_to_uuid
+from app.core.config import settings
 from app.models.agent import Agent
 from app.models.sms import MessageDirection, SMSConversation, SMSMessage
 from app.services.sms_service import SMSService
@@ -113,7 +114,7 @@ async def build_message_context(
     return context
 
 
-async def generate_text_response(  # noqa: PLR0915
+async def generate_text_response(  # noqa: PLR0912, PLR0915
     agent: Agent,
     conversation: SMSConversation,
     db: AsyncSession,
@@ -228,8 +229,12 @@ async def generate_text_response(  # noqa: PLR0915
             create_kwargs["tools"] = tools
             create_kwargs["tool_choice"] = "auto"
 
-        # Initial LLM call
-        response = await client.chat.completions.create(**create_kwargs)
+        # Initial LLM call with timeout to prevent indefinite hangs
+        openai_timeout = settings.OPENAI_TIMEOUT
+        response = await asyncio.wait_for(
+            client.chat.completions.create(**create_kwargs),
+            timeout=openai_timeout,
+        )
 
         assistant_message = response.choices[0].message
 
@@ -285,11 +290,14 @@ async def generate_text_response(  # noqa: PLR0915
                 *tool_results,
             ]
 
-            final_response = await client.chat.completions.create(
-                model=model,
-                messages=messages_with_tools,  # type: ignore[arg-type]
-                temperature=agent.temperature,
-                max_tokens=min(agent.max_tokens, 500),
+            final_response = await asyncio.wait_for(
+                client.chat.completions.create(
+                    model=model,
+                    messages=messages_with_tools,  # type: ignore[arg-type]
+                    temperature=agent.temperature,
+                    max_tokens=min(agent.max_tokens, 500),
+                ),
+                timeout=openai_timeout,
             )
             response_text = final_response.choices[0].message.content
         else:
@@ -301,6 +309,10 @@ async def generate_text_response(  # noqa: PLR0915
         log.info("text_response_generated", length=len(response_text) if response_text else 0)
         return response_text
 
+    except TimeoutError:
+        log.warning("openai_api_timeout", timeout=settings.OPENAI_TIMEOUT)
+        await tool_registry.close()
+        return None
     except Exception as e:
         log.exception("text_response_error", error=str(e))
         await tool_registry.close()

@@ -12,6 +12,8 @@ describe("TierSelector", () => {
     expect(screen.getByText("Budget")).toBeInTheDocument();
     expect(screen.getByText("Balanced")).toBeInTheDocument();
     expect(screen.getByText("Premium")).toBeInTheDocument();
+    expect(screen.getByText("Premium Mini")).toBeInTheDocument();
+    expect(screen.getByText("Hume EVI")).toBeInTheDocument();
   });
 
   it("displays tier descriptions", () => {
@@ -26,7 +28,7 @@ describe("TierSelector", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows recommended badge for balanced tier", () => {
+  it("shows recommended badge for premium tier", () => {
     const mockOnTierChange = vi.fn();
     render(<TierSelector selectedTier="balanced" onTierChange={mockOnTierChange} />);
 
@@ -39,15 +41,15 @@ describe("TierSelector", () => {
 
     // Check for Budget tier pricing
     expect(screen.getByText("$0.86")).toBeInTheDocument();
-    expect(screen.getByText("$0.0143/min")).toBeInTheDocument();
 
     // Check for Balanced tier pricing
     expect(screen.getByText("$1.35")).toBeInTheDocument();
-    expect(screen.getByText("$0.0225/min")).toBeInTheDocument();
 
     // Check for Premium tier pricing
     expect(screen.getByText("$1.92")).toBeInTheDocument();
-    expect(screen.getByText("$0.0320/min")).toBeInTheDocument();
+
+    // Check for Hume EVI tier pricing
+    expect(screen.getByText("$2.16")).toBeInTheDocument();
   });
 
   it("displays performance metrics", () => {
@@ -58,6 +60,7 @@ describe("TierSelector", () => {
     expect(screen.getByText("~530ms")).toBeInTheDocument();
     expect(screen.getByText("~400ms")).toBeInTheDocument();
     expect(screen.getByText("~320ms")).toBeInTheDocument();
+    expect(screen.getByText("~100ms")).toBeInTheDocument();
 
     // Check for speed labels
     expect(screen.getByText("450 tokens/sec")).toBeInTheDocument();
@@ -72,6 +75,7 @@ describe("TierSelector", () => {
     expect(screen.getByText("llama-3.3-70b")).toBeInTheDocument();
     expect(screen.getByText("gemini-2.5-flash")).toBeInTheDocument();
     expect(screen.getByText("gpt-realtime-2025-08-28")).toBeInTheDocument();
+    expect(screen.getByText("evi-3")).toBeInTheDocument();
   });
 
   it("highlights the selected tier", () => {

@@ -1,6 +1,7 @@
-"""WebRTC and WebSocket API for GPT Realtime voice calls."""
+"""WebRTC and WebSocket API for GPT Realtime and Hume EVI voice calls."""
 
 import asyncio
+import base64
 import contextlib
 import json
 import uuid
@@ -22,6 +23,7 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.models.agent import Agent
 from app.services.gpt_realtime import GPTRealtimeSession, build_instructions_with_language
+from app.services.hume_evi import HumeEVISession
 from app.services.tools.registry import ToolRegistry
 
 router = APIRouter(prefix="/ws", tags=["realtime"])
@@ -257,6 +259,407 @@ async def realtime_websocket(
         with contextlib.suppress(Exception):
             await websocket.close()
         client_logger.info("websocket_closed")
+
+
+# =============================================================================
+# Hume EVI WebSocket Endpoint
+# =============================================================================
+
+
+@router.websocket("/hume/{agent_id}")
+async def hume_websocket(  # noqa: PLR0915
+    websocket: WebSocket,
+    agent_id: str,
+    workspace_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """WebSocket endpoint for Hume EVI voice calls with emotion detection.
+
+    This endpoint:
+    1. Accepts WebSocket connection from client (browser)
+    2. Loads agent configuration and enabled integrations
+    3. Initializes Hume EVI session with tools and emotion tracking
+    4. Bridges audio between client and Hume EVI
+    5. Routes tool calls to internal tool handlers
+    6. Tracks emotion/expression measurements throughout the call
+
+    Args:
+        websocket: WebSocket connection
+        agent_id: Agent UUID
+        workspace_id: Workspace UUID (required for API key isolation)
+        db: Database session
+    """
+    session_id = str(uuid.uuid4())
+    client_logger = logger.bind(
+        endpoint="hume_websocket",
+        agent_id=agent_id,
+        workspace_id=workspace_id,
+        session_id=session_id,
+    )
+
+    await websocket.accept()
+    client_logger.info("hume_websocket_connected")
+
+    hume_session: HumeEVISession | None = None
+
+    try:
+        # Validate UUIDs first
+        try:
+            agent_uuid = uuid.UUID(agent_id)
+            workspace_uuid = uuid.UUID(workspace_id)
+        except ValueError:
+            client_logger.warning("invalid_uuid_format")
+            await websocket.send_json(
+                {"type": "error", "error": "Invalid agent or workspace ID format"}
+            )
+            await websocket.close(code=4000)
+            return
+
+        # Load agent configuration with workspace verification
+        from app.models.workspace import AgentWorkspace
+
+        result = await db.execute(select(Agent).where(Agent.id == agent_uuid))
+        agent = result.scalar_one_or_none()
+
+        if not agent:
+            await websocket.send_json({"type": "error", "error": f"Agent {agent_id} not found"})
+            await websocket.close()
+            return
+
+        if not agent.is_active:
+            await websocket.send_json({"type": "error", "error": "Agent is not active"})
+            await websocket.close()
+            return
+
+        # Check if Hume EVI tier
+        if agent.pricing_tier != "hume-evi":
+            await websocket.send_json(
+                {"type": "error", "error": "Hume EVI only available for hume-evi tier agents"}
+            )
+            await websocket.close()
+            return
+
+        # Verify agent is associated with the specified workspace
+        workspace_check = await db.execute(
+            select(AgentWorkspace).where(
+                AgentWorkspace.agent_id == agent_uuid,
+                AgentWorkspace.workspace_id == workspace_uuid,
+            )
+        )
+        if not workspace_check.scalar_one_or_none():
+            client_logger.warning(
+                "unauthorized_workspace_access",
+                agent_id=agent_id,
+                workspace_id=workspace_id,
+            )
+            await websocket.send_json(
+                {"type": "error", "error": "Agent not authorized for this workspace"}
+            )
+            await websocket.close(code=4003)
+            return
+
+        client_logger.info(
+            "agent_loaded",
+            agent_name=agent.name,
+            tier=agent.pricing_tier,
+            tools_count=len(agent.enabled_tools),
+        )
+
+        # Build agent config for Hume EVI
+        agent_config = {
+            "system_prompt": agent.system_prompt,
+            "enabled_tools": agent.enabled_tools,
+            "language": agent.language or "en-US",
+            "voice": agent.voice or "kora",
+            "initial_greeting": agent.initial_greeting,
+        }
+
+        # Initialize Hume EVI session
+        hume_session = HumeEVISession(
+            db=db,
+            user_id=agent.user_id,
+            agent_config=agent_config,
+            session_id=session_id,
+            workspace_id=workspace_uuid,
+        )
+
+        await hume_session.initialize()
+
+        # Send ready signal to client
+        await websocket.send_json(
+            {
+                "type": "session.ready",
+                "session_id": session_id,
+                "agent": {
+                    "id": str(agent.id),
+                    "name": agent.name,
+                    "tier": agent.pricing_tier,
+                },
+            }
+        )
+
+        # Start bidirectional streaming
+        await _bridge_hume_audio_streams(
+            client_ws=websocket,
+            hume_session=hume_session,
+            logger=client_logger,
+        )
+
+    except WebSocketDisconnect:
+        client_logger.info("hume_websocket_disconnected")
+    except Exception as e:
+        client_logger.exception("hume_websocket_error", error=str(e))
+        with contextlib.suppress(Exception):
+            await websocket.send_json({"type": "error", "error": str(e)})
+    finally:
+        # Save call record with emotion data
+        if hume_session:
+            try:
+                from datetime import UTC, datetime
+
+                from app.models.call_record import CallRecord
+
+                # Create call record with emotion data
+                call_record = CallRecord(
+                    user_id=hume_session.user_id_uuid,
+                    workspace_id=hume_session.workspace_id,
+                    agent_id=uuid.UUID(agent_id),
+                    provider="hume",
+                    provider_call_id=session_id,
+                    direction="outbound",
+                    from_number="web",
+                    to_number="web",
+                    status="completed",
+                    started_at=datetime.now(UTC),
+                    ended_at=datetime.now(UTC),
+                    duration_seconds=0,  # Will be calculated
+                    transcript=hume_session.get_transcript(),
+                    emotion_data={
+                        "entries": hume_session.get_emotion_data(),
+                        "summary": hume_session.get_emotion_summary(),
+                    },
+                )
+                db.add(call_record)
+                await db.commit()
+                client_logger.info("hume_call_record_saved", call_id=str(call_record.id))
+            except Exception as e:
+                client_logger.warning("failed_to_save_call_record", error=str(e))
+
+            await hume_session.cleanup()
+
+        with contextlib.suppress(Exception):
+            await websocket.close()
+        client_logger.info("hume_websocket_closed")
+
+
+async def _bridge_hume_audio_streams(  # noqa: PLR0915
+    client_ws: WebSocket,
+    hume_session: HumeEVISession,
+    logger: Any,
+) -> None:
+    """Bridge audio streams between client and Hume EVI.
+
+    Args:
+        client_ws: Client WebSocket connection
+        hume_session: Hume EVI session
+        logger: Structured logger
+    """
+    if not hume_session.socket:
+        logger.error("no_hume_socket")
+        return
+
+    # Trigger initial greeting if configured
+    await hume_session.trigger_initial_greeting()
+
+    async def client_to_hume() -> None:
+        """Forward audio from client to Hume EVI."""
+        try:
+            while True:
+                message = await client_ws.receive()
+
+                if message["type"] == "websocket.disconnect":
+                    logger.info("client_initiated_disconnect")
+                    break
+
+                if message["type"] == "websocket.receive":
+                    if "bytes" in message:
+                        # Audio data - send to Hume
+                        audio_data = message["bytes"]
+                        logger.debug("client_audio_received", size_bytes=len(audio_data))
+                        await hume_session.send_audio(audio_data)
+                    elif "text" in message:
+                        # JSON event from client
+                        try:
+                            data = json.loads(message["text"])
+                            event_type = data.get("type", "")
+                            logger.info("client_event", event_type=event_type)
+
+                            # Handle specific client events
+                            if event_type == "user_interrupt":
+                                # User interrupted - Hume handles this automatically
+                                pass
+
+                        except json.JSONDecodeError as e:
+                            logger.warning("invalid_json_from_client", error=str(e))
+
+        except WebSocketDisconnect:
+            logger.info("client_disconnected_exception")
+        except Exception as e:
+            logger.exception("client_to_hume_error", error=str(e))
+
+    async def hume_to_client() -> None:  # noqa: PLR0912, PLR0915
+        """Forward messages from Hume EVI to client."""
+        try:
+            if not hume_session.socket:
+                logger.error("no_hume_socket_for_receive")
+                return
+
+            logger.info("starting_hume_to_client_loop")
+
+            # Listen for Hume EVI events
+            async for message in hume_session.socket:
+                try:
+                    # Parse Hume message
+                    if hasattr(message, "type"):
+                        msg_type = message.type
+
+                        logger.info("hume_event", event_type=msg_type)
+
+                        # Handle different Hume message types
+                        if msg_type == "audio_output":
+                            # Audio from Hume - forward to client
+                            if hasattr(message, "data"):
+                                audio_bytes = base64.b64decode(message.data)
+                                await client_ws.send_bytes(audio_bytes)
+                                logger.debug("audio_sent_to_client", size=len(audio_bytes))
+
+                        elif msg_type == "user_message":
+                            # User transcript with emotions
+                            if hasattr(message, "message"):
+                                content = (
+                                    message.message.content
+                                    if hasattr(message.message, "content")
+                                    else ""
+                                )
+                                emotions = {}
+                                if (
+                                    hasattr(message, "models")
+                                    and hasattr(message.models, "prosody")
+                                    and hasattr(message.models.prosody, "scores")
+                                ):
+                                    emotions = dict(message.models.prosody.scores)
+
+                                hume_session.add_user_transcript(content, emotions)
+
+                                # Forward to client
+                                await client_ws.send_json(
+                                    {
+                                        "type": "user_message",
+                                        "content": content,
+                                        "emotions": emotions,
+                                    }
+                                )
+
+                        elif msg_type == "assistant_message":
+                            # Assistant response
+                            if hasattr(message, "message"):
+                                content = (
+                                    message.message.content
+                                    if hasattr(message.message, "content")
+                                    else ""
+                                )
+                                hume_session.add_assistant_transcript(content)
+
+                                await client_ws.send_json(
+                                    {
+                                        "type": "assistant_message",
+                                        "content": content,
+                                    }
+                                )
+
+                        elif msg_type == "assistant_end":
+                            # Assistant finished speaking
+                            hume_session.flush_assistant_text()
+                            await client_ws.send_json({"type": "assistant_end"})
+
+                        elif msg_type == "tool_call":
+                            # Tool call from Hume
+                            if hasattr(message, "tool_call_id") and hasattr(message, "name"):
+                                tool_call = {
+                                    "tool_call_id": message.tool_call_id,
+                                    "name": message.name,
+                                    "arguments": json.loads(message.parameters)
+                                    if hasattr(message, "parameters")
+                                    else {},
+                                }
+
+                                logger.info("handling_hume_tool_call", tool_name=tool_call["name"])
+
+                                # Execute tool
+                                result = await hume_session.handle_tool_call(tool_call)
+
+                                # Send result back to Hume
+                                await hume_session.socket.send_tool_response(
+                                    tool_call_id=tool_call["tool_call_id"],
+                                    content=json.dumps(result),
+                                )
+
+                                # Notify client
+                                await client_ws.send_json(
+                                    {
+                                        "type": "tool_call",
+                                        "name": tool_call["name"],
+                                        "result": result,
+                                    }
+                                )
+
+                        elif msg_type == "error":
+                            # Error from Hume
+                            error_msg = str(message) if message else "Unknown error"
+                            logger.error("hume_error", error=error_msg)
+                            await client_ws.send_json({"type": "error", "error": error_msg})
+
+                        else:
+                            # Forward other events to client
+                            event_data = {}
+                            if hasattr(message, "model_dump"):
+                                event_data = message.model_dump()
+                            elif hasattr(message, "__dict__"):
+                                event_data = {
+                                    k: v
+                                    for k, v in message.__dict__.items()
+                                    if not k.startswith("_")
+                                }
+
+                            await client_ws.send_json(
+                                {
+                                    "type": msg_type,
+                                    "event": event_data,
+                                }
+                            )
+
+                except Exception as e:
+                    logger.exception("hume_event_forward_error", error=str(e))
+
+        except Exception as e:
+            logger.exception("hume_to_client_error", error=str(e))
+
+    # Run both directions concurrently
+    results = await asyncio.gather(
+        client_to_hume(),
+        hume_to_client(),
+        return_exceptions=True,
+    )
+
+    for i, result in enumerate(results):
+        if isinstance(result, BaseException):
+            task_name = "client_to_hume" if i == 0 else "hume_to_client"
+            logger.error(
+                "hume_bridge_task_failed",
+                task=task_name,
+                error=str(result),
+                error_type=type(result).__name__,
+            )
 
 
 async def _bridge_audio_streams(
@@ -564,6 +967,13 @@ async def get_ephemeral_token(
     if not agent.is_active:
         raise HTTPException(status_code=400, detail="Agent is not active")
 
+    # Route Hume EVI agents to dedicated endpoint
+    if agent.pricing_tier == "hume-evi":
+        raise HTTPException(
+            status_code=400,
+            detail="Hume EVI agents should use /api/v1/realtime/hume-token/{agent_id}",
+        )
+
     if agent.pricing_tier not in ("premium", "premium-mini"):
         raise HTTPException(
             status_code=400, detail="WebRTC Realtime only available for Premium tier agents"
@@ -669,6 +1079,230 @@ async def get_ephemeral_token(
 
 
 # =============================================================================
+# Hume EVI Token Endpoint
+# =============================================================================
+
+
+@webrtc_router.get("/hume-token/{agent_id}")
+async def get_hume_evi_token(  # noqa: PLR0912, PLR0915
+    agent_id: str,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+    workspace_id: str | None = None,
+) -> dict[str, Any]:
+    """Get an access token for Hume EVI WebSocket connection.
+
+    This endpoint fetches a short-lived OAuth access token from Hume's API
+    that can be used client-side to establish WebSocket connections to EVI.
+
+    Args:
+        agent_id: Agent UUID
+        current_user: Authenticated user
+        db: Database session
+        workspace_id: Optional workspace UUID (falls back to user-level API key)
+
+    Returns:
+        Access token and agent configuration for Hume EVI connection
+    """
+    from app.services.hume_evi import HUME_SUPPORTED_LANGUAGES
+
+    user_id = current_user.id
+    user_uuid = user_id_to_uuid(user_id)
+    token_logger = logger.bind(
+        endpoint="hume_evi_token",
+        agent_id=agent_id,
+        user_id=user_id,
+    )
+
+    token_logger.info("hume_evi_token_requested")
+
+    # Load agent configuration
+    result = await db.execute(select(Agent).where(Agent.id == uuid.UUID(agent_id)))
+    agent = result.scalar_one_or_none()
+
+    if not agent:
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+
+    if not agent.is_active:
+        raise HTTPException(status_code=400, detail="Agent is not active")
+
+    if agent.pricing_tier != "hume-evi":
+        raise HTTPException(
+            status_code=400, detail="This endpoint is only for Hume EVI tier agents"
+        )
+
+    # Get workspace for API key lookup
+    workspace_uuid = uuid.UUID(workspace_id) if workspace_id else None
+
+    # Get Hume API credentials from user settings
+    user_settings = await get_user_api_keys(user_uuid, db, workspace_id=workspace_uuid)
+
+    if not user_settings or not user_settings.hume_api_key:
+        token_logger.warning("workspace_missing_hume_key")
+        raise HTTPException(
+            status_code=400,
+            detail="Hume API key not configured. Please add it in Settings > Workspace API Keys.",
+        )
+
+    if not user_settings.hume_secret_key:
+        token_logger.warning("workspace_missing_hume_secret")
+        raise HTTPException(
+            status_code=400,
+            detail="Hume Secret key not configured. Please add it in Settings > Workspace API Keys.",
+        )
+
+    api_key = user_settings.hume_api_key
+    secret_key = user_settings.hume_secret_key
+
+    token_logger.info("requesting_hume_access_token")
+
+    # Fetch OAuth access token from Hume
+    # Uses Basic auth with API key:Secret key (base64 encoded)
+    try:
+        credentials = f"{api_key}:{secret_key}"
+        encoded_credentials = base64.b64encode(credentials.encode()).decode()
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://api.hume.ai/oauth2-cc/token",
+                headers={
+                    "Authorization": f"Basic {encoded_credentials}",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                data={"grant_type": "client_credentials"},
+                timeout=30.0,
+            )
+
+            if not response.is_success:
+                token_logger.error(
+                    "hume_token_error",
+                    status_code=response.status_code,
+                    response_text=response.text,
+                )
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"Hume API error: {response.text}",
+                )
+
+            token_data = response.json()
+            access_token = token_data.get("access_token")
+
+            if not access_token:
+                raise HTTPException(status_code=500, detail="No access token received from Hume")
+
+            token_logger.info("hume_access_token_created")
+
+            # Get workspace timezone
+            workspace_timezone = "UTC"
+            if workspace_uuid:
+                from app.models.workspace import Workspace
+
+                ws_result = await db.execute(
+                    select(Workspace).where(Workspace.id == workspace_uuid)
+                )
+                workspace = ws_result.scalar_one_or_none()
+                if workspace and workspace.settings:
+                    workspace_timezone = workspace.settings.get("timezone", "UTC")
+
+            # Determine EVI version based on language
+            language = agent.language or "en-US"
+            evi_version = "3" if language == "en-US" else "4-mini"
+
+            # Build instructions with context
+            system_prompt = agent.system_prompt or "You are a helpful voice assistant."
+            language_name = HUME_SUPPORTED_LANGUAGES.get(language, language)
+
+            # Get current datetime for context
+            from datetime import datetime
+            from zoneinfo import ZoneInfo
+
+            try:
+                tz = ZoneInfo(workspace_timezone)
+                now = datetime.now(tz)
+                current_datetime = now.strftime("%A, %B %d, %Y at %I:%M %p")
+            except Exception:
+                current_datetime = datetime.now().strftime("%A, %B %d, %Y at %I:%M %p")
+
+            full_prompt = f"""[CONTEXT]
+Language: {language_name}
+Timezone: {workspace_timezone}
+Current: {current_datetime}
+
+[RULES]
+- Speak ONLY in {language_name}
+- Be empathetic and respond to the user's emotional state
+- Keep responses concise - this is voice, not text
+- Summarize tool results naturally
+
+[YOUR ROLE]
+{system_prompt}"""
+
+            # Get integration credentials for tools
+            integrations: dict[str, dict[str, Any]] = {}
+            if workspace_uuid:
+                integrations = await get_workspace_integrations(user_uuid, workspace_uuid, db)
+
+            # Build tool definitions
+            tool_registry = ToolRegistry(
+                db, user_id, integrations=integrations, workspace_id=workspace_uuid
+            )
+            tools = tool_registry.get_all_tool_definitions(
+                agent.enabled_tools or [], agent.enabled_tool_ids, agent.integration_settings
+            )
+
+            # Hume EVI expects tools in flat format (name, description, parameters at top level)
+            # Handle both flat format (name at top) and nested format (function.name)
+            hume_tools = []
+            for tool in tools:
+                # Check if nested under "function" key (OpenAI Chat Completions format)
+                if "function" in tool:
+                    func = tool["function"]
+                    hume_tool = {
+                        "name": func.get("name", ""),
+                        "description": func.get("description", ""),
+                        "parameters": func.get("parameters", {}),
+                    }
+                else:
+                    # Flat format (OpenAI Realtime format)
+                    hume_tool = {
+                        "name": tool.get("name", ""),
+                        "description": tool.get("description", ""),
+                        "parameters": tool.get("parameters", {}),
+                    }
+                hume_tools.append(hume_tool)
+
+            token_logger.info(
+                "hume_token_prepared",
+                tool_count=len(hume_tools),
+                evi_version=evi_version,
+            )
+
+            return {
+                "access_token": access_token,
+                "expires_in": token_data.get("expires_in", 1800),  # Default 30 min
+                "agent": {
+                    "id": str(agent.id),
+                    "name": agent.name,
+                    "tier": agent.pricing_tier,
+                    "system_prompt": full_prompt,
+                    "language": language,
+                    "voice": agent.voice or "kora",
+                    "initial_greeting": agent.initial_greeting,
+                    "enabled_tools": agent.enabled_tools,
+                },
+                "config": {
+                    "evi_version": evi_version,
+                    "language": language,
+                },
+                "tools": hume_tools,
+            }
+
+    except httpx.RequestError as e:
+        token_logger.exception("hume_token_request_error", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to connect to Hume: {e!s}") from e
+
+
+# =============================================================================
 # Transcript Saving Endpoint
 # =============================================================================
 
@@ -725,9 +1359,9 @@ async def save_transcript(
     if not agent:
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
 
-    # Verify user owns this agent
+    # Verify user owns this agent (superusers can save transcripts for any agent they test)
     user_uuid = user_id_to_uuid(user_id)
-    if agent.user_id != user_uuid:
+    if agent.user_id != user_uuid and not current_user.is_superuser:
         raise HTTPException(status_code=403, detail="Not authorized to access this agent")
 
     # Skip if transcript is empty

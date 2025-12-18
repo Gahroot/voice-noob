@@ -4,7 +4,7 @@ import { PRICING_TIERS, calculateMonthlyCost, compareTiers } from "../pricing-ti
 describe("PRICING_TIERS", () => {
   it("exports an array of pricing tiers", () => {
     expect(Array.isArray(PRICING_TIERS)).toBe(true);
-    expect(PRICING_TIERS.length).toBe(4); // budget, balanced, premium-mini, premium
+    expect(PRICING_TIERS.length).toBe(5); // hume-evi, premium, premium-mini, balanced, budget
   });
 
   it("contains budget tier", () => {
@@ -173,7 +173,7 @@ describe("calculateMonthlyCost", () => {
 describe("compareTiers", () => {
   it("returns comparison for all tiers", () => {
     const comparison = compareTiers(1000, 5);
-    expect(comparison.length).toBe(4); // budget, balanced, premium-mini, premium
+    expect(comparison.length).toBe(5); // hume-evi, premium, premium-mini, balanced, budget
   });
 
   it("includes tier information in comparison", () => {
@@ -228,12 +228,13 @@ describe("compareTiers", () => {
     expect(long[0]?.cost.totalCost).toBeGreaterThan(short[0]?.cost.totalCost ?? 0);
   });
 
-  it("maintains tier order (premium, premium-mini, balanced, budget)", () => {
+  it("maintains tier order (hume-evi, premium, premium-mini, balanced, budget)", () => {
     const comparison = compareTiers(1000, 5);
-    expect(comparison[0]?.tier.id).toBe("premium");
-    expect(comparison[1]?.tier.id).toBe("premium-mini");
-    expect(comparison[2]?.tier.id).toBe("balanced");
-    expect(comparison[3]?.tier.id).toBe("budget");
+    expect(comparison[0]?.tier.id).toBe("hume-evi");
+    expect(comparison[1]?.tier.id).toBe("premium");
+    expect(comparison[2]?.tier.id).toBe("premium-mini");
+    expect(comparison[3]?.tier.id).toBe("balanced");
+    expect(comparison[4]?.tier.id).toBe("budget");
   });
 
   it("includes full cost breakdown for each tier", () => {
@@ -252,9 +253,11 @@ describe("compareTiers", () => {
     const premiumItem = comparison.find((item) => item.tier.id === "premium");
     expect(premiumItem?.savingsVsPremium).toBe(0);
 
-    // All other tiers should have positive savings
-    const nonPremiumTiers = comparison.filter((item) => item.tier.id !== "premium");
-    nonPremiumTiers.forEach((item) => {
+    // All other tiers (except hume-evi which is more expensive) should have positive savings
+    const cheaperTiers = comparison.filter(
+      (item) => item.tier.id !== "premium" && item.tier.id !== "hume-evi"
+    );
+    cheaperTiers.forEach((item) => {
       expect(item.savingsVsPremium).toBeGreaterThan(0);
     });
   });

@@ -61,6 +61,7 @@ class EmbedConfigResponse(BaseModel):
     primary_color: str
     language: str
     voice: str
+    pricing_tier: str  # Used to determine connection type (premium/hume-evi)
 
 
 class EmbedSessionResponse(BaseModel):
@@ -171,6 +172,7 @@ async def get_embed_config(
         primary_color=embed_settings.get("primary_color", "#6366f1"),
         language=agent.language,
         voice=agent.voice,
+        pricing_tier=agent.pricing_tier,
     )
 
 
@@ -510,6 +512,13 @@ async def get_embed_ephemeral_token(  # noqa: PLR0915
         log.warning("origin_not_allowed", allowed=agent.allowed_domains)
         raise HTTPException(status_code=403, detail="Origin not allowed")
 
+    # Route Hume EVI agents to dedicated endpoint
+    if agent.pricing_tier == "hume-evi":
+        raise HTTPException(
+            status_code=400,
+            detail="Hume EVI agents should use /api/public/embed/{public_id}/hume-token",
+        )
+
     # Check premium tier
     if agent.pricing_tier not in ("premium", "premium-mini"):
         raise HTTPException(
@@ -649,6 +658,238 @@ async def get_embed_ephemeral_token(  # noqa: PLR0915
     except httpx.RequestError as e:
         log.exception("openai_token_request_error", error=str(e))
         raise HTTPException(status_code=500, detail=f"Failed to connect to OpenAI: {e!s}") from e
+
+
+@router.post("/{public_id}/hume-token")
+async def get_embed_hume_token(  # noqa: PLR0912, PLR0915
+    public_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    origin: str | None = Header(None),
+) -> dict[str, Any]:
+    """Get an access token for Hume EVI WebSocket connection (public embed).
+
+    This public endpoint allows embed widgets to establish WebSocket
+    connections to Hume EVI for voice calls.
+
+    Security:
+    - Origin validation against allowed domains
+    - Rate limiting (inherited from router)
+    - Short-lived tokens (expire in ~30 minutes)
+    """
+    import base64
+
+    import httpx
+
+    from app.api.settings import get_user_api_keys
+    from app.core.auth import user_id_to_uuid
+    from app.models.workspace import AgentWorkspace
+    from app.services.hume_evi import HUME_SUPPORTED_LANGUAGES
+
+    log = logger.bind(endpoint="embed_hume_token", public_id=public_id, origin=origin)
+
+    # Get agent
+    agent = await get_agent_by_public_id(public_id, db)
+    if not agent:
+        log.warning("agent_not_found")
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    if not agent.embed_enabled:
+        log.warning("embed_disabled")
+        raise HTTPException(status_code=403, detail="Embedding is disabled for this agent")
+
+    if not agent.is_active:
+        log.warning("agent_inactive")
+        raise HTTPException(status_code=403, detail="Agent is not active")
+
+    # Validate origin
+    if not validate_origin(origin, agent.allowed_domains):
+        log.warning("origin_not_allowed", allowed=agent.allowed_domains)
+        raise HTTPException(status_code=403, detail="Origin not allowed")
+
+    # Check Hume EVI tier
+    if agent.pricing_tier != "hume-evi":
+        raise HTTPException(
+            status_code=400, detail="This endpoint is only for Hume EVI tier agents"
+        )
+
+    # Get workspace for API key lookup
+    workspace_result = await db.execute(
+        select(AgentWorkspace).where(AgentWorkspace.agent_id == agent.id).limit(1)
+    )
+    agent_workspace = workspace_result.scalar_one_or_none()
+
+    if not agent_workspace:
+        log.warning("no_workspace_for_agent")
+        raise HTTPException(status_code=500, detail="Agent not configured properly")
+
+    # Get Hume API credentials
+    user_uuid = user_id_to_uuid(agent.user_id)
+    user_settings = await get_user_api_keys(
+        user_uuid, db, workspace_id=agent_workspace.workspace_id
+    )
+
+    if not user_settings or not user_settings.hume_api_key:
+        log.warning("workspace_missing_hume_key", workspace_id=str(agent_workspace.workspace_id))
+        raise HTTPException(
+            status_code=400,
+            detail="Hume API key not configured for this workspace.",
+        )
+
+    if not user_settings.hume_secret_key:
+        log.warning("workspace_missing_hume_secret", workspace_id=str(agent_workspace.workspace_id))
+        raise HTTPException(
+            status_code=400,
+            detail="Hume Secret key not configured for this workspace.",
+        )
+
+    api_key = user_settings.hume_api_key
+    secret_key = user_settings.hume_secret_key
+
+    log.info("requesting_hume_access_token")
+
+    # Fetch OAuth access token from Hume
+    try:
+        credentials = f"{api_key}:{secret_key}"
+        encoded_credentials = base64.b64encode(credentials.encode()).decode()
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://api.hume.ai/oauth2-cc/token",
+                headers={
+                    "Authorization": f"Basic {encoded_credentials}",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                data={"grant_type": "client_credentials"},
+                timeout=30.0,
+            )
+
+            if not response.is_success:
+                log.error(
+                    "hume_token_error",
+                    status_code=response.status_code,
+                    response_text=response.text,
+                )
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"Hume API error: {response.text}",
+                )
+
+            token_data = response.json()
+            access_token = token_data.get("access_token")
+
+            if not access_token:
+                raise HTTPException(status_code=500, detail="No access token received from Hume")
+
+            log.info("hume_access_token_created")
+
+            # Get workspace timezone
+            workspace_timezone = "UTC"
+            ws_query_result = await db.execute(
+                select(Workspace).where(Workspace.id == agent_workspace.workspace_id)
+            )
+            ws_obj = ws_query_result.scalar_one_or_none()
+            if ws_obj and ws_obj.settings:
+                workspace_timezone = ws_obj.settings.get("timezone", "UTC")
+
+            # Determine EVI version based on language
+            language = agent.language or "en-US"
+            evi_version = "3" if language == "en-US" else "4-mini"
+
+            # Build instructions with context
+            system_prompt = agent.system_prompt or "You are a helpful voice assistant."
+            language_name = HUME_SUPPORTED_LANGUAGES.get(language, language)
+
+            # Get current datetime for context
+            from datetime import datetime as dt
+            from zoneinfo import ZoneInfo
+
+            try:
+                tz = ZoneInfo(workspace_timezone)
+                now = dt.now(tz)
+                current_datetime = now.strftime("%A, %B %d, %Y at %I:%M %p")
+            except Exception:
+                current_datetime = dt.now().strftime("%A, %B %d, %Y at %I:%M %p")
+
+            full_prompt = f"""[CONTEXT]
+Language: {language_name}
+Timezone: {workspace_timezone}
+Current: {current_datetime}
+
+[RULES]
+- Speak ONLY in {language_name}
+- Be empathetic and respond to the user's emotional state
+- Keep responses concise - this is voice, not text
+- Summarize tool results naturally
+
+[YOUR ROLE]
+{system_prompt}"""
+
+            # Get integration credentials for tools
+            integrations = await get_workspace_integrations(
+                user_id_to_uuid(agent.user_id), agent_workspace.workspace_id, db
+            )
+
+            # Build tool definitions
+            from app.services.tools.registry import ToolRegistry
+
+            tool_registry = ToolRegistry(
+                db=db,
+                user_id=agent.user_id,
+                integrations=integrations,
+                workspace_id=agent_workspace.workspace_id,
+            )
+            tools = tool_registry.get_all_tool_definitions(
+                agent.enabled_tools or [], agent.enabled_tool_ids, agent.integration_settings
+            )
+
+            # Hume EVI expects tools in flat format (name, description, parameters at top level)
+            # Handle both flat format (name at top) and nested format (function.name)
+            hume_tools = []
+            for tool in tools:
+                # Check if nested under "function" key (OpenAI Chat Completions format)
+                if "function" in tool:
+                    func = tool["function"]
+                    hume_tool = {
+                        "name": func.get("name", ""),
+                        "description": func.get("description", ""),
+                        "parameters": func.get("parameters", {}),
+                    }
+                else:
+                    # Flat format (OpenAI Realtime format)
+                    hume_tool = {
+                        "name": tool.get("name", ""),
+                        "description": tool.get("description", ""),
+                        "parameters": tool.get("parameters", {}),
+                    }
+                hume_tools.append(hume_tool)
+
+            log.info(
+                "hume_token_prepared",
+                tool_count=len(hume_tools),
+                evi_version=evi_version,
+            )
+
+            return {
+                "access_token": access_token,
+                "expires_in": token_data.get("expires_in", 1800),
+                "agent": {
+                    "name": agent.name,
+                    "system_prompt": full_prompt,
+                    "language": language,
+                    "voice": agent.voice or "kora",
+                    "initial_greeting": agent.initial_greeting,
+                },
+                "config": {
+                    "evi_version": evi_version,
+                    "language": language,
+                },
+                "tools": hume_tools,
+            }
+
+    except httpx.RequestError as e:
+        log.exception("hume_token_request_error", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to connect to Hume: {e!s}") from e
 
 
 class ToolCallRequest(BaseModel):

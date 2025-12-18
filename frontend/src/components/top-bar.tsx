@@ -107,11 +107,12 @@ export function TopBar() {
     staleTime: 30000,
   });
 
-  // Fetch compliance status
+  // Fetch compliance status - retry: false to avoid noisy errors when backend unavailable
   const { data: complianceStatus } = useQuery({
     queryKey: ["compliance-status"],
     queryFn: fetchComplianceStatus,
     staleTime: 60000,
+    retry: false,
   });
 
   const openCompliancePanel = (tab: "gdpr" | "ccpa") => {

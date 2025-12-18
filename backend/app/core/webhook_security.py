@@ -120,26 +120,25 @@ async def verify_twilio_webhook(request: Request) -> bool:
         request: FastAPI request object
 
     Returns:
-        True if signature is valid or validation is skipped in debug mode
+        True if signature is valid or validation is explicitly skipped
 
     Raises:
-        HTTPException: If signature validation fails in production
+        HTTPException: If signature validation fails
     """
+    # Explicit opt-in to skip verification (DANGEROUS - only for local dev)
+    if settings.SKIP_WEBHOOK_VERIFICATION:
+        logger.warning("webhook_verification_skipped_by_config")
+        return True
+
     # Get auth token from settings
     auth_token = settings.TWILIO_AUTH_TOKEN
     if not auth_token:
-        if settings.DEBUG:
-            logger.warning("twilio_auth_token_not_configured_debug_mode")
-            return True
         logger.error("twilio_auth_token_not_configured")
         raise HTTPException(status_code=500, detail="Twilio not configured")
 
     # Get signature from header
     signature = request.headers.get("X-Twilio-Signature", "")
     if not signature:
-        if settings.DEBUG:
-            logger.warning("missing_twilio_signature_debug_mode")
-            return True
         logger.warning("missing_twilio_signature")
         raise HTTPException(status_code=403, detail="Missing Twilio signature")
 
@@ -162,19 +161,21 @@ async def verify_telnyx_webhook(request: Request) -> bool:
         request: FastAPI request object
 
     Returns:
-        True if signature is valid or validation is skipped in debug mode
+        True if signature is valid or validation is explicitly skipped
 
     Raises:
-        HTTPException: If signature validation fails in production
+        HTTPException: If signature validation fails
     """
+    # Explicit opt-in to skip verification (DANGEROUS - only for local dev)
+    if settings.SKIP_WEBHOOK_VERIFICATION:
+        logger.warning("webhook_verification_skipped_by_config")
+        return True
+
     # Get signature headers
     signature = request.headers.get("telnyx-signature-ed25519", "")
     timestamp = request.headers.get("telnyx-timestamp", "")
 
     if not signature or not timestamp:
-        if settings.DEBUG:
-            logger.warning("missing_telnyx_signature_debug_mode")
-            return True
         logger.warning("missing_telnyx_signature")
         raise HTTPException(status_code=403, detail="Missing Telnyx signature")
 
@@ -251,28 +252,27 @@ async def verify_slicktext_webhook(request: Request, webhook_secret: str | None 
 
     Args:
         request: FastAPI request object
-        webhook_secret: Optional webhook secret (if not provided, skips validation in debug)
+        webhook_secret: Optional webhook secret
 
     Returns:
-        True if signature is valid or validation is skipped in debug mode
+        True if signature is valid or validation is explicitly skipped
 
     Raises:
         HTTPException: If signature validation fails
     """
+    # Explicit opt-in to skip verification (DANGEROUS - only for local dev)
+    if settings.SKIP_WEBHOOK_VERIFICATION:
+        logger.warning("webhook_verification_skipped_by_config")
+        return True
+
     # Get signature from header
     signature = request.headers.get("x-slicktext-signature", "")
 
     if not signature:
-        if settings.DEBUG:
-            logger.warning("missing_slicktext_signature_debug_mode")
-            return True
         logger.warning("missing_slicktext_signature")
         raise HTTPException(status_code=403, detail="Missing SlickText signature")
 
     if not webhook_secret:
-        if settings.DEBUG:
-            logger.warning("slicktext_webhook_secret_not_configured_debug_mode")
-            return True
         logger.error("slicktext_webhook_secret_not_configured")
         raise HTTPException(status_code=500, detail="SlickText webhook not configured")
 

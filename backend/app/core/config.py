@@ -116,11 +116,21 @@ class Settings(BaseSettings):
     TWILIO_ACCOUNT_SID: str | None = None
     TWILIO_AUTH_TOKEN: str | None = None
 
+    # Security - Webhook Verification
+    # DANGEROUS: Set to True ONLY for local development without ngrok/tunnels
+    # This bypasses all webhook signature verification!
+    SKIP_WEBHOOK_VERIFICATION: bool = False
+
+    # Hume AI (EVI voice-to-voice and Octave TTS)
+    HUME_API_KEY: str | None = None
+    HUME_SECRET_KEY: str | None = None  # For OAuth token generation
+
     # External Service Timeouts (seconds)
     # These are critical for preventing hung connections during voice calls
     OPENAI_TIMEOUT: float = 30.0  # LLM inference can be slow
     DEEPGRAM_TIMEOUT: float = 15.0  # Real-time STT should be fast
     ELEVENLABS_TIMEOUT: float = 20.0  # TTS synthesis timeout
+    HUME_TIMEOUT: float = 30.0  # Hume EVI/TTS API calls
     TELNYX_TIMEOUT: float = 10.0  # Telephony API calls
     TWILIO_TIMEOUT: float = 10.0  # Telephony API calls
     GOOGLE_API_TIMEOUT: float = 15.0  # Calendar, Drive, etc.

@@ -25,6 +25,34 @@ export interface PricingTier {
 
 export const PRICING_TIERS: PricingTier[] = [
   {
+    id: "hume-evi",
+    name: "Hume EVI",
+    description: "Empathic voice AI with real-time emotion detection",
+    costPerHour: 2.16,
+    costPerMinute: 0.036,
+    features: [
+      "Real-time emotion detection",
+      "Empathic AI responses",
+      "~100ms latency (Octave 2)",
+      "11+ languages (EVI 4-mini)",
+      "100+ expressive voices",
+    ],
+    config: {
+      llmProvider: "hume-evi",
+      llmModel: "evi-3",
+      sttProvider: "hume",
+      sttModel: "built-in",
+      ttsProvider: "hume",
+      ttsModel: "octave-2",
+      telephonyProvider: "telnyx",
+    },
+    performance: {
+      latency: "~100ms",
+      speed: "Excellent",
+      quality: "Best",
+    },
+  },
+  {
     id: "premium",
     name: "Premium",
     description: "Best quality with OpenAI's latest gpt-realtime model",

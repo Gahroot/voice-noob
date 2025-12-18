@@ -10,6 +10,25 @@ function getAuthHeaders(): HeadersInit {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+export interface EmotionEntry {
+  emotions: Record<string, number>;
+  timestamp: string;
+  role: "user" | "assistant";
+}
+
+export interface EmotionSummary {
+  has_emotion_data: boolean;
+  total_measurements?: number;
+  user_measurements?: number;
+  top_user_emotions?: Array<{ emotion: string; score: number }>;
+  timeline?: EmotionEntry[];
+}
+
+export interface EmotionData {
+  entries: EmotionEntry[];
+  summary: EmotionSummary;
+}
+
 export interface CallRecord {
   id: string;
   provider: string;
@@ -27,6 +46,7 @@ export interface CallRecord {
   duration_seconds: number;
   recording_url: string | null;
   transcript: string | null;
+  emotion_data: EmotionData | null;
   started_at: string;
   answered_at: string | null;
   ended_at: string | null;

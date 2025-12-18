@@ -14,6 +14,7 @@ interface AgentConfig {
   primary_color: string;
   language: string;
   voice: string;
+  pricing_tier: string;
 }
 
 interface ToolDefinition {
@@ -108,6 +109,9 @@ export default function EmbedPage() {
 
   // Autostart tracking (prevent multiple starts)
   const autostartTriggeredRef = useRef(false);
+
+  // Hume WebSocket ref for cleanup
+  const humeSocketRef = useRef<WebSocket | null>(null);
 
   // Detect system theme
   const [resolvedTheme, setResolvedTheme] = useState<"light" | "dark">("light");
@@ -368,6 +372,12 @@ export default function EmbedPage() {
       abortControllerRef.current = null;
     }
 
+    // Close Hume WebSocket if open
+    if (humeSocketRef.current) {
+      humeSocketRef.current.close();
+      humeSocketRef.current = null;
+    }
+
     // Save transcript before cleanup (fire and forget)
     void saveTranscript();
 
@@ -381,7 +391,7 @@ export default function EmbedPage() {
     }
   }, [cleanup, saveTranscript]);
 
-  // Start voice session using manual WebRTC
+  // Start voice session - supports both OpenAI WebRTC and Hume EVI WebSocket
   const startSession = useCallback(async () => {
     if (!config) return;
 
@@ -400,6 +410,218 @@ export default function EmbedPage() {
     setIsExpanded(true);
     setAgentState("idle");
 
+    // Check if this is a Hume EVI agent
+    const isHumeAgent = config.pricing_tier === "hume-evi";
+
+    if (isHumeAgent) {
+      // === HUME EVI CONNECTION ===
+      try {
+        // Get Hume access token from backend
+        const tokenRes = await fetch(`/api/public/embed/${publicId}/hume-token`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Origin: window.location.origin,
+          },
+          signal: abortController.signal,
+        });
+
+        if (abortController.signal.aborted) return;
+
+        if (!tokenRes.ok) {
+          const errData = await tokenRes.json();
+          throw new Error((errData.detail as string) ?? "Failed to get Hume token");
+        }
+
+        const tokenData = await tokenRes.json();
+        const accessToken = tokenData.access_token;
+
+        if (!accessToken) {
+          throw new Error("No access token received from server");
+        }
+
+        // Get microphone
+        const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        setupAudioAnalysis(micStream);
+
+        // Store mic stream for muting
+        webrtcRef.current = {
+          peerConnection: null,
+          dataChannel: null,
+          audioStream: micStream,
+          audioElement: null,
+        };
+
+        // Connect to Hume EVI WebSocket
+        const humeWsUrl = `wss://api.hume.ai/v0/evi/chat?access_token=${accessToken}`;
+        const humeSocket = new WebSocket(humeWsUrl);
+        humeSocketRef.current = humeSocket;
+
+        // Audio context for recording
+        const audioContext = new AudioContext({ sampleRate: 16000 });
+        const source = audioContext.createMediaStreamSource(micStream);
+        const processor = audioContext.createScriptProcessor(4096, 1, 1);
+
+        humeSocket.onopen = () => {
+          if (abortController.signal.aborted) {
+            humeSocket.close();
+            return;
+          }
+
+          setStatus("connected");
+          setAgentState("listening");
+
+          // Send session settings
+          const sessionSettings = {
+            type: "session_settings",
+            system_prompt: tokenData.agent?.system_prompt ?? "",
+            language: tokenData.config?.language ?? "en-US",
+            tools: tokenData.tools ?? [],
+          };
+          humeSocket.send(JSON.stringify(sessionSettings));
+
+          // Trigger initial greeting if configured
+          const initialGreeting = tokenData.agent?.initial_greeting;
+          if (initialGreeting) {
+            humeSocket.send(
+              JSON.stringify({
+                type: "user_input",
+                text: `[Call connected. Say this greeting now: ${initialGreeting}]`,
+              })
+            );
+          }
+
+          // Connect audio processor
+          source.connect(processor);
+          processor.connect(audioContext.destination);
+
+          processor.onaudioprocess = (e) => {
+            if (humeSocket.readyState === WebSocket.OPEN) {
+              const inputData = e.inputBuffer.getChannelData(0);
+              const int16Data = new Int16Array(inputData.length);
+              for (let i = 0; i < inputData.length; i++) {
+                const sample = inputData[i] ?? 0;
+                const s = Math.max(-1, Math.min(1, sample));
+                int16Data[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+              }
+              const base64Audio = btoa(String.fromCharCode(...new Uint8Array(int16Data.buffer)));
+              humeSocket.send(JSON.stringify({ type: "audio_input", data: base64Audio }));
+            }
+          };
+        };
+
+        // Audio playback context
+        const playbackContext = new AudioContext({ sampleRate: 24000 });
+
+        humeSocket.onmessage = async (event) => {
+          try {
+            const data = JSON.parse(event.data);
+
+            if (data.type === "user_message") {
+              const content = data.message?.content ?? "";
+              if (content.trim()) {
+                transcriptRef.current.push({ role: "user", content: content.trim() });
+              }
+              setAgentState("thinking");
+            } else if (data.type === "assistant_message") {
+              const content = data.message?.content ?? "";
+              if (content.trim()) {
+                transcriptRef.current.push({ role: "assistant", content: content.trim() });
+              }
+            } else if (data.type === "audio_output") {
+              setAgentState("speaking");
+              if (data.data) {
+                try {
+                  const audioBytes = Uint8Array.from(atob(data.data), (c) => c.charCodeAt(0));
+                  const audioBuffer = await playbackContext.decodeAudioData(audioBytes.buffer);
+                  const bufferSource = playbackContext.createBufferSource();
+                  bufferSource.buffer = audioBuffer;
+                  bufferSource.connect(playbackContext.destination);
+                  bufferSource.start();
+                } catch {
+                  // Ignore audio decode errors
+                }
+              }
+            } else if (data.type === "audio_output_done") {
+              setAgentState("listening");
+            } else if (data.type === "tool_call") {
+              const toolCallId = data.tool_call_id;
+              const toolName = data.name;
+              const args = JSON.parse(data.parameters ?? "{}");
+
+              try {
+                const toolResponse = await fetch(`/api/public/embed/${publicId}/tool-call`, {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    Origin: window.location.origin,
+                  },
+                  body: JSON.stringify({
+                    tool_name: toolName,
+                    arguments: args,
+                  }),
+                });
+
+                const toolResult = await toolResponse.json();
+
+                humeSocket.send(
+                  JSON.stringify({
+                    type: "tool_response",
+                    tool_call_id: toolCallId,
+                    content: JSON.stringify(toolResult),
+                  })
+                );
+
+                if (toolResult.action === "end_call") {
+                  setTimeout(() => {
+                    void saveTranscript();
+                    humeSocket.close();
+                    cleanup();
+                    setStatus("idle");
+                    setIsExpanded(false);
+                  }, 3000);
+                }
+              } catch (toolError) {
+                humeSocket.send(
+                  JSON.stringify({
+                    type: "tool_error",
+                    tool_call_id: toolCallId,
+                    error: String(toolError),
+                  })
+                );
+              }
+            } else if (data.type === "error") {
+              setError(data.message ?? "Unknown error");
+            }
+          } catch {
+            // Ignore parse errors
+          }
+        };
+
+        humeSocket.onerror = () => {
+          setError("Connection error");
+          setStatus("error");
+        };
+
+        humeSocket.onclose = () => {
+          processor.disconnect();
+          source.disconnect();
+          void audioContext.close();
+          void playbackContext.close();
+          humeSocketRef.current = null;
+          setStatus("idle");
+          setIsExpanded(false);
+        };
+      } catch (err) {
+        if (err instanceof Error && err.name === "AbortError") return;
+        setError(err instanceof Error ? err.message : "Failed to start session");
+        setStatus("error");
+        cleanup();
+      }
+      return;
+    }
+
+    // === OPENAI REALTIME CONNECTION (WebRTC) ===
     try {
       // Get ephemeral token from backend
       const tokenRes = await fetch(`/api/public/embed/${publicId}/token`, {
@@ -707,7 +929,7 @@ export default function EmbedPage() {
       setStatus("error");
       cleanup();
     }
-  }, [config, publicId, cleanup, setupAudioAnalysis, endSession]);
+  }, [config, publicId, cleanup, setupAudioAnalysis, endSession, saveTranscript]);
 
   // Auto-start session when in widget mode
   useEffect(() => {

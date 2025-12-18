@@ -166,7 +166,9 @@ const WIZARD_STEPS = [
 ] as const;
 
 const agentFormSchema = z.object({
-  pricingTier: z.enum(["budget", "balanced", "premium-mini", "premium"]).default("premium"),
+  pricingTier: z
+    .enum(["budget", "balanced", "premium-mini", "premium", "hume-evi"])
+    .default("premium"),
   name: z.string().min(2, "Name must be at least 2 characters"),
   description: z.string().optional(),
   language: z.string().default("en-US"),
@@ -522,7 +524,12 @@ export default function CreateAgentPage() {
                           !tier.underConstruction &&
                           form.setValue(
                             "pricingTier",
-                            tier.id as "budget" | "balanced" | "premium-mini" | "premium"
+                            tier.id as
+                              | "budget"
+                              | "balanced"
+                              | "premium-mini"
+                              | "premium"
+                              | "hume-evi"
                           )
                         }
                         className={cn(

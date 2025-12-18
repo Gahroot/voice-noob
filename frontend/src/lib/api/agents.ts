@@ -48,7 +48,7 @@ export interface Agent {
   id: string;
   name: string;
   description: string | null;
-  pricing_tier: string;
+  pricing_tier: "budget" | "balanced" | "premium-mini" | "premium" | "hume-evi";
   system_prompt: string;
   language: string;
   voice: string;
@@ -82,7 +82,7 @@ export interface Agent {
 export interface CreateAgentRequest {
   name: string;
   description?: string;
-  pricing_tier: "budget" | "balanced" | "premium-mini" | "premium";
+  pricing_tier: "budget" | "balanced" | "premium-mini" | "premium" | "hume-evi";
   system_prompt: string;
   language: string;
   voice?: string;
@@ -148,7 +148,7 @@ export async function getAgent(agentId: string): Promise<Agent> {
 export interface UpdateAgentRequest {
   name?: string;
   description?: string;
-  pricing_tier?: "budget" | "balanced" | "premium-mini" | "premium";
+  pricing_tier?: "budget" | "balanced" | "premium-mini" | "premium" | "hume-evi";
   system_prompt?: string;
   language?: string;
   voice?: string;

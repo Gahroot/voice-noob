@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import CurrentUser
+from app.core.config import settings
 from app.core.limiter import limiter
 from app.core.public_id import generate_public_id
 from app.db.session import get_db
@@ -30,7 +31,7 @@ class CreateAgentRequest(BaseModel):
 
     name: str = Field(..., min_length=1, max_length=200)
     description: str | None = None
-    pricing_tier: str = Field(..., pattern="^(budget|balanced|premium-mini|premium)$")
+    pricing_tier: str = Field(..., pattern="^(budget|balanced|premium-mini|premium|hume-evi)$")
     system_prompt: str = Field(..., min_length=10)
     language: str = Field(default="en-US")
     voice: str = Field(default="shimmer")
@@ -84,7 +85,9 @@ class UpdateAgentRequest(BaseModel):
 
     name: str | None = Field(None, min_length=1, max_length=200)
     description: str | None = None
-    pricing_tier: str | None = Field(None, pattern="^(budget|balanced|premium-mini|premium)$")
+    pricing_tier: str | None = Field(
+        None, pattern="^(budget|balanced|premium-mini|premium|hume-evi)$"
+    )
     system_prompt: str | None = Field(None, min_length=10)
     language: str | None = None
     voice: str | None = None
@@ -277,14 +280,18 @@ async def list_agents(
     current_user: CurrentUser,
     skip: int = 0,
     limit: int = 50,
+    all_users: bool = False,
     db: AsyncSession = Depends(get_db),
 ) -> list[AgentResponse]:
     """List all agents for current user with pagination.
+
+    Superusers can pass all_users=true to list agents from all users (admin mode).
 
     Args:
         current_user: Authenticated user
         skip: Number of records to skip (default 0)
         limit: Maximum number of records to return (default 50, max 100)
+        all_users: If true and user is superuser, list agents from all users
         db: Database session
 
     Returns:
@@ -301,13 +308,19 @@ async def list_agents(
     if limit > MAX_AGENTS_LIMIT:
         raise HTTPException(status_code=400, detail=f"Limit cannot exceed {MAX_AGENTS_LIMIT}")
 
-    result = await db.execute(
-        select(Agent)
-        .where(Agent.user_id == current_user.id)
-        .order_by(Agent.created_at.desc())
-        .offset(skip)
-        .limit(limit)
-    )
+    # Superusers can list all agents across all users (for admin testing)
+    if all_users and current_user.is_superuser:
+        result = await db.execute(
+            select(Agent).order_by(Agent.created_at.desc()).offset(skip).limit(limit)
+        )
+    else:
+        result = await db.execute(
+            select(Agent)
+            .where(Agent.user_id == current_user.id)
+            .order_by(Agent.created_at.desc())
+            .offset(skip)
+            .limit(limit)
+        )
     agents = result.scalars().all()
 
     return [_agent_to_response(agent) for agent in agents]
@@ -321,6 +334,8 @@ async def get_agent(
 ) -> AgentResponse:
     """Get a specific agent.
 
+    Superusers can access any agent (for admin testing).
+
     Args:
         agent_id: Agent UUID
         current_user: Authenticated user
@@ -332,12 +347,16 @@ async def get_agent(
     Raises:
         HTTPException: If agent not found or unauthorized
     """
-    result = await db.execute(
-        select(Agent).where(
-            Agent.id == uuid.UUID(agent_id),
-            Agent.user_id == current_user.id,
+    # Superusers can access any agent for testing purposes
+    if current_user.is_superuser:
+        result = await db.execute(select(Agent).where(Agent.id == uuid.UUID(agent_id)))
+    else:
+        result = await db.execute(
+            select(Agent).where(
+                Agent.id == uuid.UUID(agent_id),
+                Agent.user_id == current_user.id,
+            )
         )
-    )
     agent = result.scalar_one_or_none()
 
     if not agent:
@@ -493,17 +512,19 @@ def _get_provider_config(tier: str) -> dict[str, Any]:
     """Get provider configuration for pricing tier.
 
     Args:
-        tier: Pricing tier (budget, balanced, premium)
+        tier: Pricing tier (budget, balanced, premium, hume-evi)
 
     Returns:
         Provider configuration
     """
-    # Latest models as of Nov 2025:
+    # Latest models as of Dec 2025:
     # - Deepgram: nova-3 (GA Feb 2025, 54% better accuracy than nova-2)
     # - ElevenLabs: eleven_flash_v2_5 (~75ms latency, 32 languages)
     # - OpenAI: gpt-realtime-2025-08-28 (GA Aug 2025)
     # - Google: gemini-2.5-flash with native audio (30 HD voices)
-    configs = {
+    # - Hume EVI 3/4-mini: Voice-to-voice with emotion understanding
+    # - Hume Octave 2: TTS with ~100ms latency
+    configs: dict[str, dict[str, Any]] = {
         "budget": {
             "llm_provider": "cerebras",
             "llm_model": "llama-3.3-70b",
@@ -536,9 +557,21 @@ def _get_provider_config(tier: str) -> dict[str, Any]:
             "tts_provider": "openai",
             "tts_model": "built-in",
         },
+        "hume-evi": {
+            "llm_provider": "hume-evi",
+            "llm_model": "evi-3",  # EVI 3 for English, EVI 4-mini for multilingual
+            "stt_provider": "hume",
+            "stt_model": "built-in",
+            "tts_provider": "hume",
+            "tts_model": "octave-2",
+            "features": ["emotion_detection", "empathic_responses"],
+        },
     }
 
-    return configs.get(tier, configs["balanced"])
+    result = configs.get(tier)
+    if result is not None:
+        return result
+    return configs["balanced"]
 
 
 def _agent_to_response(agent: Agent) -> AgentResponse:
@@ -653,9 +686,8 @@ async def get_embed_settings(
                 await db.refresh(agent)
                 break
 
-    # Build embed code snippets
-    # In production, replace with actual domain
-    base_url = "https://yourplatform.com"  # TODO: Get from config
+    # Build embed code snippets using configured public URL
+    base_url = settings.PUBLIC_URL or settings.PUBLIC_WEBHOOK_URL or "https://yourplatform.com"
     script_tag = f"""<script src="{base_url}/widget/v1/widget.js" defer></script>
 <voice-agent agent-id="{agent.public_id}"></voice-agent>"""
 

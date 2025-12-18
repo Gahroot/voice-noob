@@ -6,7 +6,7 @@ from datetime import datetime
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import desc, select
+from sqlalchemy import case, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -116,8 +116,10 @@ async def list_calls(
     if status:
         query = query.where(CallRecord.status == status)
 
-    # Get total count
-    count_query = select(CallRecord.id).where(CallRecord.user_id == user_uuid)
+    # Get total count using database-level aggregation (not len(result.all()))
+    count_query = (
+        select(func.count()).select_from(CallRecord).where(CallRecord.user_id == user_uuid)
+    )
     if agent_id:
         count_query = count_query.where(CallRecord.agent_id == uuid.UUID(agent_id))
     if workspace_id:
@@ -127,8 +129,7 @@ async def list_calls(
     if status:
         count_query = count_query.where(CallRecord.status == status)
 
-    count_result = await db.execute(count_query)
-    total = len(count_result.all())
+    total = await db.scalar(count_query) or 0
 
     # Apply pagination and ordering
     offset = (page - 1) * page_size
@@ -207,9 +208,15 @@ async def get_call(
 
     user_uuid = user_id_to_uuid(current_user.id)
     result = await db.execute(
-        select(CallRecord).where(
+        select(CallRecord)
+        .where(
             CallRecord.id == uuid.UUID(call_id),
             CallRecord.user_id == user_uuid,
+        )
+        .options(
+            selectinload(CallRecord.agent),
+            selectinload(CallRecord.contact),
+            selectinload(CallRecord.workspace),
         )
     )
     record = result.scalar_one_or_none()
@@ -271,28 +278,30 @@ async def get_agent_call_stats(
     log.info("getting_agent_call_stats")
 
     user_uuid = user_id_to_uuid(current_user.id)
-    # Get all calls for this agent
-    result = await db.execute(
-        select(CallRecord).where(
-            CallRecord.agent_id == uuid.UUID(agent_id),
-            CallRecord.user_id == user_uuid,
-        )
+    # Use database-level aggregation instead of loading all records into memory
+    stats_query = select(
+        func.count(CallRecord.id).label("total_calls"),
+        func.coalesce(func.sum(CallRecord.duration_seconds), 0).label("total_duration"),
+        func.sum(case((CallRecord.status == "completed", 1), else_=0)).label("completed_calls"),
+        func.sum(case((CallRecord.direction == "inbound", 1), else_=0)).label("inbound_calls"),
+        func.sum(case((CallRecord.direction == "outbound", 1), else_=0)).label("outbound_calls"),
+    ).where(
+        CallRecord.agent_id == uuid.UUID(agent_id),
+        CallRecord.user_id == user_uuid,
     )
-    records = result.scalars().all()
 
-    total_calls = len(records)
-    total_duration = sum(r.duration_seconds for r in records)
-    completed_calls = sum(1 for r in records if r.status == "completed")
-    inbound_calls = sum(1 for r in records if r.direction == "inbound")
-    outbound_calls = sum(1 for r in records if r.direction == "outbound")
+    result = await db.execute(stats_query)
+    row = result.one()
 
+    total_calls = row.total_calls or 0
+    total_duration = row.total_duration or 0
     avg_duration = total_duration / total_calls if total_calls > 0 else 0
 
     return {
         "total_calls": total_calls,
-        "completed_calls": completed_calls,
-        "inbound_calls": inbound_calls,
-        "outbound_calls": outbound_calls,
+        "completed_calls": row.completed_calls or 0,
+        "inbound_calls": row.inbound_calls or 0,
+        "outbound_calls": row.outbound_calls or 0,
         "total_duration_seconds": total_duration,
         "average_duration_seconds": round(avg_duration, 1),
     }
