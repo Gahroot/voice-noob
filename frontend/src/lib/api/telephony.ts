@@ -193,6 +193,40 @@ export async function releasePhoneNumber(
   }
 }
 
+export interface SyncPhoneNumbersResponse {
+  synced: number;
+  skipped: number;
+  total_in_provider: number;
+  phone_numbers: PhoneNumber[];
+}
+
+/**
+ * Sync phone numbers from Telnyx account to local database
+ */
+export async function syncPhoneNumbers(
+  provider: Provider,
+  workspaceId: string
+): Promise<SyncPhoneNumbersResponse> {
+  const url = new URL(`${API_BASE}/api/v1/telephony/phone-numbers/sync`);
+  url.searchParams.set("provider", provider);
+  url.searchParams.set("workspace_id", workspaceId);
+
+  const response = await fetchWithTimeout(url.toString(), {
+    method: "POST",
+  });
+
+  if (!response.ok) {
+    // 400 typically means provider not configured - return empty result
+    if (response.status === 400 || response.status === 422) {
+      return { synced: 0, skipped: 0, total_in_provider: 0, phone_numbers: [] };
+    }
+    const error = await response.json().catch(() => ({ detail: response.statusText }));
+    throw new Error(error.detail ?? "Failed to sync phone numbers");
+  }
+
+  return response.json();
+}
+
 /**
  * Initiate an outbound call
  */

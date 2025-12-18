@@ -52,6 +52,7 @@ import {
   searchPhoneNumbers,
   purchasePhoneNumber,
   releasePhoneNumber,
+  syncPhoneNumbers,
   type PhoneNumber as ApiPhoneNumber,
   type Provider,
 } from "@/lib/api/telephony";
@@ -155,7 +156,14 @@ export default function PhoneNumbersPage() {
         return;
       }
 
-      // Load phone numbers from both providers
+      // Sync phone numbers from Telnyx first (imports any missing numbers)
+      const [telnyxSync] = await Promise.allSettled([syncPhoneNumbers("telnyx", workspaceId)]);
+
+      if (telnyxSync.status === "fulfilled" && telnyxSync.value.synced > 0) {
+        toast.success(`Synced ${telnyxSync.value.synced} new phone number(s) from Telnyx`);
+      }
+
+      // Load phone numbers from both providers (now includes synced numbers)
       const [telnyxNumbers, twilioNumbers] = await Promise.allSettled([
         listPhoneNumbers("telnyx", workspaceId),
         listPhoneNumbers("twilio", workspaceId),

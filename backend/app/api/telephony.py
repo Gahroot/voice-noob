@@ -574,6 +574,127 @@ async def release_phone_number(
     return {"message": "Phone number released successfully"}
 
 
+class SyncPhoneNumbersResponse(BaseModel):
+    """Response from phone number sync operation."""
+
+    synced: int
+    skipped: int
+    total_in_provider: int
+    phone_numbers: list[PhoneNumberResponse]
+
+
+@router.post("/phone-numbers/sync", response_model=SyncPhoneNumbersResponse)
+@limiter.limit("5/minute")
+async def sync_phone_numbers_from_provider(
+    request: Request,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+    provider: str = Query("telnyx", description="Provider to sync from: telnyx"),
+    workspace_id: str = Query(..., description="Workspace ID for API key isolation"),
+) -> SyncPhoneNumbersResponse:
+    """Sync phone numbers from telephony provider to local database.
+
+    Fetches all phone numbers from your Telnyx account and adds any missing
+    ones to the Voice Noob database. This is useful when you have phone numbers
+    purchased outside the app that you want to use.
+
+    Args:
+        request: HTTP request (for rate limiting)
+        current_user: Authenticated user
+        db: Database session
+        provider: Telephony provider (currently only telnyx supported)
+        workspace_id: Workspace ID to assign synced numbers to
+
+    Returns:
+        Summary of synced phone numbers
+    """
+    from app.models.phone_number import PhoneNumber as PhoneNumberModel
+
+    log = logger.bind(user_id=current_user.id, provider=provider, workspace_id=workspace_id)
+    log.info("syncing_phone_numbers_from_provider")
+
+    # Parse workspace_id
+    try:
+        workspace_uuid = uuid.UUID(workspace_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="Invalid workspace_id format") from e
+
+    user_uuid = user_id_to_uuid(current_user.id)
+
+    if provider != "telnyx":
+        raise HTTPException(
+            status_code=400,
+            detail="Currently only Telnyx sync is supported.",
+        )
+
+    telnyx_service = await get_telnyx_service(current_user.id, db, workspace_id=workspace_uuid)
+    if not telnyx_service:
+        raise HTTPException(
+            status_code=400,
+            detail="Telnyx credentials not configured. Please add them in Settings.",
+        )
+
+    # Fetch all numbers from Telnyx
+    provider_numbers = await telnyx_service.list_phone_numbers()
+    log.info("fetched_numbers_from_provider", count=len(provider_numbers))
+
+    # Get existing phone numbers from database for this user
+    existing_result = await db.execute(
+        select(PhoneNumberModel.provider_id).where(
+            PhoneNumberModel.user_id == user_uuid,
+            PhoneNumberModel.provider == "telnyx",
+        )
+    )
+    existing_provider_ids = {row[0] for row in existing_result.all()}
+
+    synced_count = 0
+    skipped_count = 0
+    synced_numbers: list[PhoneNumberResponse] = []
+
+    for pn in provider_numbers:
+        if pn.id in existing_provider_ids:
+            skipped_count += 1
+            continue
+
+        # Create new phone number record
+        new_phone = PhoneNumberModel(
+            user_id=user_uuid,
+            workspace_id=workspace_uuid,
+            phone_number=pn.phone_number,
+            friendly_name=pn.friendly_name,
+            provider="telnyx",
+            provider_id=pn.id,
+            can_receive_calls=pn.capabilities.get("voice", True) if pn.capabilities else True,
+            can_make_calls=pn.capabilities.get("voice", True) if pn.capabilities else True,
+            can_receive_sms=pn.capabilities.get("sms", False) if pn.capabilities else False,
+            can_send_sms=pn.capabilities.get("sms", False) if pn.capabilities else False,
+            status="active",
+        )
+        db.add(new_phone)
+        synced_count += 1
+
+        synced_numbers.append(
+            PhoneNumberResponse(
+                id=str(new_phone.id),
+                phone_number=new_phone.phone_number,
+                friendly_name=new_phone.friendly_name,
+                provider="telnyx",
+                capabilities=pn.capabilities,
+                assigned_agent_id=None,
+            )
+        )
+
+    await db.commit()
+    log.info("sync_complete", synced=synced_count, skipped=skipped_count)
+
+    return SyncPhoneNumbersResponse(
+        synced=synced_count,
+        skipped=skipped_count,
+        total_in_provider=len(provider_numbers),
+        phone_numbers=synced_numbers,
+    )
+
+
 # =============================================================================
 # Outbound Call Endpoints
 # =============================================================================
