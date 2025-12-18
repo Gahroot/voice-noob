@@ -6,7 +6,6 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
-    JSON,
     BigInteger,
     DateTime,
     ForeignKey,
@@ -15,6 +14,7 @@ from sqlalchemy import (
     Text,
     Uuid,
 )
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -371,7 +371,7 @@ class SMSCampaign(Base):
         String(10), nullable=True, comment="End of daily sending window (e.g., 17:00)"
     )
     sending_days: Mapped[list[int] | None] = mapped_column(
-        JSON,
+        ARRAY(Integer),
         nullable=True,
         comment="Days of week to send (0=Mon, 6=Sun). Null means all days.",
     )

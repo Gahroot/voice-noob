@@ -63,6 +63,8 @@ export interface SMSCampaign {
   from_phone_number: string;
   initial_message: string;
   ai_enabled: boolean;
+  agent_id: string | null;
+  agent_name: string | null;
   total_contacts: number;
   messages_sent: number;
   messages_delivered: number;
@@ -249,4 +251,17 @@ export async function addContactsToCampaign(
 ): Promise<{ added: number }> {
   const response = await api.post(`/api/v1/sms/campaigns/${campaignId}/contacts`, contactIds);
   return response.data;
+}
+
+// Delete conversation
+export async function deleteConversation(
+  conversationId: string,
+  workspaceId: string
+): Promise<void> {
+  await api.delete(`/api/v1/sms/conversations/${conversationId}?workspace_id=${workspaceId}`);
+}
+
+// Delete campaign
+export async function deleteCampaign(campaignId: string, workspaceId: string): Promise<void> {
+  await api.delete(`/api/v1/sms/campaigns/${campaignId}?workspace_id=${workspaceId}`);
 }

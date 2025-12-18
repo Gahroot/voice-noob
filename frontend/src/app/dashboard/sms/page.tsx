@@ -19,6 +19,25 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -59,6 +78,7 @@ import {
   Play,
   UserMinus,
   ChevronLeft,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
@@ -74,6 +94,8 @@ import {
   listTextAgents,
   assignAgentToConversation,
   updateConversationAISettings,
+  deleteConversation,
+  deleteCampaign,
   type SMSConversation,
   type SMSCampaign,
   type SMSMessage,
@@ -121,9 +143,14 @@ export default function SMSPage() {
     from_phone_number: "",
     initial_message: "",
     ai_enabled: true,
+    agent_id: undefined,
     contact_ids: [],
   });
   const [selectedContactIds, setSelectedContactIds] = useState<number[]>([]);
+  const [deleteConversationId, setDeleteConversationId] = useState<string | null>(null);
+  const [deleteCampaignId, setDeleteCampaignId] = useState<string | null>(null);
+  const [contactSelectorOpen, setContactSelectorOpen] = useState(false);
+  const [selectedContactId, setSelectedContactId] = useState<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -217,14 +244,14 @@ export default function SMSPage() {
     enabled: !!activeWorkspaceId,
   });
 
-  // Fetch contacts for campaign creation
+  // Fetch contacts for campaign creation and new message
   const { data: contacts = [] } = useQuery<Contact[]>({
     queryKey: ["contacts", activeWorkspaceId],
     queryFn: async () => {
       const response = await api.get(`/api/v1/crm/contacts?workspace_id=${activeWorkspaceId}`);
       return response.data;
     },
-    enabled: !!activeWorkspaceId && isNewCampaignOpen,
+    enabled: !!activeWorkspaceId && (isNewCampaignOpen || isNewMessageOpen),
   });
 
   // Mark conversation as read when selected
@@ -350,6 +377,7 @@ export default function SMSPage() {
         from_phone_number: "",
         initial_message: "",
         ai_enabled: true,
+        agent_id: undefined,
         contact_ids: [],
       });
       setSelectedContactIds([]);
@@ -383,6 +411,32 @@ export default function SMSPage() {
     },
   });
 
+  // Delete mutations
+  const deleteConversationMutation = useMutation({
+    mutationFn: (conversationId: string) => deleteConversation(conversationId, activeWorkspaceId),
+    onSuccess: () => {
+      toast.success("Conversation deleted");
+      setDeleteConversationId(null);
+      setSelectedConversationId(null);
+      void queryClient.invalidateQueries({ queryKey: ["sms-conversations", activeWorkspaceId] });
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || "Failed to delete conversation");
+    },
+  });
+
+  const deleteCampaignMutation = useMutation({
+    mutationFn: (campaignId: string) => deleteCampaign(campaignId, activeWorkspaceId),
+    onSuccess: () => {
+      toast.success("Campaign deleted");
+      setDeleteCampaignId(null);
+      void queryClient.invalidateQueries({ queryKey: ["sms-campaigns", activeWorkspaceId] });
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || "Failed to delete campaign");
+    },
+  });
+
   const handleSend = useCallback(() => {
     if (!newMessage.trim()) return;
     sendMessageMutation.mutate(newMessage.trim());
@@ -396,11 +450,21 @@ export default function SMSPage() {
   };
 
   const handleSendNewMessage = () => {
-    if (!newMessageData.to_number || !newMessageData.from_number || !newMessageData.body) {
+    const selectedContact = contacts.find((c) => c.id === selectedContactId);
+    const toNumber = selectedContact?.phone_number ?? newMessageData.to_number;
+    if (!toNumber || !newMessageData.from_number || !newMessageData.body) {
       toast.error("Please fill in all fields");
       return;
     }
-    sendNewMessageMutation.mutate(newMessageData);
+    sendNewMessageMutation.mutate({ ...newMessageData, to_number: toNumber });
+  };
+
+  const handleNewMessageDialogClose = (open: boolean) => {
+    setIsNewMessageOpen(open);
+    if (!open) {
+      setSelectedContactId(null);
+      setNewMessageData({ to_number: "", from_number: "", body: "", provider: "telnyx" });
+    }
   };
 
   const handleCreateCampaign = () => {
@@ -781,6 +845,14 @@ export default function SMSPage() {
                               </DropdownMenuItem>
                             </>
                           )}
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            className="text-destructive focus:text-destructive"
+                            onClick={() => setDeleteConversationId(selectedConversation.id)}
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete Chat
+                          </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </div>
@@ -983,6 +1055,12 @@ export default function SMSPage() {
                             <MessageSquare className="h-4 w-4" />
                             <span>{campaign.replies_received} replies</span>
                           </div>
+                          {campaign.agent_name && (
+                            <div className="flex items-center gap-1 text-muted-foreground">
+                              <Bot className="h-4 w-4" />
+                              <span>{campaign.agent_name}</span>
+                            </div>
+                          )}
                         </div>
                       </div>
                       <div className="flex gap-2">
@@ -1013,6 +1091,15 @@ export default function SMSPage() {
                             )}
                           </Button>
                         ) : null}
+                        {campaign.status !== "running" && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setDeleteCampaignId(campaign.id)}
+                          >
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                        )}
                       </div>
                     </div>
                   </CardContent>
@@ -1024,11 +1111,11 @@ export default function SMSPage() {
       </Tabs>
 
       {/* New Message Dialog */}
-      <Dialog open={isNewMessageOpen} onOpenChange={setIsNewMessageOpen}>
+      <Dialog open={isNewMessageOpen} onOpenChange={handleNewMessageDialogClose}>
         <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
             <DialogTitle>Send New Message</DialogTitle>
-            <DialogDescription>Send an SMS to a phone number</DialogDescription>
+            <DialogDescription>Send an SMS to a contact from your CRM</DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="space-y-2">
@@ -1058,15 +1145,63 @@ export default function SMSPage() {
               </Select>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="to_number">To Number</Label>
-              <Input
-                id="to_number"
-                placeholder="+1234567890"
-                value={newMessageData.to_number}
-                onChange={(e) =>
-                  setNewMessageData({ ...newMessageData, to_number: e.target.value })
-                }
-              />
+              <Label>To Contact</Label>
+              <Popover open={contactSelectorOpen} onOpenChange={setContactSelectorOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    role="combobox"
+                    aria-expanded={contactSelectorOpen}
+                    className="w-full justify-between font-normal"
+                  >
+                    {selectedContactId
+                      ? (() => {
+                          const contact = contacts.find((c) => c.id === selectedContactId);
+                          return contact
+                            ? `${contact.first_name} ${contact.last_name ?? ""} - ${contact.phone_number}`
+                            : "Select a contact...";
+                        })()
+                      : "Select a contact..."}
+                    <Search className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-[400px] p-0" align="start">
+                  <Command>
+                    <CommandInput placeholder="Search contacts..." />
+                    <CommandList>
+                      <CommandEmpty>
+                        No contacts found.{" "}
+                        <Link href="/dashboard/crm" className="text-primary hover:underline">
+                          Add contacts
+                        </Link>
+                      </CommandEmpty>
+                      <CommandGroup>
+                        {contacts.map((contact) => (
+                          <CommandItem
+                            key={contact.id}
+                            value={`${contact.first_name} ${contact.last_name ?? ""} ${contact.phone_number}`}
+                            onSelect={() => {
+                              setSelectedContactId(contact.id);
+                              setContactSelectorOpen(false);
+                            }}
+                          >
+                            <div className="flex items-center gap-2">
+                              <User className="h-4 w-4 text-muted-foreground" />
+                              <span>
+                                {contact.first_name} {contact.last_name}
+                              </span>
+                              <span className="text-muted-foreground">{contact.phone_number}</span>
+                            </div>
+                            {selectedContactId === contact.id ? (
+                              <Check className="ml-auto h-4 w-4" />
+                            ) : null}
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
             </div>
             <div className="space-y-2">
               <Label htmlFor="body">Message</Label>
@@ -1083,10 +1218,13 @@ export default function SMSPage() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsNewMessageOpen(false)}>
+            <Button variant="outline" onClick={() => handleNewMessageDialogClose(false)}>
               Cancel
             </Button>
-            <Button onClick={handleSendNewMessage} disabled={sendNewMessageMutation.isPending}>
+            <Button
+              onClick={handleSendNewMessage}
+              disabled={sendNewMessageMutation.isPending || !selectedContactId}
+            >
               {sendNewMessageMutation.isPending ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               ) : (
@@ -1150,6 +1288,34 @@ export default function SMSPage() {
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="agent_id">AI Agent (for auto-replies)</Label>
+                <Select
+                  value={newCampaignData.agent_id ?? "none"}
+                  onValueChange={(value) =>
+                    setNewCampaignData({
+                      ...newCampaignData,
+                      agent_id: value === "none" ? undefined : value,
+                    })
+                  }
+                >
+                  <SelectTrigger>
+                    <Bot className="mr-2 h-4 w-4" />
+                    <SelectValue placeholder="Select an AI agent" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No AI Agent</SelectItem>
+                    {textAgents.map((agent) => (
+                      <SelectItem key={agent.id} value={agent.id}>
+                        {agent.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Assign an AI agent to automatically respond to all contacts in this campaign
+                </p>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="initial_message">Initial Message *</Label>
@@ -1224,6 +1390,70 @@ export default function SMSPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Delete Conversation Confirmation */}
+      <AlertDialog
+        open={!!deleteConversationId}
+        onOpenChange={(open) => !open && setDeleteConversationId(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Conversation</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete this conversation and all its messages. This action
+              cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() =>
+                deleteConversationId && deleteConversationMutation.mutate(deleteConversationId)
+              }
+              disabled={deleteConversationMutation.isPending}
+            >
+              {deleteConversationMutation.isPending ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Trash2 className="mr-2 h-4 w-4" />
+              )}
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Delete Campaign Confirmation */}
+      <AlertDialog
+        open={!!deleteCampaignId}
+        onOpenChange={(open) => !open && setDeleteCampaignId(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Campaign</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete this campaign and all its contacts. This action cannot be
+              undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => deleteCampaignId && deleteCampaignMutation.mutate(deleteCampaignId)}
+              disabled={deleteCampaignMutation.isPending}
+            >
+              {deleteCampaignMutation.isPending ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Trash2 className="mr-2 h-4 w-4" />
+              )}
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

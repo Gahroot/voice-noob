@@ -158,6 +158,8 @@ class CampaignResponse(BaseModel):
     from_phone_number: str
     initial_message: str
     ai_enabled: bool
+    agent_id: str | None = None
+    agent_name: str | None = None
     total_contacts: int
     messages_sent: int
     messages_delivered: int
@@ -384,6 +386,41 @@ async def get_conversation_messages(
         )
         for msg in messages
     ]
+
+
+@router.delete("/conversations/{conversation_id}")
+async def delete_conversation(
+    conversation_id: str,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+    workspace_id: str = Query(..., description="Workspace ID"),
+) -> dict[str, str]:
+    """Delete an SMS conversation and all its messages."""
+    workspace_uuid = uuid.UUID(workspace_id)
+    conv_uuid = uuid.UUID(conversation_id)
+
+    # Verify conversation exists and belongs to workspace
+    result = await db.execute(
+        select(SMSConversation).where(
+            SMSConversation.id == conv_uuid,
+            SMSConversation.workspace_id == workspace_uuid,
+        )
+    )
+    conversation = result.scalar_one_or_none()
+
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    # Delete all messages in the conversation first
+    from sqlalchemy import delete
+
+    await db.execute(delete(SMSMessage).where(SMSMessage.conversation_id == conv_uuid))
+
+    # Delete the conversation
+    await db.delete(conversation)
+    await db.commit()
+
+    return {"status": "deleted"}
 
 
 @router.post("/conversations/{conversation_id}/read")
@@ -822,6 +859,7 @@ async def list_campaigns(
 
     query = (
         select(SMSCampaign)
+        .options(selectinload(SMSCampaign.agent))
         .where(SMSCampaign.workspace_id == workspace_uuid)
         .order_by(SMSCampaign.created_at.desc())
     )
@@ -841,6 +879,8 @@ async def list_campaigns(
             from_phone_number=c.from_phone_number,
             initial_message=c.initial_message,
             ai_enabled=c.ai_enabled,
+            agent_id=str(c.agent_id) if c.agent_id else None,
+            agent_name=c.agent.name if c.agent else None,
             total_contacts=c.total_contacts,
             messages_sent=c.messages_sent,
             messages_delivered=c.messages_delivered,
@@ -863,8 +903,27 @@ async def create_campaign(
     workspace_id: str = Query(..., description="Workspace ID"),
 ) -> CampaignResponse:
     """Create an SMS campaign."""
+    from app.models.agent import Agent
+
     workspace_uuid = uuid.UUID(workspace_id)
     user_uuid = user_id_to_uuid(current_user.id)
+
+    # Validate agent if provided
+    agent = None
+    if campaign_request.agent_id:
+        agent_result = await db.execute(
+            select(Agent).where(Agent.id == uuid.UUID(campaign_request.agent_id))
+        )
+        agent = agent_result.scalar_one_or_none()
+
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+
+        if agent.channel_mode not in ("text", "both"):
+            raise HTTPException(
+                status_code=400,
+                detail="Agent does not support text channel. Update agent's channel mode first.",
+            )
 
     campaign = SMSCampaign(
         user_id=user_uuid,
@@ -912,6 +971,8 @@ async def create_campaign(
         from_phone_number=campaign.from_phone_number,
         initial_message=campaign.initial_message,
         ai_enabled=campaign.ai_enabled,
+        agent_id=str(campaign.agent_id) if campaign.agent_id else None,
+        agent_name=agent.name if agent else None,
         total_contacts=campaign.total_contacts,
         messages_sent=campaign.messages_sent,
         messages_delivered=campaign.messages_delivered,
@@ -931,7 +992,11 @@ async def get_campaign(
     db: AsyncSession = Depends(get_db),
 ) -> CampaignResponse:
     """Get a campaign."""
-    result = await db.execute(select(SMSCampaign).where(SMSCampaign.id == uuid.UUID(campaign_id)))
+    result = await db.execute(
+        select(SMSCampaign)
+        .options(selectinload(SMSCampaign.agent))
+        .where(SMSCampaign.id == uuid.UUID(campaign_id))
+    )
     campaign = result.scalar_one_or_none()
 
     if not campaign:
@@ -945,6 +1010,8 @@ async def get_campaign(
         from_phone_number=campaign.from_phone_number,
         initial_message=campaign.initial_message,
         ai_enabled=campaign.ai_enabled,
+        agent_id=str(campaign.agent_id) if campaign.agent_id else None,
+        agent_name=campaign.agent.name if campaign.agent else None,
         total_contacts=campaign.total_contacts,
         messages_sent=campaign.messages_sent,
         messages_delivered=campaign.messages_delivered,
@@ -955,6 +1022,49 @@ async def get_campaign(
         started_at=campaign.started_at.isoformat() if campaign.started_at else None,
         completed_at=campaign.completed_at.isoformat() if campaign.completed_at else None,
     )
+
+
+@router.delete("/campaigns/{campaign_id}")
+async def delete_campaign(
+    campaign_id: str,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+    workspace_id: str = Query(..., description="Workspace ID"),
+) -> dict[str, str]:
+    """Delete an SMS campaign and all its contacts."""
+    workspace_uuid = uuid.UUID(workspace_id)
+    campaign_uuid = uuid.UUID(campaign_id)
+
+    # Verify campaign exists and belongs to workspace
+    result = await db.execute(
+        select(SMSCampaign).where(
+            SMSCampaign.id == campaign_uuid,
+            SMSCampaign.workspace_id == workspace_uuid,
+        )
+    )
+    campaign = result.scalar_one_or_none()
+
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+
+    # Prevent deletion of running campaigns
+    if campaign.status == SMSCampaignStatus.RUNNING.value:
+        raise HTTPException(
+            status_code=400, detail="Cannot delete a running campaign. Pause it first."
+        )
+
+    # Delete all campaign contacts first
+    from sqlalchemy import delete as sql_delete
+
+    await db.execute(
+        sql_delete(SMSCampaignContact).where(SMSCampaignContact.campaign_id == campaign_uuid)
+    )
+
+    # Delete the campaign
+    await db.delete(campaign)
+    await db.commit()
+
+    return {"status": "deleted"}
 
 
 @router.post("/campaigns/{campaign_id}/start")
@@ -1159,20 +1269,39 @@ async def _handle_inbound_message(
             conversation_id=str(conversation.id),
             ai_enabled=False,
         )
-    # EXISTING conversation - auto-assign default agent if it's platform-initiated
-    # but doesn't have an agent yet (for backward compatibility)
-    elif (
-        conversation.initiated_by == "platform"
-        and not conversation.assigned_agent_id
-        and phone.default_text_agent_id
-    ):
-        conversation.assigned_agent_id = phone.default_text_agent_id
-        conversation.ai_enabled = True
-        logger.info(
-            "auto_assigned_agent_to_existing_conversation",
-            conversation_id=str(conversation.id),
-            agent_id=str(phone.default_text_agent_id),
+    # EXISTING conversation - auto-assign agent if it's platform-initiated
+    # but doesn't have an agent yet
+    elif conversation.initiated_by == "platform" and not conversation.assigned_agent_id:
+        # First, check if conversation is part of a campaign and use campaign's agent
+        campaign_agent_id = None
+        campaign_contact_result = await db.execute(
+            select(SMSCampaignContact)
+            .options(selectinload(SMSCampaignContact.campaign))
+            .where(SMSCampaignContact.conversation_id == conversation.id)
         )
+        campaign_contact = campaign_contact_result.scalar_one_or_none()
+
+        if campaign_contact and campaign_contact.campaign and campaign_contact.campaign.agent_id:
+            campaign_agent_id = campaign_contact.campaign.agent_id
+            logger.info(
+                "found_campaign_agent_for_conversation",
+                conversation_id=str(conversation.id),
+                campaign_id=str(campaign_contact.campaign_id),
+                agent_id=str(campaign_agent_id),
+            )
+
+        # Use campaign agent first, then fall back to phone default agent
+        agent_to_assign = campaign_agent_id or phone.default_text_agent_id
+
+        if agent_to_assign:
+            conversation.assigned_agent_id = agent_to_assign
+            conversation.ai_enabled = True
+            logger.info(
+                "auto_assigned_agent_to_existing_conversation",
+                conversation_id=str(conversation.id),
+                agent_id=str(agent_to_assign),
+                source="campaign" if campaign_agent_id else "phone_default",
+            )
 
     # Create message
     message = SMSMessage(
@@ -1451,23 +1580,45 @@ async def _handle_slicktext_inbound_message(  # noqa: PLR0912, PLR0915
             conversation_id=str(conversation.id),
             ai_enabled=False,
         )
-    # EXISTING conversation - auto-assign default agent if it's platform-initiated
-    # but doesn't have an agent yet (for backward compatibility)
+    # EXISTING conversation - auto-assign agent if it's platform-initiated
+    # but doesn't have an agent yet
     elif conversation.initiated_by == "platform" and not conversation.assigned_agent_id:
-        # Get default agent from phone number or user settings
+        # First, check if conversation is part of a campaign and use campaign's agent
+        campaign_agent_id = None
+        campaign_contact_result = await db.execute(
+            select(SMSCampaignContact)
+            .options(selectinload(SMSCampaignContact.campaign))
+            .where(SMSCampaignContact.conversation_id == conversation.id)
+        )
+        campaign_contact = campaign_contact_result.scalar_one_or_none()
+
+        if campaign_contact and campaign_contact.campaign and campaign_contact.campaign.agent_id:
+            campaign_agent_id = campaign_contact.campaign.agent_id
+            log.info(
+                "found_campaign_agent_for_conversation",
+                conversation_id=str(conversation.id),
+                campaign_id=str(campaign_contact.campaign_id),
+                agent_id=str(campaign_agent_id),
+            )
+
+        # Get default agent from phone number or user settings (as fallback)
         default_agent_id = None
         if phone and phone.default_text_agent_id:
             default_agent_id = phone.default_text_agent_id
         elif user_settings and user_settings.slicktext_default_text_agent_id:
             default_agent_id = user_settings.slicktext_default_text_agent_id
 
-        if default_agent_id:
-            conversation.assigned_agent_id = default_agent_id
+        # Use campaign agent first, then fall back to phone/settings default agent
+        agent_to_assign = campaign_agent_id or default_agent_id
+
+        if agent_to_assign:
+            conversation.assigned_agent_id = agent_to_assign
             conversation.ai_enabled = True
             log.info(
                 "auto_assigned_agent_to_existing_conversation",
                 conversation_id=str(conversation.id),
-                agent_id=str(default_agent_id),
+                agent_id=str(agent_to_assign),
+                source="campaign" if campaign_agent_id else "phone_default",
             )
 
     # Create message record

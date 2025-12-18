@@ -8,6 +8,7 @@ export const api = axios.create({
     "Content-Type": "application/json",
   },
   withCredentials: true,
+  timeout: 30000, // 30 second timeout to prevent hanging requests
 });
 
 // Safely get/set localStorage with error handling
@@ -78,11 +79,23 @@ api.interceptors.response.use(
         message: error.response.data?.message ?? error.message,
       });
     } else if (error.request) {
-      // Log network errors
-      console.error("Network error - no response received:", {
+      // Log network errors with more context
+      const isTimeout = error.code === "ECONNABORTED" || error.message?.includes("timeout");
+      const errorType = isTimeout ? "Request timeout" : "Network error";
+      console.error(`${errorType} - no response received:`, {
         endpoint: error.config?.url,
         method: error.config?.method?.toUpperCase(),
+        code: error.code,
+        message: error.message,
       });
+      // Create a more descriptive error message
+      if (isTimeout) {
+        error.message =
+          "Request timed out - the server is taking too long to respond. Please try again.";
+      } else {
+        error.message =
+          "Network error - could not connect to the server. Please check that the backend is running.";
+      }
     } else {
       // Log request setup errors
       console.error("Request error:", error.message);
