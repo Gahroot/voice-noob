@@ -37,6 +37,7 @@ def build_text_instructions(
     system_prompt: str,
     language: str,
     timezone: str | None = None,
+    contact_phone: str | None = None,
 ) -> str:
     """Build instructions for text agent.
 
@@ -44,6 +45,7 @@ def build_text_instructions(
         system_prompt: The agent's custom system prompt
         language: Language code (e.g., "en-US", "es-ES")
         timezone: Workspace timezone
+        contact_phone: The contact's phone number (for booking appointments)
 
     Returns:
         Complete instructions string for text conversations
@@ -63,16 +65,33 @@ def build_text_instructions(
     except Exception:
         current_datetime = datetime.now().strftime("%A, %B %d, %Y at %I:%M %p")
 
+    phone_context = f"\nContact Phone: {contact_phone}" if contact_phone else ""
+
     return f"""[CONTEXT]
 Language: {language_name}
 Timezone: {tz_name}
 Current: {current_datetime}
-Channel: SMS/Text Message
+Channel: SMS/Text Message{phone_context}
 
-[RULES]
+[CRITICAL RULES - MUST FOLLOW]
+- NEVER promise to perform an action (book, schedule, create, send, etc.) without IMMEDIATELY calling the corresponding tool
+- If you say "I'll book", "I'll schedule", "I'll create" etc., you MUST call the tool in that same response
+- If you cannot call a tool due to missing information, ask for clarification instead of saying you'll do it
+- For booking appointments:
+  * When user confirms a date/time (says "yes", "that works", "book it", etc.), you MUST call book_appointment immediately
+  * For ambiguous dates like "Tuesday", use parse_date tool FIRST to get ISO format, THEN call book_appointment
+  * NEVER say "I'll book" or "booking now" without calling book_appointment in the same response
+  * If missing contact_phone or scheduled_at, ask for them - do not say you'll book without them
+
+[RESPONSE RULES]
 - Respond ONLY in {language_name}
 - All times are in {tz_name} timezone
-- For booking tools, use ISO format with timezone offset
+- For booking tools, use ISO 8601 format with timezone offset (e.g., "2025-12-23T09:00:00-05:00"){
+        f'''
+- When calling book_appointment, use contact_phone parameter: {contact_phone}'''
+        if contact_phone
+        else ""
+    }
 - Keep responses concise - SMS has character limits
 - Be conversational but efficient
 - Do not use markdown formatting (plain text only)
@@ -160,10 +179,12 @@ async def generate_text_response(  # noqa: PLR0912, PLR0915
         return None
 
     # Build system instructions
+    # In SMS conversations: from_number = agent's phone, to_number = contact's phone
     system_prompt = build_text_instructions(
         system_prompt=agent.system_prompt,
         language=agent.language,
         timezone=None,  # TODO: Get from workspace settings
+        contact_phone=conversation.to_number,  # Fixed: use to_number (contact's phone), not from_number
     )
 
     # Get workspace integrations for tools
@@ -232,7 +253,87 @@ async def generate_text_response(  # noqa: PLR0912, PLR0915
         }
         if tools:
             create_kwargs["tools"] = tools
-            create_kwargs["tool_choice"] = "auto"
+
+            # Detect booking intent in recent messages to force tool usage
+            booking_keywords = [
+                "book",
+                "schedule",
+                "appointment",
+                "calendar",
+                "meeting",
+                "tuesday",
+                "wednesday",
+                "thursday",
+                "friday",
+                "monday",
+                "tomorrow",
+                "next week",
+                "pm",
+                "am",
+                "time",
+                "call with",
+                "call for",
+                "works for me",
+                "that works",
+            ]
+            # Check last 3 user messages for booking intent (not just the last one)
+            # This catches cases like: AI: "Want to book Tuesday at 2pm?" User: "Yes"
+            recent_user_messages = [
+                msg["content"].lower()
+                for msg in messages[-6:]  # Last 6 messages (3 user + 3 assistant)
+                if msg["role"] == "user"
+            ][-3:]  # Keep only last 3 user messages
+
+            has_booking_intent = any(
+                any(keyword in msg for keyword in booking_keywords) for msg in recent_user_messages
+            )
+
+            # Also check for confirmation keywords after AI mentioned booking
+            confirmation_keywords = [
+                "yes",
+                "yea",
+                "yeah",
+                "yep",
+                "sure",
+                "ok",
+                "okay",
+                "confirm",
+                "correct",
+            ]
+            last_user_message = messages[-1]["content"].lower() if messages else ""
+            min_messages_for_context = 2
+            last_assistant_message = (
+                messages[-2]["content"].lower()
+                if len(messages) >= min_messages_for_context and messages[-2]["role"] == "assistant"
+                else ""
+            )
+
+            # If user confirms and AI's last message mentioned booking, treat as booking intent
+            if any(kw in last_user_message for kw in confirmation_keywords) and any(
+                phrase in last_assistant_message
+                for phrase in ["book", "schedule", "appointment", "confirm"]
+            ):
+                has_booking_intent = True
+
+            # Check if book_appointment tool is available
+            book_appointment_available = any(
+                t.get("function", {}).get("name") == "book_appointment" for t in tools
+            )
+
+            # Force tool use if booking intent detected and book_appointment is available
+            if has_booking_intent and book_appointment_available:
+                # Use tool_choice with specific function to force book_appointment
+                # This prevents AI from calling other tools (like parse_date) then saying "I'll book"
+                create_kwargs["tool_choice"] = {
+                    "type": "function",
+                    "function": {"name": "book_appointment"},
+                }
+                log.info(
+                    "booking_intent_detected_forcing_book_appointment_tool",
+                    user_message=last_user_message[:100],
+                )
+            else:
+                create_kwargs["tool_choice"] = "auto"
 
         # Initial LLM call with timeout to prevent indefinite hangs
         openai_timeout = settings.OPENAI_TIMEOUT
@@ -265,6 +366,23 @@ async def generate_text_response(  # noqa: PLR0912, PLR0915
                     error=result.get("error"),
                     result_keys=list(result.keys()) if isinstance(result, dict) else None,
                 )
+
+                # CRITICAL: Log appointment booking success with appointment_id for verification
+                if tool_name == "book_appointment" and result.get("success"):
+                    log.info(
+                        "appointment_booked_successfully",
+                        appointment_id=result.get("appointment_id"),
+                        customer_name=result.get("customer_name"),
+                        scheduled_at=result.get("scheduled_at"),
+                        conversation_id=str(conversation.id),
+                    )
+                elif tool_name == "book_appointment" and not result.get("success"):
+                    log.error(
+                        "appointment_booking_failed",
+                        error=result.get("error"),
+                        arguments=arguments,
+                        conversation_id=str(conversation.id),
+                    )
                 tool_results.append(
                     {
                         "tool_call_id": tool_call.id,
@@ -307,6 +425,49 @@ async def generate_text_response(  # noqa: PLR0912, PLR0915
             response_text = final_response.choices[0].message.content
         else:
             response_text = assistant_message.content
+
+            # VALIDATION: Check if AI promised to book without calling the tool
+            if response_text:
+                booking_promises = [
+                    "i'll book",
+                    "i'll schedule",
+                    "i will book",
+                    "i will schedule",
+                    "let me book",
+                    "let me schedule",
+                    "i'm booking",
+                    "i am booking",
+                    "booking you",
+                    "scheduling you",
+                    "i'll get that on the calendar",
+                    "booked for",
+                    "scheduled for",
+                    "you're all set",
+                    "you're booked",
+                    "appointment is set",
+                    "appointment is booked",
+                ]
+                made_booking_promise = any(
+                    promise in response_text.lower() for promise in booking_promises
+                )
+
+                if made_booking_promise:
+                    log.error(
+                        "CRITICAL_BUG_ai_promised_booking_without_tool_call",
+                        response=response_text[:200],
+                        conversation_id=str(conversation.id),
+                        agent_id=str(agent.id),
+                        has_booking_intent=has_booking_intent,
+                        book_appointment_available=book_appointment_available,
+                        recent_messages=[msg["content"][:100] for msg in messages[-3:]],
+                    )
+                    # Override response to prevent false promises
+                    # Since we have the contact's phone, we should force retry with book_appointment
+                    response_text = (
+                        "I apologize, but I need you to confirm the exact date and time "
+                        "you'd like to book. Please provide it in a format like "
+                        "'Tuesday at 2pm' or 'December 24th at 9:30am'."
+                    )
 
         # Close tool registry
         await tool_registry.close()

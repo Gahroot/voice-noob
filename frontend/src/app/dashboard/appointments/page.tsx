@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -114,6 +114,11 @@ export default function AppointmentsPage() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>("all");
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   // Fetch workspaces
   const { data: workspaces = [] } = useQuery<Workspace[]>({
@@ -324,6 +329,10 @@ export default function AppointmentsPage() {
   const scheduledCount = appointments.filter((a) => a.status === "scheduled").length;
   const completedCount = appointments.filter((a) => a.status === "completed").length;
   const cancelledCount = appointments.filter((a) => a.status === "cancelled").length;
+
+  if (!isMounted) {
+    return null;
+  }
 
   if (error) {
     return (

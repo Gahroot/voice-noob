@@ -1,7 +1,8 @@
 """CRM tools for voice agents - bookings, contacts, appointments."""
 
+import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 import structlog
@@ -10,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.integrations import get_workspace_integrations
+from app.core.auth import user_id_to_uuid
 from app.core.cache import cache_invalidate
 from app.models.appointment import Appointment
 from app.models.calendar_sync import CalendarSyncQueue
@@ -64,7 +66,7 @@ class CRMTools:
         try:
             # Get workspace integrations
             integrations = await get_workspace_integrations(
-                user_id=uuid.UUID(int=appointment.contact.user_id),
+                user_id=user_id_to_uuid(self.user_id),
                 workspace_id=appointment.workspace_id,
                 db=self.db,
             )
@@ -175,6 +177,21 @@ class CRMTools:
                         },
                     },
                     "required": ["date"],
+                },
+            },
+            {
+                "type": "function",
+                "name": "parse_date",
+                "description": "Convert natural language date/time (like 'Tuesday at 9am', 'next Thursday 2pm', 'tomorrow at 3') into proper ISO 8601 format for booking. Use this BEFORE booking if you have ambiguous dates.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "date_expression": {
+                            "type": "string",
+                            "description": "Natural language date/time like 'Tuesday at 9am', 'next week', 'tomorrow 2pm'",
+                        },
+                    },
+                    "required": ["date_expression"],
                 },
             },
             {
@@ -455,6 +472,119 @@ class CRMTools:
         except Exception as e:
             self.logger.exception("check_availability_failed", error=str(e))
             return {"success": False, "error": str(e)}
+
+    async def parse_date(self, date_expression: str) -> dict[str, Any]:  # noqa: PLR0912, PLR0915
+        """Parse natural language date/time into ISO 8601 format.
+
+        Args:
+            date_expression: Natural language like "Tuesday at 9am", "next Thursday 2pm"
+
+        Returns:
+            Parsed datetime in ISO 8601 format with timezone
+        """
+        try:
+            # Get workspace timezone from user settings
+            from zoneinfo import ZoneInfo
+
+            from app.crud import get_user_api_keys
+
+            user_settings = await get_user_api_keys(
+                uuid.UUID(int=self.user_id), self.db, workspace_id=self.workspace_id
+            )
+            tz_name = user_settings.timezone if user_settings else "America/New_York"
+            tz = ZoneInfo(tz_name)
+
+            # Get current time in workspace timezone
+            now = datetime.now(tz)
+
+            # Normalize input
+            text = date_expression.lower().strip()
+
+            # Parse time (e.g., "9am", "2pm", "14:00", "9:30am")
+            time_match = re.search(r"(\d{1,2})(?::(\d{2}))?\s*(am|pm)?", text)
+            hour = 9  # default
+            minute = 0
+
+            if time_match:
+                hour = int(time_match.group(1))
+                minute = int(time_match.group(2)) if time_match.group(2) else 0
+                am_pm = time_match.group(3)
+
+                # Convert 12-hour to 24-hour
+                if am_pm:
+                    if am_pm == "pm" and hour != 12:  # noqa: PLR2004
+                        hour += 12
+                    elif am_pm == "am" and hour == 12:  # noqa: PLR2004
+                        hour = 0
+
+            # Parse date
+            target_date = now.date()
+
+            # Handle specific day names
+            if "monday" in text:
+                target_day = 0
+            elif "tuesday" in text:
+                target_day = 1
+            elif "wednesday" in text:
+                target_day = 2
+            elif "thursday" in text:
+                target_day = 3
+            elif "friday" in text:
+                target_day = 4
+            elif "saturday" in text:
+                target_day = 5
+            elif "sunday" in text:
+                target_day = 6
+            elif "tomorrow" in text:
+                target_date = now.date() + timedelta(days=1)
+                target_day = None
+            elif "today" in text:
+                target_date = now.date()
+                target_day = None
+            else:
+                # Try to parse YYYY-MM-DD
+                date_match = re.search(r"(\d{4})-(\d{2})-(\d{2})", text)
+                if date_match:
+                    target_date = datetime.strptime(date_match.group(0), "%Y-%m-%d").date()
+                target_day = None
+
+            # If day name specified, find next occurrence
+            if target_day is not None:
+                days_ahead = target_day - now.weekday()
+                if days_ahead <= 0:  # Target day already happened this week
+                    days_ahead += 7
+                # If "next" is mentioned, add another week
+                if "next" in text and days_ahead < 7:  # noqa: PLR2004
+                    days_ahead += 7
+                target_date = now.date() + timedelta(days=days_ahead)
+
+            # Combine date and time
+            result_dt = datetime(
+                target_date.year,
+                target_date.month,
+                target_date.day,
+                hour,
+                minute,
+                tzinfo=tz,
+            )
+
+            # Format as ISO 8601 with timezone offset
+            iso_string = result_dt.isoformat()
+
+            return {
+                "success": True,
+                "parsed_datetime": iso_string,
+                "timezone": tz_name,
+                "human_readable": result_dt.strftime("%A, %B %d, %Y at %I:%M %p %Z"),
+                "original_expression": date_expression,
+            }
+
+        except Exception as e:
+            self.logger.exception("parse_date_failed", error=str(e), expression=date_expression)
+            return {
+                "success": False,
+                "error": f"Could not parse '{date_expression}'. Please provide a specific date in format like 'YYYY-MM-DD' or 'Tuesday at 9am'.",
+            }
 
     async def book_appointment(
         self,
@@ -792,4 +922,6 @@ class CRMTools:
             return await self.cancel_appointment(**arguments)
         if tool_name == "reschedule_appointment":
             return await self.reschedule_appointment(**arguments)
+        if tool_name == "parse_date":
+            return await self.parse_date(**arguments)
         return {"success": False, "error": f"Unknown tool: {tool_name}"}

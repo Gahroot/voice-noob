@@ -301,6 +301,7 @@ class ToolRegistry:
             "list_appointments",
             "cancel_appointment",
             "reschedule_appointment",
+            "parse_date",
         }
 
         if tool_name in crm_tool_names:
