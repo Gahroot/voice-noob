@@ -285,6 +285,27 @@ class HumeEVISession:
         except Exception:
             current_datetime = datetime.now().strftime("%A, %B %d, %Y at %I:%M %p")
 
+        # Build tool definitions for Hume (need this before building prompt)
+        enabled_tools = self.agent_config.get("enabled_tools", [])
+
+        # Check if appointment booking tools are enabled
+        has_booking_tools = any(
+            tool in enabled_tools for tool in ["crm", "calendly", "cal-com", "gohighlevel"]
+        )
+
+        # Build booking enforcement rules if booking tools are available
+        booking_rules = ""
+        if has_booking_tools:
+            booking_rules = """
+
+[CRITICAL BOOKING RULES]
+* When customer requests to book/schedule an appointment, you MUST call the book_appointment tool IMMEDIATELY
+* NEVER say "I'll book", "I'll schedule", "Let me book", "I'm booking now" WITHOUT calling the tool in the same turn
+* When customer confirms a date/time (says "yes", "that works", "book it", etc.), call book_appointment RIGHT AWAY
+* For ambiguous dates like "Tuesday" or "next week", use parse_date tool FIRST to get ISO format, THEN call book_appointment
+* Do NOT promise to book without executing the tool - this causes customer frustration
+* Do NOT ask for date/time if customer already provided it - just call book_appointment"""
+
         full_prompt = f"""[CONTEXT]
 Language: {language_name}
 Timezone: {workspace_timezone}
@@ -294,15 +315,18 @@ Current: {current_datetime}
 - Speak ONLY in {language_name}
 - Be empathetic and respond to the user's emotional state
 - Keep responses concise - this is voice, not text
-- Summarize tool results naturally
+- Summarize tool results naturally{booking_rules}
 
 [YOUR ROLE]
 {system_prompt}"""
-
-        # Build tool definitions for Hume
-        enabled_tools = self.agent_config.get("enabled_tools", [])
+        enabled_tool_ids = self.agent_config.get("enabled_tool_ids", {})
+        integration_settings = self.agent_config.get("integration_settings", {})
         tools = (
-            self.tool_registry.get_all_tool_definitions(enabled_tools) if self.tool_registry else []
+            self.tool_registry.get_all_tool_definitions(
+                enabled_tools, enabled_tool_ids, integration_settings
+            )
+            if self.tool_registry
+            else []
         )
 
         # Hume EVI tool format requires:

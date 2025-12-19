@@ -82,6 +82,23 @@ def build_instructions_with_language(
         # Fallback if timezone is invalid
         current_datetime = datetime.now().strftime("%A, %B %d, %Y at %I:%M %p")
 
+    # Check if appointment booking tools are enabled
+    has_booking_tools = enabled_tools and any(
+        tool in enabled_tools for tool in ["crm", "calendly", "cal-com", "gohighlevel"]
+    )
+
+    # Build booking enforcement rules if booking tools are available
+    booking_rules = ""
+    if has_booking_tools:
+        booking_rules = """
+[CRITICAL BOOKING RULES]
+* When customer requests to book/schedule an appointment, you MUST call the book_appointment tool IMMEDIATELY
+* NEVER say "I'll book", "I'll schedule", "Let me book", "I'm booking now" WITHOUT calling the tool in the same turn
+* When customer confirms a date/time (says "yes", "that works", "book it", etc.), call book_appointment RIGHT AWAY
+* For ambiguous dates like "Tuesday" or "next week", use parse_date tool FIRST to get ISO format, THEN call book_appointment
+* Do NOT promise to book without executing the tool - this causes customer frustration
+* Do NOT ask for date/time if customer already provided it - just call book_appointment"""
+
     # Build the complete voice agent instructions
     instructions = f"""[CONTEXT]
 Language: {language_name}
@@ -93,7 +110,7 @@ Current: {current_datetime}
 - All times are in {tz_name} timezone
 - For booking tools, use ISO format with timezone offset (e.g., 2024-12-01T14:00:00-05:00)
 - Keep responses concise - this is voice, not text
-- Summarize tool results naturally
+- Summarize tool results naturally{booking_rules}
 
 [YOUR ROLE]
 {system_prompt}"""
@@ -263,7 +280,11 @@ class GPTRealtimeSession:
 
         # Get tool definitions from registry
         enabled_tools = self.agent_config.get("enabled_tools", [])
-        tools = self.tool_registry.get_all_tool_definitions(enabled_tools)
+        enabled_tool_ids = self.agent_config.get("enabled_tool_ids", {})
+        integration_settings = self.agent_config.get("integration_settings", {})
+        tools = self.tool_registry.get_all_tool_definitions(
+            enabled_tools, enabled_tool_ids, integration_settings
+        )
 
         # Get workspace timezone if available
         workspace_timezone = "UTC"
@@ -284,7 +305,7 @@ class GPTRealtimeSession:
         voice = self.agent_config.get("voice", "marin")
         temperature = self.agent_config.get("temperature", 0.6)
         instructions = build_instructions_with_language(
-            system_prompt, language, timezone=workspace_timezone
+            system_prompt, language, enabled_tools=enabled_tools, timezone=workspace_timezone
         )
 
         session_config = {
