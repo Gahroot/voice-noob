@@ -1555,20 +1555,33 @@ async def _handle_inbound_message(  # noqa: PLR0912, PLR0915
 
         # Auto-create contact for unknown phone numbers
         if not contact:
-            contact = Contact(
-                user_id=user_id,
-                workspace_id=workspace_id,
-                phone_number=from_number,
-                first_name="Unknown",
-                source="sms_inbound",
-            )
-            db.add(contact)
-            await db.flush()
-            log.info(
-                "auto_created_contact_for_inbound_sms",
-                contact_id=contact.id,
-                phone_number=from_number,
-            )
+            try:
+                contact = Contact(
+                    user_id=user_id,
+                    workspace_id=workspace_id,
+                    phone_number=from_number,
+                    first_name="Unknown",
+                    source="sms_inbound",
+                )
+                db.add(contact)
+                await db.flush()
+                log.info(
+                    "auto_created_contact_for_inbound_sms",
+                    contact_id=contact.id,
+                    phone_number=from_number,
+                )
+            except Exception as e:
+                # Contact creation failed (possibly duplicate or DB error)
+                # Try to fetch existing contact again in case of race condition
+                log.warning("contact_creation_failed", error=str(e))
+                await db.rollback()
+                contact_retry = await db.execute(
+                    select(Contact).where(
+                        Contact.workspace_id == workspace_id,
+                        Contact.phone_number == from_number,
+                    )
+                )
+                contact = contact_retry.scalar_one_or_none()
 
         # Get default text agent from the phone number configuration
         default_text_agent_id = phone.default_text_agent_id if phone else None
@@ -1732,7 +1745,11 @@ async def telnyx_sms_webhook(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
-    """Handle Telnyx SMS webhooks (inbound messages and delivery receipts)."""
+    """Handle Telnyx SMS webhooks (inbound messages and delivery receipts).
+
+    IMPORTANT: Always returns 200 to acknowledge receipt, even if processing fails.
+    This prevents Telnyx from retrying webhooks unnecessarily.
+    """
     await verify_telnyx_webhook(request)
 
     body = await request.json()
@@ -1743,17 +1760,22 @@ async def telnyx_sms_webhook(
     log = logger.bind(webhook="telnyx_sms", event_type=event_type)
     log.info("telnyx_sms_webhook_received")
 
-    if event_type == "message.received":
-        conv_id = await _handle_inbound_message(db, payload)
-        if conv_id:
-            log.info("inbound_message_saved", conversation_id=conv_id)
-        else:
-            log.warning("phone_number_not_found")
+    try:
+        if event_type == "message.received":
+            conv_id = await _handle_inbound_message(db, payload)
+            if conv_id:
+                log.info("inbound_message_saved", conversation_id=conv_id)
+            else:
+                log.warning("phone_number_not_found")
 
-    elif event_type in ["message.sent", "message.delivered", "message.finalized"]:
-        message_id = payload.get("id", "")
-        log.info("delivery_status", message_id=message_id)
-        await _handle_delivery_status(db, payload)
+        elif event_type in ["message.sent", "message.delivered", "message.finalized"]:
+            message_id = payload.get("id", "")
+            log.info("delivery_status", message_id=message_id)
+            await _handle_delivery_status(db, payload)
+    except Exception as e:
+        # Log the error but still return 200 to acknowledge receipt
+        # This prevents Telnyx from retrying and flooding with duplicates
+        log.exception("webhook_processing_error", error=str(e))
 
     return {"status": "received"}
 

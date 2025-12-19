@@ -9,8 +9,10 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.api.integrations import get_workspace_integrations
 from app.core.cache import cache_invalidate
 from app.models.appointment import Appointment
+from app.models.calendar_sync import CalendarSyncQueue
 from app.models.contact import Contact
 
 logger = structlog.get_logger()
@@ -47,6 +49,60 @@ class CRMTools:
         self.logger = logger.bind(
             component="crm_tools", user_id=user_id, workspace_id=str(workspace_id)
         )
+
+    async def _enqueue_calendar_sync(self, appointment: Appointment, operation: str) -> None:
+        """Enqueue appointment for sync to external calendars.
+
+        Args:
+            appointment: Appointment to sync
+            operation: Sync operation (create, update, cancel)
+        """
+        if not appointment.workspace_id:
+            self.logger.debug("skipping_calendar_sync_no_workspace")
+            return
+
+        try:
+            # Get workspace integrations
+            integrations = await get_workspace_integrations(
+                user_id=uuid.UUID(int=appointment.contact.user_id),
+                workspace_id=appointment.workspace_id,
+                db=self.db,
+            )
+
+            # Queue sync for each connected calendar provider
+            for provider in ["cal-com", "calendly", "gohighlevel"]:
+                if provider in integrations:
+                    sync_entry = CalendarSyncQueue(
+                        id=uuid.uuid4(),
+                        appointment_id=appointment.id,
+                        workspace_id=appointment.workspace_id,
+                        operation=operation,
+                        calendar_provider=provider,
+                        payload={
+                            "appointment_id": appointment.id,
+                            "scheduled_at": appointment.scheduled_at.isoformat(),
+                            "duration_minutes": appointment.duration_minutes,
+                            "service_type": appointment.service_type,
+                            "notes": appointment.notes,
+                        },
+                    )
+                    self.db.add(sync_entry)
+
+                    self.logger.info(
+                        "calendar_sync_enqueued",
+                        appointment_id=appointment.id,
+                        provider=provider,
+                        operation=operation,
+                    )
+
+            await self.db.commit()
+        except Exception as e:
+            self.logger.exception(
+                "failed_to_enqueue_calendar_sync",
+                appointment_id=appointment.id,
+                error=str(e),
+            )
+            # Don't raise - sync failure shouldn't block appointment creation
 
     @staticmethod
     def get_tool_definitions() -> list[dict[str, Any]]:
@@ -506,6 +562,9 @@ class CRMTools:
             await self.db.commit()
             await self.db.refresh(appointment)
 
+            # Enqueue calendar sync
+            await self._enqueue_calendar_sync(appointment, operation="create")
+
             # Invalidate CRM stats cache after booking
             try:
                 await cache_invalidate("crm:stats:*")
@@ -641,6 +700,9 @@ class CRMTools:
 
             await self.db.commit()
 
+            # Enqueue calendar sync
+            await self._enqueue_calendar_sync(appointment, operation="cancel")
+
             return {
                 "success": True,
                 "appointment_id": appointment_id,
@@ -688,6 +750,9 @@ class CRMTools:
             appointment.scheduled_at = new_time
 
             await self.db.commit()
+
+            # Enqueue calendar sync
+            await self._enqueue_calendar_sync(appointment, operation="update")
 
             return {
                 "success": True,

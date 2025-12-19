@@ -299,3 +299,165 @@ def require_slicktext_signature(webhook_secret: str | None = None) -> Any:
         return wrapper
 
     return decorator
+
+
+def validate_calcom_signature(
+    signature: str,
+    payload: bytes,
+    webhook_secret: str,
+) -> bool:
+    """Validate Cal.com webhook signature.
+
+    Cal.com uses HMAC-SHA256 for webhook validation.
+    Header: x-cal-signature-256
+
+    Args:
+        signature: The x-cal-signature-256 header value
+        payload: The raw request body
+        webhook_secret: The Cal.com webhook secret
+
+    Returns:
+        True if signature is valid, False otherwise
+    """
+    if not signature or not webhook_secret:
+        return False
+
+    try:
+        # Compute HMAC-SHA256
+        expected_sig = hmac.new(
+            webhook_secret.encode("utf-8"),
+            payload,
+            hashlib.sha256,
+        ).hexdigest()
+
+        # Remove 'sha256=' prefix if present
+        if signature.startswith("sha256="):
+            signature = signature[7:]
+
+        return hmac.compare_digest(signature, expected_sig)
+    except Exception as e:
+        logger.warning("calcom_signature_validation_failed", error=str(e))
+        return False
+
+
+async def verify_calcom_webhook(request: Request) -> bool:
+    """Verify Cal.com webhook signature from request.
+
+    Args:
+        request: FastAPI request object
+
+    Returns:
+        True if signature is valid or validation is explicitly skipped
+
+    Raises:
+        HTTPException: If signature validation fails
+    """
+    # Explicit opt-in to skip verification (DANGEROUS - only for local dev)
+    if settings.SKIP_WEBHOOK_VERIFICATION:
+        logger.warning("webhook_verification_skipped_by_config")
+        return True
+
+    # Get webhook secret from settings
+    webhook_secret = settings.CALCOM_WEBHOOK_SECRET
+    if not webhook_secret:
+        logger.warning("calcom_webhook_secret_not_configured")
+        # Allow webhooks without signature if not configured (for initial setup)
+        return True
+
+    # Get signature from header
+    signature = request.headers.get("x-cal-signature-256", "")
+
+    if not signature:
+        logger.warning("missing_calcom_signature")
+        raise HTTPException(status_code=403, detail="Missing Cal.com signature")
+
+    # Get raw body
+    body = await request.body()
+
+    # Validate signature
+    if not validate_calcom_signature(signature, body, webhook_secret):
+        logger.warning("invalid_calcom_signature")
+        raise HTTPException(status_code=403, detail="Invalid Cal.com signature")
+
+    return True
+
+
+def validate_calendly_signature(
+    signature: str,
+    payload: bytes,
+    webhook_secret: str,
+) -> bool:
+    """Validate Calendly webhook signature.
+
+    Calendly uses HMAC-SHA256 for webhook validation.
+    Header: calendly-webhook-signature
+
+    Args:
+        signature: The calendly-webhook-signature header value
+        payload: The raw request body
+        webhook_secret: The Calendly webhook secret
+
+    Returns:
+        True if signature is valid, False otherwise
+    """
+    if not signature or not webhook_secret:
+        return False
+
+    try:
+        # Compute HMAC-SHA256 and encode as base64
+        import base64
+
+        expected_sig = base64.b64encode(
+            hmac.new(
+                webhook_secret.encode("utf-8"),
+                payload,
+                hashlib.sha256,
+            ).digest()
+        ).decode("utf-8")
+
+        return hmac.compare_digest(signature, expected_sig)
+    except Exception as e:
+        logger.warning("calendly_signature_validation_failed", error=str(e))
+        return False
+
+
+async def verify_calendly_webhook(request: Request) -> bool:
+    """Verify Calendly webhook signature from request.
+
+    Args:
+        request: FastAPI request object
+
+    Returns:
+        True if signature is valid or validation is explicitly skipped
+
+    Raises:
+        HTTPException: If signature validation fails
+    """
+    # Explicit opt-in to skip verification (DANGEROUS - only for local dev)
+    if settings.SKIP_WEBHOOK_VERIFICATION:
+        logger.warning("webhook_verification_skipped_by_config")
+        return True
+
+    # Get webhook secret from settings
+    webhook_secret = settings.CALENDLY_WEBHOOK_SECRET
+    if not webhook_secret:
+        logger.warning("calendly_webhook_secret_not_configured")
+        # Allow webhooks without signature if not configured (for initial setup)
+        return True
+
+    # Get signature from header
+    signature = request.headers.get("calendly-webhook-signature", "")
+
+    if not signature:
+        logger.warning("missing_calendly_signature")
+        raise HTTPException(status_code=403, detail="Missing Calendly signature")
+
+    # Get raw body
+    body = await request.body()
+
+    # Validate signature
+    if not validate_calendly_signature(signature, body, webhook_secret):
+        logger.warning("invalid_calendly_signature")
+        raise HTTPException(status_code=403, detail="Invalid Calendly signature")
+
+    return True

@@ -61,6 +61,43 @@ class Appointment(Base, TimestampMixin):
     # Which voice agent created this appointment (optional)
     created_by_agent: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
+    # Calendar sync fields
+    external_calendar_id: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+        index=True,
+        comment="Calendar provider: cal-com, calendly, gohighlevel",
+    )
+    external_event_id: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+        comment="Unique event ID from external calendar",
+    )
+    external_event_uid: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+        index=True,
+        comment="Event UID for Cal.com/Calendly",
+    )
+    sync_status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="pending",
+        index=True,
+        comment="pending, synced, failed, conflict",
+    )
+    last_synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="Last successful sync timestamp",
+    )
+    sync_error: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        deferred=True,
+        comment="Error message if sync failed",
+    )
+
     # Relationships
     workspace: Mapped["Workspace | None"] = relationship("Workspace", back_populates="appointments")
     contact: Mapped["Contact"] = relationship("Contact", back_populates="appointments")

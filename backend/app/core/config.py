@@ -150,6 +150,16 @@ class Settings(BaseSettings):
     SLICKTEXT_POLLING_ENABLED: bool = True  # Enable polling for inbound SMS (for tech demos)
     SLICKTEXT_POLLING_INTERVAL: int = 30  # Seconds between poll cycles
 
+    # Calendar Sync
+    CALENDAR_SYNC_ENABLED: bool = True  # Enable background calendar sync
+    CALENDAR_SYNC_POLL_INTERVAL: int = 30  # Seconds between sync queue polls
+    CALENDAR_SYNC_MAX_RETRIES: int = 3  # Max retry attempts for failed syncs
+
+    # Calendar Webhook Secrets
+    CALCOM_WEBHOOK_SECRET: str = ""  # Cal.com webhook signing secret
+    CALENDLY_WEBHOOK_SECRET: str = ""  # Calendly webhook signing secret
+    GOHIGHLEVEL_WEBHOOK_SECRET: str = ""  # GoHighLevel webhook signing secret
+
     # Monitoring
     SENTRY_DSN: str | None = None
     SENTRY_ENVIRONMENT: str = "development"

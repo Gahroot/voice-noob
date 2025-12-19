@@ -24,6 +24,7 @@ from sqlalchemy import func, select
 from app.api import (
     agents,
     auth,
+    calendar_webhooks,
     calls,
     campaigns,
     compliance,
@@ -49,6 +50,7 @@ from app.db.session import AsyncSessionLocal, engine
 from app.middleware.request_tracing import RequestTracingMiddleware
 from app.middleware.security import SecurityHeadersMiddleware
 from app.models.user import User
+from app.services.calendar_sync_service import start_calendar_sync, stop_calendar_sync
 from app.services.campaign_worker import start_campaign_worker, stop_campaign_worker
 from app.services.slicktext_polling_service import (
     start_slicktext_polling,
@@ -152,10 +154,30 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:  # noqa: PLR0912
                 "Failed to start SlickText polling - inbound SMS polling will not work"
             )
 
+    # Start calendar sync service (non-fatal)
+    if settings.CALENDAR_SYNC_ENABLED:
+        try:
+            await start_calendar_sync(poll_interval=settings.CALENDAR_SYNC_POLL_INTERVAL)
+            logger.info(
+                "Calendar sync service started",
+                poll_interval=settings.CALENDAR_SYNC_POLL_INTERVAL,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to start calendar sync - appointments will not sync to external calendars"
+            )
+
     yield
 
     # Shutdown
     logger.info("Shutting down application")
+
+    # Stop calendar sync service
+    try:
+        await stop_calendar_sync()
+        logger.info("Calendar sync service stopped")
+    except Exception:
+        logger.exception("Error stopping calendar sync service")
 
     # Stop SlickText polling service
     try:
@@ -240,6 +262,7 @@ app.include_router(leads.router)  # Lead webhook API (Facebook, website forms)
 app.include_router(sms.router)  # SMS API (conversations, messages, campaigns)
 app.include_router(sms.webhook_router)  # Telnyx SMS webhooks
 app.include_router(sms.slicktext_webhook_router)  # SlickText SMS webhooks
+app.include_router(calendar_webhooks.router)  # Calendar webhooks (Cal.com, Calendly, GoHighLevel)
 
 
 @app.get("/")
