@@ -56,6 +56,7 @@ import {
   Phone,
   MessageSquareText,
   Heart,
+  Info,
 } from "lucide-react";
 
 interface Workspace {
@@ -285,16 +286,41 @@ export default function SettingsPage() {
               <SelectValue placeholder="All Workspaces" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All Workspaces (Admin)</SelectItem>
+              <SelectItem value="all">
+                <div className="flex items-center gap-2">
+                  <span>🔧 Default for All Workspaces</span>
+                </div>
+              </SelectItem>
               {workspaces.map((ws) => (
                 <SelectItem key={ws.id} value={ws.id}>
                   {ws.name}
+                  {ws.is_default && (
+                    <span className="ml-1 text-xs text-muted-foreground">(Default)</span>
+                  )}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
         </div>
       </div>
+
+      {selectedWorkspaceId === "all" && (
+        <Card className="border-blue-200 bg-blue-50 dark:border-blue-900 dark:bg-blue-950/20">
+          <CardContent className="flex gap-3 p-4">
+            <Info className="h-5 w-5 shrink-0 text-blue-600 dark:text-blue-400" />
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-blue-900 dark:text-blue-100">
+                Default Credentials for All Workspaces
+              </p>
+              <p className="text-sm text-blue-700 dark:text-blue-300">
+                Credentials set here will be used as defaults for all workspaces that don&apos;t
+                have their own specific credentials configured. This allows you to manage a single
+                set of API keys across multiple workspaces.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Tabs defaultValue="api-keys" className="w-full">
         <div className="flex items-center justify-between">

@@ -386,9 +386,15 @@ class SMSService:
         # Look up default text agent from phone number configuration
         default_agent_id = None
         if initiated_by == "platform":
+            from sqlalchemy import or_
+
             phone_result = await db.execute(
                 select(PhoneNumber).where(
-                    PhoneNumber.workspace_id == workspace_id,
+                    PhoneNumber.user_id == user_id,
+                    or_(
+                        PhoneNumber.workspace_id == workspace_id,
+                        PhoneNumber.workspace_id.is_(None),  # User-level fallback
+                    ),
                     PhoneNumber.phone_number == from_number,
                 )
             )

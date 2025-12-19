@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -848,12 +848,18 @@ async def send_message(  # noqa: PLR0915
     from app.models.phone_number import PhoneNumber
     from app.models.user_settings import UserSettings
 
-    # Check PhoneNumber table first
+    # Check PhoneNumber table first (workspace-specific OR user-level fallback)
     from_number_normalized = normalize_e164(send_request.from_number)
     from_number_digits = from_number_normalized.lstrip("+")
+    user_uuid = user_id_to_uuid(current_user.id)
+
     phone_check = await db.execute(
         select(PhoneNumber).where(
-            PhoneNumber.workspace_id == workspace_uuid,
+            PhoneNumber.user_id == user_uuid,
+            or_(
+                PhoneNumber.workspace_id == workspace_uuid,
+                PhoneNumber.workspace_id.is_(None),  # User-level fallback
+            ),
             PhoneNumber.phone_number.in_(
                 [from_number_normalized, f"+{from_number_digits}", from_number_digits]
             ),
@@ -865,7 +871,11 @@ async def send_message(  # noqa: PLR0915
     if not phone_in_workspace and send_request.provider == "slicktext":
         settings_check = await db.execute(
             select(UserSettings).where(
-                UserSettings.workspace_id == workspace_uuid,
+                UserSettings.user_id == user_uuid,
+                or_(
+                    UserSettings.workspace_id == workspace_uuid,
+                    UserSettings.workspace_id.is_(None),  # User-level fallback
+                ),
                 UserSettings.slicktext_phone_number.in_(
                     [from_number_normalized, f"+{from_number_digits}", from_number_digits]
                 ),
@@ -934,7 +944,11 @@ async def send_message(  # noqa: PLR0915
 
             phone_result = await db.execute(
                 select(PhoneNumber).where(
-                    PhoneNumber.workspace_id == workspace_uuid,
+                    PhoneNumber.user_id == user_uuid,
+                    or_(
+                        PhoneNumber.workspace_id == workspace_uuid,
+                        PhoneNumber.workspace_id.is_(None),  # User-level fallback
+                    ),
                     PhoneNumber.phone_number == send_request.from_number,
                 )
             )
@@ -1107,12 +1121,16 @@ async def create_campaign(
     workspace_uuid = uuid.UUID(workspace_id)
     user_uuid = user_id_to_uuid(current_user.id)
 
-    # Validate that from_phone_number belongs to this workspace
+    # Validate that from_phone_number belongs to this workspace (or user-level)
     from_number_normalized = normalize_e164(campaign_request.from_phone_number)
     from_number_digits = from_number_normalized.lstrip("+")
     phone_check = await db.execute(
         select(PhoneNumber).where(
-            PhoneNumber.workspace_id == workspace_uuid,
+            PhoneNumber.user_id == user_uuid,
+            or_(
+                PhoneNumber.workspace_id == workspace_uuid,
+                PhoneNumber.workspace_id.is_(None),  # User-level fallback
+            ),
             PhoneNumber.phone_number.in_(
                 [from_number_normalized, f"+{from_number_digits}", from_number_digits]
             ),
@@ -1124,7 +1142,11 @@ async def create_campaign(
     if not phone_in_workspace:
         settings_check = await db.execute(
             select(UserSettings).where(
-                UserSettings.workspace_id == workspace_uuid,
+                UserSettings.user_id == user_uuid,
+                or_(
+                    UserSettings.workspace_id == workspace_uuid,
+                    UserSettings.workspace_id.is_(None),  # User-level fallback
+                ),
                 UserSettings.slicktext_phone_number.in_(
                     [from_number_normalized, f"+{from_number_digits}", from_number_digits]
                 ),
