@@ -1038,7 +1038,7 @@ async def get_ephemeral_token(
                 db, user_id, integrations=integrations, workspace_id=workspace_uuid
             )
             tools = tool_registry.get_all_tool_definitions(
-                agent.enabled_tools, agent.enabled_tool_ids
+                agent.enabled_tools, agent.enabled_tool_ids, agent.integration_settings
             )
 
             token_logger.info(

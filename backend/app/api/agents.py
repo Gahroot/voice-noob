@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import attributes
 
 from app.core.auth import CurrentUser
 from app.core.config import settings
@@ -466,7 +467,6 @@ def _apply_agent_updates(agent: Agent, request: UpdateAgentRequest) -> None:
         "system_prompt",
         "language",
         "voice",
-        "enabled_tools",
         "phone_number_id",
         "enable_recording",
         "enable_transcript",
@@ -495,17 +495,25 @@ def _apply_agent_updates(agent: Agent, request: UpdateAgentRequest) -> None:
             if field in nullable_fields or value is not None:
                 setattr(agent, field, value)
 
-    # Handle JSONB fields specially - create new dict to ensure SQLAlchemy detects change
+    # Handle enabled_tools (JSON list) separately with flag_modified
+    if request.is_field_set("enabled_tools") and request.enabled_tools is not None:
+        agent.enabled_tools = list(request.enabled_tools)
+        attributes.flag_modified(agent, "enabled_tools")
+
+    # Handle JSONB fields specially - create new dict and flag as modified
     if request.is_field_set("enabled_tool_ids") and request.enabled_tool_ids is not None:
         agent.enabled_tool_ids = dict(request.enabled_tool_ids)
+        attributes.flag_modified(agent, "enabled_tool_ids")
 
     if request.is_field_set("integration_settings") and request.integration_settings is not None:
         agent.integration_settings = dict(request.integration_settings)
+        attributes.flag_modified(agent, "integration_settings")
 
     # Handle pricing_tier specially (updates provider_config too)
     if request.is_field_set("pricing_tier") and request.pricing_tier is not None:
         agent.pricing_tier = request.pricing_tier
         agent.provider_config = _get_provider_config(request.pricing_tier)
+        attributes.flag_modified(agent, "provider_config")
 
 
 def _get_provider_config(tier: str) -> dict[str, Any]:

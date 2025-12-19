@@ -246,7 +246,7 @@ class HumeEVISession:
 
         self.logger.info("hume_evi_session_initialized")
 
-    async def _connect_evi(self) -> None:
+    async def _connect_evi(self) -> None:  # noqa: PLR0915
         """Connect to Hume EVI WebSocket."""
         if not self.client:
             raise ValueError("Hume client not initialized")
