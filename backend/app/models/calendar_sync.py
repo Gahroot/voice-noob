@@ -77,7 +77,7 @@ class CalendarSyncQueue(Base, TimestampMixin):
 
     # Payload
     payload: Mapped[dict[str, Any] | None] = mapped_column(
-        JSONB,
+        JSON().with_variant(JSONB(), "postgresql"),
         nullable=True,
         comment="Full appointment data for sync",
     )
