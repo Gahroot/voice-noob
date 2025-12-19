@@ -174,6 +174,7 @@ class HumeEVISession:
         agent_config: dict[str, Any],
         session_id: str | None = None,
         workspace_id: uuid.UUID | None = None,
+        agent_id: uuid.UUID | None = None,
     ) -> None:
         """Initialize Hume EVI session.
 
@@ -183,11 +184,13 @@ class HumeEVISession:
             agent_config: Agent configuration (system prompt, tools, language, etc.)
             session_id: Optional session ID
             workspace_id: Workspace UUID (required for API key isolation)
+            agent_id: Agent UUID (for tracking which agent executed tools)
         """
         self.db = db
         self.user_id = user_id
         self.user_id_uuid = user_id_to_uuid(user_id)
         self.workspace_id = workspace_id
+        self.agent_id = agent_id
         self.agent_config = agent_config
         self.session_id = session_id or str(uuid.uuid4())
         self.client: AsyncHumeClient | None = None
@@ -393,9 +396,15 @@ Current: {current_datetime}
         tool_name = tool_call.get("name", "")
         arguments = tool_call.get("arguments", {})
 
-        self.logger.info("handling_tool_call", tool_name=tool_name)
+        self.logger.info(
+            "handling_tool_call",
+            tool_name=tool_name,
+            agent_id=str(self.agent_id) if self.agent_id else None,
+        )
 
-        result = await self.tool_registry.execute_tool(tool_name, arguments)
+        result = await self.tool_registry.execute_tool(
+            tool_name, arguments, agent_id=str(self.agent_id) if self.agent_id else None
+        )
         return result
 
     async def send_audio(self, audio_data: bytes) -> None:

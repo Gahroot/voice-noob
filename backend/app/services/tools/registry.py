@@ -271,13 +271,14 @@ class ToolRegistry:
         return tools
 
     async def execute_tool(  # noqa: PLR0911, PLR0912
-        self, tool_name: str, arguments: dict[str, Any]
+        self, tool_name: str, arguments: dict[str, Any], agent_id: str | None = None
     ) -> dict[str, Any]:
         """Execute a tool by routing to appropriate handler.
 
         Args:
             tool_name: Tool name
             arguments: Tool arguments
+            agent_id: Optional agent UUID for tracking which agent executed the tool
 
         Returns:
             Tool execution result
@@ -305,7 +306,7 @@ class ToolRegistry:
         }
 
         if tool_name in crm_tool_names:
-            return await self.crm_tools.execute_tool(tool_name, arguments)
+            return await self.crm_tools.execute_tool(tool_name, arguments, agent_id=agent_id)
 
         # GoHighLevel tools
         ghl_tool_names = {

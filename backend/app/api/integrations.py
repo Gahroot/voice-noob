@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import and_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import CurrentUser, user_id_to_uuid
@@ -467,6 +467,9 @@ async def get_workspace_integrations(
 ) -> dict[str, dict[str, Any]]:
     """Get all active integration credentials for a workspace.
 
+    Falls back to user-level integrations (workspace_id=NULL) if no
+    workspace-specific integrations are found.
+
     Args:
         user_id: User ID
         workspace_id: Workspace ID
@@ -479,7 +482,10 @@ async def get_workspace_integrations(
         select(UserIntegration).where(
             and_(
                 UserIntegration.user_id == user_id,
-                UserIntegration.workspace_id == workspace_id,
+                or_(
+                    UserIntegration.workspace_id == workspace_id,
+                    UserIntegration.workspace_id.is_(None),
+                ),
                 UserIntegration.is_active.is_(True),
             )
         )
@@ -598,3 +604,72 @@ async def get_calcom_event_types(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unexpected error fetching event types: {err!s}",
         ) from err
+
+
+@router.get("/google-calendar/calendars")
+async def list_google_calendars(
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+    workspace_id: str | None = None,
+) -> dict[str, Any]:
+    """List available Google Calendars for the user.
+
+    Args:
+        workspace_id: Workspace ID (optional)
+        current_user: Authenticated user
+        db: Database session
+
+    Returns:
+        List of calendars with id, summary, primary flag
+    """
+    from google.oauth2.credentials import Credentials
+    from googleapiclient.discovery import build  # type: ignore[import-untyped]
+
+    user_uuid = user_id_to_uuid(current_user.id)
+    workspace_uuid: uuid.UUID | None = None
+
+    if workspace_id:
+        try:
+            workspace_uuid = uuid.UUID(workspace_id)
+        except ValueError as err:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid workspace_id format",
+            ) from err
+
+    credentials = await get_integration_credentials(
+        user_uuid, "google-calendar", db, workspace_uuid
+    )
+
+    if not credentials or "access_token" not in credentials:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Google Calendar not connected",
+        )
+
+    try:
+        creds = Credentials(  # type: ignore[no-untyped-call]
+            token=credentials["access_token"],
+            refresh_token=credentials.get("refresh_token"),
+        )
+
+        service = build("calendar", "v3", credentials=creds)
+        calendar_list = service.calendarList().list().execute()
+
+        calendars = [
+            {
+                "id": cal["id"],
+                "summary": cal["summary"],
+                "primary": cal.get("primary", False),
+                "backgroundColor": cal.get("backgroundColor"),
+            }
+            for cal in calendar_list.get("items", [])
+        ]
+
+        return {"calendars": calendars, "total": len(calendars)}
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch calendars: {e!s}",
+        ) from e

@@ -223,6 +223,7 @@ async def realtime_websocket(
             agent_config=agent_config,
             session_id=session_id,
             workspace_id=uuid.UUID(workspace_id),
+            agent_id=agent.id,
         ) as realtime_session:
             # Send ready signal to client
             await websocket.send_json(
@@ -381,6 +382,7 @@ async def hume_websocket(  # noqa: PLR0915
             agent_config=agent_config,
             session_id=session_id,
             workspace_id=workspace_uuid,
+            agent_id=agent.id,
         )
 
         await hume_session.initialize()

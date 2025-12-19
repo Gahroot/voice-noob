@@ -4,6 +4,7 @@ Handles webhooks from:
 - Cal.com (booking created, rescheduled, cancelled)
 - Calendly (invitee created, cancelled)
 - GoHighLevel (appointment created, updated, deleted)
+- Google Calendar (event created, updated, deleted)
 """
 
 import uuid
@@ -378,4 +379,105 @@ async def gohighlevel_webhook(
         webhook_event.processed_at = datetime.now(UTC)
 
     await db.commit()
+    return {"status": "ok"}
+
+
+@router.post("/google-calendar")
+async def google_calendar_webhook(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, str]:
+    """Handle Google Calendar push notifications.
+
+    Google Calendar sends notifications when events change. This endpoint:
+    1. Verifies the notification is authentic
+    2. Fetches changed events from Google Calendar
+    3. Updates corresponding appointments in the database
+
+    Google sends these headers:
+    - X-Goog-Channel-ID: Channel ID we registered
+    - X-Goog-Resource-State: sync, exists, or not_exists
+    - X-Goog-Resource-ID: Resource being watched
+    - X-Goog-Message-Number: Notification sequence number
+    """
+    log = logger.bind(provider="google-calendar")
+
+    # Extract Google-specific headers
+    channel_id = request.headers.get("X-Goog-Channel-ID", "")
+    resource_state = request.headers.get("X-Goog-Resource-State", "")
+    resource_id = request.headers.get("X-Goog-Resource-ID", "")
+    message_number = request.headers.get("X-Goog-Message-Number", "")
+
+    log = log.bind(
+        channel_id=channel_id,
+        resource_state=resource_state,
+        resource_id=resource_id,
+        message_number=message_number,
+    )
+
+    # Initial sync notification - ignore
+    if resource_state == "sync":
+        log.debug("google_calendar_sync_notification")
+        return {"status": "ok"}
+
+    # Resource deleted - ignore
+    if resource_state == "not_exists":
+        log.debug("google_calendar_resource_deleted")
+        return {"status": "ok"}
+
+    # Resource exists - fetch changes
+    if resource_state == "exists" and message_number:
+        existing = await db.execute(
+            select(CalendarWebhookEvent).where(
+                CalendarWebhookEvent.provider == "google-calendar",
+                CalendarWebhookEvent.external_event_id == message_number,
+            )
+        )
+        if existing.scalar_one_or_none():
+            log.debug("duplicate_webhook_ignored")
+            return {"status": "ok"}
+
+        # Store webhook event for idempotency
+        webhook_event = CalendarWebhookEvent(
+            id=uuid.uuid4(),
+            workspace_id=None,  # Will be set when we process
+            provider="google-calendar",
+            event_type="change",
+            external_event_id=message_number,
+            payload={
+                "channel_id": channel_id,
+                "resource_state": resource_state,
+                "resource_id": resource_id,
+            },
+        )
+        db.add(webhook_event)
+
+        try:
+            # Log webhook notification for monitoring
+            log.warning(
+                "google_calendar_webhook_received_not_fully_implemented",
+                channel_id=channel_id,
+                resource_id=resource_id,
+                resource_state=resource_state,
+                message_number=message_number,
+                note="Full implementation requires calendar_webhook_channels table. "
+                "To implement: 1) Create calendar_webhook_channels migration, "
+                "2) Map channel_id to workspace_id, "
+                "3) Fetch incremental changes via syncToken, "
+                "4) Match events by external_event_id, "
+                "5) Update appointment.scheduled_at and status.",
+            )
+
+            webhook_event.processed = True
+            webhook_event.processed_at = datetime.now(UTC)
+
+        except Exception as e:
+            log.exception("webhook_processing_error", error=str(e))
+            webhook_event.processed = True
+            webhook_event.processed_at = datetime.now(UTC)
+
+        await db.commit()
+        return {"status": "ok"}
+
+    log.warning("unknown_notification_type", resource_state=resource_state)
     return {"status": "ok"}

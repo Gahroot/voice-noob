@@ -72,8 +72,26 @@ class CRMTools:
             )
 
             # Queue sync for each connected calendar provider
-            for provider in ["cal-com", "calendly", "gohighlevel"]:
+            for provider in ["cal-com", "calendly", "gohighlevel", "google-calendar"]:
                 if provider in integrations:
+                    # DEDUPLICATION: Check if pending sync already exists
+                    existing = await self.db.execute(
+                        select(CalendarSyncQueue).where(
+                            CalendarSyncQueue.appointment_id == appointment.id,
+                            CalendarSyncQueue.calendar_provider == provider,
+                            CalendarSyncQueue.operation == operation,
+                            CalendarSyncQueue.status.in_(["pending", "processing"]),
+                        )
+                    )
+                    if existing.scalar_one_or_none():
+                        self.logger.debug(
+                            "sync_already_queued_skipping",
+                            appointment_id=appointment.id,
+                            provider=provider,
+                            operation=operation,
+                        )
+                        continue
+
                     sync_entry = CalendarSyncQueue(
                         id=uuid.uuid4(),
                         appointment_id=appointment.id,
@@ -486,7 +504,7 @@ class CRMTools:
             # Get workspace timezone from user settings
             from zoneinfo import ZoneInfo
 
-            from app.crud import get_user_api_keys
+            from app.crud import get_user_api_keys  # type: ignore[import-untyped]
 
             user_settings = await get_user_api_keys(
                 uuid.UUID(int=self.user_id), self.db, workspace_id=self.workspace_id
@@ -586,13 +604,14 @@ class CRMTools:
                 "error": f"Could not parse '{date_expression}'. Please provide a specific date in format like 'YYYY-MM-DD' or 'Tuesday at 9am'.",
             }
 
-    async def book_appointment(
+    async def book_appointment(  # noqa: PLR0911, PLR0912, PLR0915
         self,
         contact_phone: str,
         scheduled_at: str,
         duration_minutes: int = 30,
         service_type: str | None = None,
         notes: str | None = None,
+        agent_id: str | None = None,
     ) -> dict[str, Any]:
         """Book an appointment.
 
@@ -602,32 +621,116 @@ class CRMTools:
             duration_minutes: Duration
             service_type: Service type
             notes: Notes
+            agent_id: Optional agent UUID that is booking this appointment
 
         Returns:
             Booking confirmation
         """
+        import time
+
+        method_entry_time = time.perf_counter()
+        contact_id_at_start = None
+
+        # Entry point logging
+        self.logger.info(
+            "booking_appointment_started",
+            contact_phone=contact_phone,
+            scheduled_at=scheduled_at,
+            duration_minutes=duration_minutes,
+            service_type=service_type,
+            notes=notes[:50] if notes else None,
+            agent_id=agent_id,
+        )
+
         try:
+            # Parameter validation
+            if not contact_phone or not contact_phone.strip():
+                self.logger.error(
+                    "booking_appointment_invalid_contact_phone",
+                    contact_phone_empty=True,
+                )
+                return {"success": False, "error": "contact_phone cannot be empty"}
+
+            if not scheduled_at or not scheduled_at.strip():
+                self.logger.error(
+                    "booking_appointment_invalid_scheduled_at",
+                    scheduled_at_empty=True,
+                )
+                return {"success": False, "error": "scheduled_at cannot be empty"}
+
+            MIN_DURATION = 5  # noqa: N806
+            MAX_DURATION = 480  # noqa: N806
+            if not (MIN_DURATION <= duration_minutes <= MAX_DURATION):
+                self.logger.warning(
+                    "booking_appointment_unusual_duration",
+                    duration_minutes=duration_minutes,
+                    expected_range=f"{MIN_DURATION}-{MAX_DURATION} minutes",
+                )
+
+            self.logger.debug(
+                "booking_appointment_parameter_validation_passed",
+                contact_phone_length=len(contact_phone),
+                scheduled_at_length=len(scheduled_at),
+                duration_valid=MIN_DURATION <= duration_minutes <= MAX_DURATION,
+            )
+
+            # Contact lookup with timing
+            lookup_start = time.perf_counter()
+
             # Find contact - filtered by workspace or user for security
             if self.workspace_id:
                 stmt = select(Contact).where(
                     Contact.workspace_id == self.workspace_id,
                     Contact.phone_number == contact_phone,
                 )
+                scope_type = "workspace"
             else:
                 stmt = select(Contact).where(
                     Contact.user_id == self.user_id,
                     Contact.phone_number == contact_phone,
                 )
+                scope_type = "user"
+
+            self.logger.debug(
+                "contact_lookup_query_preparing",
+                scope_type=scope_type,
+                contact_phone=contact_phone,
+            )
+
             result = await self.db.execute(stmt)
             contact = result.scalar_one_or_none()
+
+            lookup_duration_ms = (time.perf_counter() - lookup_start) * 1000
+
+            if contact:
+                contact_id_at_start = contact.id
+                self.logger.info(
+                    "contact_lookup_success",
+                    contact_id=contact.id,
+                    contact_name=f"{contact.first_name} {contact.last_name or ''}".strip(),
+                    contact_status=contact.status,
+                    duration_ms=round(lookup_duration_ms, 2),
+                )
+            else:
+                self.logger.debug(
+                    "contact_lookup_no_match",
+                    contact_phone=contact_phone,
+                    duration_ms=round(lookup_duration_ms, 2),
+                )
 
             if not contact:
                 # Auto-create contact for SMS conversations
                 # This allows booking without explicit contact creation
-                self.logger.info(
-                    "auto_creating_contact_for_appointment",
+                creation_start = time.perf_counter()
+
+                self.logger.warning(
+                    "contact_not_found_auto_creating",
                     phone=contact_phone,
+                    user_id=self.user_id,
+                    workspace_id=str(self.workspace_id),
+                    reason="appointment_booking_without_prior_contact_creation",
                 )
+
                 contact = Contact(
                     user_id=self.user_id,
                     workspace_id=self.workspace_id,
@@ -638,17 +741,60 @@ class CRMTools:
                 self.db.add(contact)
                 await self.db.flush()
                 await self.db.refresh(contact)
+
+                creation_duration_ms = (time.perf_counter() - creation_start) * 1000
+
                 self.logger.info(
-                    "auto_created_contact",
+                    "contact_auto_created_success",
                     contact_id=contact.id,
                     phone=contact_phone,
+                    duration_ms=round(creation_duration_ms, 2),
+                    decision_reason="auto_create_on_first_booking",
                 )
 
             # Parse datetime and handle timezone
-            appointment_time = datetime.fromisoformat(scheduled_at.replace("Z", "+00:00"))
+            parse_start = time.perf_counter()
+
+            self.logger.debug(
+                "appointment_datetime_parsing_start",
+                input_scheduled_at=scheduled_at,
+                input_format="ISO 8601 with optional Z suffix",
+            )
+
+            try:
+                appointment_time = datetime.fromisoformat(scheduled_at.replace("Z", "+00:00"))
+            except ValueError as parse_error:
+                self.logger.exception(
+                    "appointment_datetime_parse_failed",
+                    input=scheduled_at,
+                    error=str(parse_error),
+                    expected_format="ISO 8601 (YYYY-MM-DDTHH:MM:SS or YYYY-MM-DDTHH:MM:SS+HH:MM)",
+                )
+                return {
+                    "success": False,
+                    "error": f"Invalid datetime format: {parse_error}. Expected ISO 8601 format (e.g., 2025-12-20T14:30:00 or 2025-12-20T14:30:00-05:00)",
+                }
+
+            parse_duration_ms = (time.perf_counter() - parse_start) * 1000
+
+            self.logger.debug(
+                "appointment_datetime_parsed",
+                parsed_datetime=appointment_time.isoformat(),
+                has_timezone=appointment_time.tzinfo is not None,
+                duration_ms=round(parse_duration_ms, 2),
+            )
 
             # If datetime is naive (no timezone), interpret it in workspace timezone
             if appointment_time.tzinfo is None and self.workspace_id:
+                tz_resolution_start = time.perf_counter()
+
+                self.logger.debug(
+                    "appointment_datetime_naive_detected",
+                    datetime_value=appointment_time.isoformat(),
+                    workspace_id=str(self.workspace_id),
+                    next_step="resolve_workspace_timezone",
+                )
+
                 from zoneinfo import ZoneInfo
 
                 from app.models.workspace import Workspace
@@ -658,29 +804,113 @@ class CRMTools:
                     select(Workspace).where(Workspace.id == self.workspace_id)
                 )
                 workspace = ws_result.scalar_one_or_none()
+
                 if workspace and workspace.settings:
                     tz_name = workspace.settings.get("timezone", "UTC")
-                    try:
-                        tz = ZoneInfo(tz_name)
-                        # Interpret the naive datetime as being in workspace timezone
-                        appointment_time = appointment_time.replace(tzinfo=tz)
-                        self.logger.info(
-                            "interpreted_naive_datetime",
-                            original=scheduled_at,
-                            timezone=tz_name,
-                            result=appointment_time.isoformat(),
-                        )
-                    except Exception as tz_error:
-                        self.logger.warning(
-                            "timezone_conversion_failed",
-                            timezone=tz_name,
-                            error=str(tz_error),
-                        )
+                    self.logger.debug(
+                        "workspace_timezone_loaded",
+                        timezone=tz_name,
+                        workspace_id=str(self.workspace_id),
+                    )
+                else:
+                    tz_name = "UTC"
+                    self.logger.warning(
+                        "workspace_not_found_using_default_timezone",
+                        workspace_id=str(self.workspace_id),
+                        fallback_timezone="UTC",
+                    )
+
+                try:
+                    tz = ZoneInfo(tz_name)
+                    # Interpret the naive datetime as being in workspace timezone
+                    appointment_time = appointment_time.replace(tzinfo=tz)
+
+                    tz_resolution_duration_ms = (time.perf_counter() - tz_resolution_start) * 1000
+
+                    self.logger.info(
+                        "appointment_datetime_timezone_resolved",
+                        original_naive=scheduled_at,
+                        timezone_name=tz_name,
+                        result_with_tz=appointment_time.isoformat(),
+                        duration_ms=round(tz_resolution_duration_ms, 2),
+                        utc_equivalent=appointment_time.astimezone(ZoneInfo("UTC")).isoformat(),
+                    )
+                except Exception as tz_error:
+                    tz_resolution_duration_ms = (time.perf_counter() - tz_resolution_start) * 1000
+
+                    self.logger.exception(
+                        "timezone_conversion_failed_hard_error",
+                        timezone=tz_name,
+                        error=str(tz_error),
+                        error_type=type(tz_error).__name__,
+                        duration_ms=round(tz_resolution_duration_ms, 2),
+                    )
+                    return {
+                        "success": False,
+                        "error": f"Failed to interpret datetime in timezone {tz_name}: {tz_error}",
+                    }
+            elif appointment_time.tzinfo is None:
+                self.logger.warning(
+                    "appointment_datetime_naive_no_workspace",
+                    datetime_value=appointment_time.isoformat(),
+                    workspace_id=self.workspace_id,
+                    note="Naive datetime will be stored without timezone info",
+                )
+
+            # Validate appointment is in the future
+            from zoneinfo import ZoneInfo
+
+            now_utc = datetime.now(ZoneInfo("UTC"))
+            appointment_utc = (
+                appointment_time.astimezone(ZoneInfo("UTC"))
+                if appointment_time.tzinfo
+                else appointment_time
+            )
+
+            if appointment_utc <= now_utc:
+                time_diff_seconds = (now_utc - appointment_utc).total_seconds()
+                self.logger.error(
+                    "appointment_datetime_in_past",
+                    scheduled_at=appointment_time.isoformat(),
+                    now_utc=now_utc.isoformat(),
+                    time_diff_seconds=round(time_diff_seconds, 2),
+                )
+                return {
+                    "success": False,
+                    "error": f"Cannot book appointment in the past. Scheduled time {appointment_time.isoformat()} is {round(time_diff_seconds / 3600, 1)} hours ago.",
+                }
+
+            self.logger.debug(
+                "appointment_datetime_future_validation_passed",
+                scheduled_at=appointment_time.isoformat(),
+                now_utc=now_utc.isoformat(),
+                time_until_appointment_hours=round(
+                    (appointment_utc - now_utc).total_seconds() / 3600, 2
+                ),
+            )
 
             # Create appointment (inherit workspace_id from contact)
+            creation_start = time.perf_counter()
+
+            self.logger.debug(
+                "appointment_creating",
+                contact_id=contact.id,
+                workspace_id=str(contact.workspace_id),
+                scheduled_at=appointment_time.isoformat(),
+                duration_minutes=duration_minutes,
+                service_type=service_type,
+                agent_id=agent_id,
+            )
+
+            # Convert agent_id string to UUID if provided
+            import uuid as uuid_module
+
+            agent_uuid = uuid_module.UUID(agent_id) if agent_id else None
+
             appointment = Appointment(
                 contact_id=contact.id,
                 workspace_id=contact.workspace_id,
+                agent_id=agent_uuid,
                 scheduled_at=appointment_time,
                 duration_minutes=duration_minutes,
                 service_type=service_type,
@@ -689,18 +919,105 @@ class CRMTools:
             )
 
             self.db.add(appointment)
+
+            commit_start = time.perf_counter()
+            self.logger.debug(
+                "appointment_database_commit_starting",
+                contact_id=contact.id,
+                workspace_id=str(contact.workspace_id),
+            )
+
             await self.db.commit()
             await self.db.refresh(appointment)
 
+            commit_duration_ms = (time.perf_counter() - commit_start) * 1000
+            total_creation_duration_ms = (time.perf_counter() - creation_start) * 1000
+
+            self.logger.info(
+                "appointment_created_in_database",
+                appointment_id=appointment.id,
+                contact_id=appointment.contact_id,
+                workspace_id=str(appointment.workspace_id),
+                agent_id=str(appointment.agent_id) if appointment.agent_id else None,
+                scheduled_at=appointment.scheduled_at.isoformat(),
+                status=appointment.status,
+                duration_minutes=appointment.duration_minutes,
+                service_type=appointment.service_type,
+                commit_duration_ms=round(commit_duration_ms, 2),
+                total_creation_duration_ms=round(total_creation_duration_ms, 2),
+            )
+
             # Enqueue calendar sync
+            sync_start = time.perf_counter()
+
+            self.logger.debug(
+                "calendar_sync_enqueueing",
+                appointment_id=appointment.id,
+                workspace_id=str(appointment.workspace_id),
+                operation="create",
+            )
+
             await self._enqueue_calendar_sync(appointment, operation="create")
 
+            sync_duration_ms = (time.perf_counter() - sync_start) * 1000
+
+            self.logger.debug(
+                "calendar_sync_enqueued",
+                appointment_id=appointment.id,
+                workspace_id=str(appointment.workspace_id),
+                duration_ms=round(sync_duration_ms, 2),
+                status="queued_for_async_processing",
+            )
+
             # Invalidate CRM stats cache after booking
+            cache_start = time.perf_counter()
+
             try:
+                self.logger.debug(
+                    "cache_invalidation_starting",
+                    cache_pattern="crm:stats:*",
+                    reason="appointment_created",
+                )
+
                 await cache_invalidate("crm:stats:*")
-                self.logger.debug("invalidated_crm_cache_after_book_appointment")
-            except Exception:
-                self.logger.exception("failed_to_invalidate_cache_after_book_appointment")
+
+                cache_duration_ms = (time.perf_counter() - cache_start) * 1000
+
+                self.logger.debug(
+                    "cache_invalidation_success",
+                    cache_pattern="crm:stats:*",
+                    duration_ms=round(cache_duration_ms, 2),
+                )
+            except Exception as cache_error:
+                cache_duration_ms = (time.perf_counter() - cache_start) * 1000
+
+                self.logger.exception(
+                    "failed_to_invalidate_cache_after_book_appointment",
+                    error=str(cache_error),
+                    error_type=type(cache_error).__name__,
+                    duration_ms=round(cache_duration_ms, 2),
+                    impact="cache_hit_may_return_stale_stats",
+                )
+                # Don't raise - cache failure shouldn't block appointment success
+
+            # Success response
+            total_execution_duration_ms = (time.perf_counter() - method_entry_time) * 1000
+
+            self.logger.info(
+                "booking_appointment_success",
+                appointment_id=appointment.id,
+                contact_id=contact.id,
+                contact_name=f"{contact.first_name} {contact.last_name or ''}".strip(),
+                contact_phone=contact.phone_number,
+                scheduled_at=appointment.scheduled_at.isoformat(),
+                duration_minutes=appointment.duration_minutes,
+                service_type=service_type,
+                was_contact_auto_created=(contact_id_at_start is None),
+                workspace_id=str(appointment.workspace_id),
+                agent_id=str(appointment.agent_id) if appointment.agent_id else None,
+                user_id=self.user_id,
+                total_duration_ms=round(total_execution_duration_ms, 2),
+            )
 
             return {
                 "success": True,
@@ -712,8 +1029,34 @@ class CRMTools:
             }
 
         except Exception as e:
-            self.logger.exception("book_appointment_failed", error=str(e))
-            return {"success": False, "error": str(e)}
+            execution_duration_ms = (
+                (time.perf_counter() - method_entry_time) * 1000
+                if "method_entry_time" in locals()
+                else None
+            )
+
+            self.logger.exception(
+                "book_appointment_failed",
+                error=str(e),
+                error_type=type(e).__name__,
+                contact_phone=contact_phone,
+                scheduled_at=scheduled_at,
+                duration_minutes=duration_minutes,
+                service_type=service_type,
+                agent_id=agent_id,
+                user_id=self.user_id,
+                workspace_id=str(self.workspace_id),
+                execution_duration_ms=round(execution_duration_ms, 2)
+                if execution_duration_ms
+                else None,
+                traceback_available=True,
+            )
+            return {
+                "success": False,
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "contact_phone": contact_phone,
+            }
 
     async def list_appointments(
         self,
@@ -897,13 +1240,14 @@ class CRMTools:
             return {"success": False, "error": str(e)}
 
     async def execute_tool(  # noqa: PLR0911
-        self, tool_name: str, arguments: dict[str, Any]
+        self, tool_name: str, arguments: dict[str, Any], agent_id: str | None = None
     ) -> dict[str, Any]:
         """Execute a CRM tool by name.
 
         Args:
             tool_name: Tool name
             arguments: Tool arguments
+            agent_id: Optional agent UUID for tracking which agent executed the tool
 
         Returns:
             Tool result
@@ -915,7 +1259,8 @@ class CRMTools:
         if tool_name == "check_availability":
             return await self.check_availability(**arguments)
         if tool_name == "book_appointment":
-            return await self.book_appointment(**arguments)
+            # Inject agent_id into arguments for book_appointment
+            return await self.book_appointment(**arguments, agent_id=agent_id)
         if tool_name == "list_appointments":
             return await self.list_appointments(**arguments)
         if tool_name == "cancel_appointment":

@@ -45,12 +45,16 @@ dependencies = [
     "opentelemetry-instrumentation-sqlalchemy>=0.49b2",
     "structlog>=24.4.0",
     # WebSockets
-    "websockets>=13.1,<14.0",  # hume SDK requires <14.0
+    "websockets>=13.1,<14.0", # hume SDK requires <14.0
     # Utilities
     "python-dotenv>=1.0.1",
     "pytz>=2025.2",
     # Hume AI - Empathic Voice Interface
     "hume>=0.13.5",
+    "google-auth>=2.45.0",
+    "google-auth-oauthlib>=1.2.2",
+    "google-auth-httplib2>=0.3.0",
+    "google-api-python-client>=2.187.0",
 ]
 
 [project.optional-dependencies]

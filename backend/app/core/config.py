@@ -155,6 +155,11 @@ class Settings(BaseSettings):
     CALENDAR_SYNC_POLL_INTERVAL: int = 30  # Seconds between sync queue polls
     CALENDAR_SYNC_MAX_RETRIES: int = 3  # Max retry attempts for failed syncs
 
+    # Circuit Breaker Configuration (for calendar sync and external APIs)
+    CIRCUIT_BREAKER_FAILURE_THRESHOLD: int = 5  # Failures before opening circuit
+    CIRCUIT_BREAKER_TIMEOUT: float = 120.0  # Seconds before attempting recovery
+    CIRCUIT_BREAKER_RECOVERY_TIMEOUT: float = 30.0  # Seconds for recovery attempt
+
     # Calendar Webhook Secrets
     CALCOM_WEBHOOK_SECRET: str = ""  # Cal.com webhook signing secret
     CALENDLY_WEBHOOK_SECRET: str = ""  # Calendly webhook signing secret

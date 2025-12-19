@@ -150,6 +150,7 @@ class GPTRealtimeSession:
         agent_config: dict[str, Any],
         session_id: str | None = None,
         workspace_id: uuid.UUID | None = None,
+        agent_id: uuid.UUID | None = None,
     ) -> None:
         """Initialize GPT Realtime session.
 
@@ -159,11 +160,13 @@ class GPTRealtimeSession:
             agent_config: Agent configuration (system prompt, enabled integrations, etc.)
             session_id: Optional session ID
             workspace_id: Workspace UUID (required for API key isolation)
+            agent_id: Agent UUID (for tracking which agent executed tools)
         """
         self.db = db
         self.user_id = user_id  # int for ToolRegistry (Contact queries)
         self.user_id_uuid = user_id_to_uuid(user_id)  # UUID for UserSettings queries
         self.workspace_id = workspace_id  # For workspace-isolated API key lookup
+        self.agent_id = agent_id  # For tracking tool execution by agent
         self.agent_config = agent_config
         self.session_id = session_id or str(uuid.uuid4())
         self.connection: Any = None
@@ -373,10 +376,13 @@ class GPTRealtimeSession:
             "handling_tool_call",
             tool_name=tool_name,
             arguments=arguments,
+            agent_id=str(self.agent_id) if self.agent_id else None,
         )
 
-        # Execute tool via internal tool registry
-        result = await self.tool_registry.execute_tool(tool_name, arguments)
+        # Execute tool via internal tool registry with agent context
+        result = await self.tool_registry.execute_tool(
+            tool_name, arguments, agent_id=str(self.agent_id) if self.agent_id else None
+        )
 
         return result
 

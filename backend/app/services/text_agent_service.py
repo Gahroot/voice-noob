@@ -357,8 +357,15 @@ async def generate_text_response(  # noqa: PLR0912, PLR0915
                 except json.JSONDecodeError:
                     arguments = {}
 
-                log.info("executing_tool", tool=tool_name, arguments=arguments)
-                result = await tool_registry.execute_tool(tool_name, arguments)
+                log.info(
+                    "executing_tool",
+                    tool=tool_name,
+                    arguments=arguments,
+                    agent_id=str(agent.id),
+                )
+                result = await tool_registry.execute_tool(
+                    tool_name, arguments, agent_id=str(agent.id)
+                )
                 log.info(
                     "tool_execution_result",
                     tool=tool_name,

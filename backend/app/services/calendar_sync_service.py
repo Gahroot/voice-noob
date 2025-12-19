@@ -9,7 +9,6 @@ This background worker:
 
 import asyncio
 import contextlib
-import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -24,9 +23,6 @@ from app.db.session import AsyncSessionLocal
 from app.models.appointment import Appointment
 from app.models.calendar_sync import CalendarSyncQueue
 from app.services.circuit_breaker import CircuitBreaker
-from app.services.tools.calcom_tools import CalComTools
-from app.services.tools.calendly_tools import CalendlyTools
-from app.services.tools.gohighlevel_tools import GoHighLevelTools
 
 logger = structlog.get_logger()
 
@@ -45,11 +41,14 @@ class CalendarSyncService:
         self.logger = logger.bind(component="calendar_sync")
         self._task: asyncio.Task[None] | None = None
 
-        # Circuit breakers per provider
+        # Circuit breakers per provider (configurable via settings)
         self._circuit_breakers: dict[str, CircuitBreaker] = {
-            "cal-com": CircuitBreaker("cal-com", failure_threshold=5, timeout=120),
-            "calendly": CircuitBreaker("calendly", failure_threshold=5, timeout=120),
-            "gohighlevel": CircuitBreaker("gohighlevel", failure_threshold=5, timeout=120),
+            provider: CircuitBreaker(
+                provider,
+                failure_threshold=settings.CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+                timeout=settings.CIRCUIT_BREAKER_TIMEOUT,
+            )
+            for provider in ["cal-com", "calendly", "gohighlevel", "google-calendar"]
         }
 
     async def start(self) -> None:
@@ -137,8 +136,10 @@ class CalendarSyncService:
 
         try:
             # Get integration credentials
+            from app.core.auth import user_id_to_uuid
+
             integrations = await get_workspace_integrations(
-                user_id=uuid.UUID(int=entry.workspace.user_id),
+                user_id=user_id_to_uuid(entry.workspace.user_id),
                 workspace_id=entry.workspace_id,
                 db=db,
             )
@@ -195,47 +196,61 @@ class CalendarSyncService:
 
         await db.commit()
 
-    async def _sync_to_provider(  # noqa: PLR0912
+    async def _sync_to_provider(
         self,
         entry: CalendarSyncQueue,
         credentials: dict[str, Any],
         db: AsyncSession,  # noqa: ARG002
     ) -> None:
-        """Sync appointment to external calendar provider."""
+        """Sync appointment to external calendar provider using Strategy Pattern."""
+        from app.services.calendar_providers.factory import ProviderFactory
+
         # Get appointment
         appointment = entry.appointment
         if not appointment:
             raise ValueError("Appointment not found")
 
-        # Create appropriate tool instance
-        tools: CalComTools | CalendlyTools | GoHighLevelTools
-        try:
-            if entry.calendar_provider == "cal-com":
-                tools = CalComTools(
-                    api_key=credentials.get("api_key", ""),
-                    event_type_id=credentials.get("event_type_id"),
-                )
-            elif entry.calendar_provider == "calendly":
-                tools = CalendlyTools(access_token=credentials.get("access_token", ""))
-            elif entry.calendar_provider == "gohighlevel":
-                tools = GoHighLevelTools(
-                    access_token=credentials.get("access_token", ""),
-                    location_id=credentials.get("location_id", ""),
-                )
-            else:
-                raise ValueError(f"Unsupported provider: {entry.calendar_provider}")
+        # Create provider instance using factory
+        provider = ProviderFactory.create_provider(
+            provider_name=entry.calendar_provider,
+            credentials=credentials,
+        )
 
-            # Perform operation
+        try:
+            # Route operation to provider
             if entry.operation == "create":
-                result = await self._create_external_event(tools, appointment, entry)
+                result = await provider.create_event(
+                    appointment=appointment,
+                    contact_name=f"{appointment.contact.first_name} {appointment.contact.last_name or ''}".strip(),
+                    contact_email=appointment.contact.email,
+                    notes=appointment.notes,
+                )
             elif entry.operation == "update":
-                result = await self._update_external_event(tools, appointment, entry)
+                if not appointment.external_event_id and not appointment.external_event_uid:
+                    raise ValueError("No external event ID/UID for update")
+
+                event_id = appointment.external_event_uid or appointment.external_event_id
+                if not event_id:
+                    raise ValueError("No external event ID/UID for update")
+                result = await provider.update_event(
+                    event_id=event_id,
+                    appointment=appointment,
+                )
             elif entry.operation == "cancel":
-                result = await self._cancel_external_event(tools, appointment, entry)
+                if not appointment.external_event_id and not appointment.external_event_uid:
+                    raise ValueError("No external event ID/UID for cancellation")
+
+                event_id = appointment.external_event_uid or appointment.external_event_id
+                if not event_id:
+                    raise ValueError("No external event ID/UID for cancellation")
+                result = await provider.cancel_event(
+                    event_id=event_id,
+                    reason="Appointment cancelled",
+                )
             else:
                 raise ValueError(f"Unknown operation: {entry.operation}")
 
-            # Update appointment with external ID
+            # Update appointment with sync results
             if result.get("success"):
                 appointment.external_calendar_id = entry.calendar_provider
                 appointment.external_event_id = result.get("event_id")
@@ -247,107 +262,7 @@ class CalendarSyncService:
                 raise ValueError(result.get("error", "Unknown error"))
 
         finally:
-            # Close HTTP client if available
-            if tools and hasattr(tools, "close"):
-                await tools.close()
-
-    async def _create_external_event(
-        self,
-        tools: CalComTools | CalendlyTools | GoHighLevelTools,
-        appointment: Appointment,
-        entry: CalendarSyncQueue,  # noqa: ARG002
-    ) -> dict[str, Any]:
-        """Create event in external calendar."""
-        contact = appointment.contact
-
-        if isinstance(tools, CalComTools):
-            # Cal.com create booking
-            result = await tools.create_booking(
-                event_type_id=tools.event_type_id or 0,
-                start_time=appointment.scheduled_at.isoformat(),
-                attendee_email=contact.email or "noemail@example.com",
-                attendee_name=f"{contact.first_name} {contact.last_name or ''}".strip(),
-                notes=appointment.notes or "",
-            )
-
-            if result.get("success"):
-                return {
-                    "success": True,
-                    "event_id": result.get("id"),
-                    "event_uid": result.get("uid"),
-                }
-            return result
-
-        if isinstance(tools, CalendlyTools):
-            # Calendly only supports scheduling links, not direct booking
-            # Not implemented - would need to generate a link
-            return {"success": False, "error": "Calendly direct booking not supported"}
-
-        if isinstance(tools, GoHighLevelTools):
-            # GoHighLevel book appointment
-            # Not implemented - would need proper GHL integration
-            return {"success": False, "error": "GoHighLevel booking not implemented"}
-
-        return {"success": False, "error": "Unsupported tool type"}  # type: ignore[unreachable]
-
-    async def _update_external_event(
-        self,
-        tools: CalComTools | CalendlyTools | GoHighLevelTools,
-        appointment: Appointment,
-        entry: CalendarSyncQueue,  # noqa: ARG002
-    ) -> dict[str, Any]:
-        """Update event in external calendar."""
-        if isinstance(tools, CalComTools):
-            # Cal.com reschedule booking
-            if appointment.external_event_uid:
-                result = await tools.reschedule_booking(
-                    booking_uid=appointment.external_event_uid,
-                    new_start_time=appointment.scheduled_at.isoformat(),
-                    reason="Appointment rescheduled",
-                )
-                return result
-            return {"success": False, "error": "No external event UID"}
-
-        if isinstance(tools, CalendlyTools):
-            # Calendly doesn't support rescheduling via API
-            # Would need to cancel and create new
-            return {"success": False, "error": "Calendly doesn't support rescheduling"}
-
-        if isinstance(tools, GoHighLevelTools):
-            # GoHighLevel update appointment
-            if appointment.external_event_id:
-                # Note: Update logic would go here
-                return {"success": True, "event_id": appointment.external_event_id}
-            return {"success": False, "error": "No external event ID"}
-
-        return {"success": False, "error": "Unsupported tool type"}  # type: ignore[unreachable]
-
-    async def _cancel_external_event(
-        self,
-        tools: CalComTools | CalendlyTools | GoHighLevelTools,
-        appointment: Appointment,
-        entry: CalendarSyncQueue,  # noqa: ARG002
-    ) -> dict[str, Any]:
-        """Cancel event in external calendar."""
-        if isinstance(tools, CalComTools):
-            # Cal.com cancel booking
-            if appointment.external_event_uid:
-                result = await tools.cancel_booking(
-                    booking_uid=appointment.external_event_uid,
-                    reason="Appointment cancelled",
-                )
-                return result
-            return {"success": False, "error": "No external event UID"}
-
-        if isinstance(tools, CalendlyTools):
-            # Calendly cancel - not implemented
-            return {"success": False, "error": "Calendly cancel not implemented"}
-
-        if isinstance(tools, GoHighLevelTools):
-            # GoHighLevel cancel - not implemented
-            return {"success": False, "error": "GoHighLevel cancel not implemented"}
-
-        return {"success": False, "error": "Unsupported tool type"}  # type: ignore[unreachable]
+            await provider.close()
 
 
 # Global service instance
