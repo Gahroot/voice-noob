@@ -19,6 +19,7 @@ import {
 import { fetchAgents } from "@/lib/api/agents";
 import { listCalls } from "@/lib/api/calls";
 import { api } from "@/lib/api";
+import { CalendarSyncHealthWidget } from "@/components/CalendarSyncHealthWidget";
 
 interface Workspace {
   id: string;
@@ -188,6 +189,10 @@ export default function DashboardPage() {
 
       {/* Main Content Grid */}
       <div className="grid gap-4 lg:grid-cols-3">
+        {/* Calendar Sync Health Widget */}
+        <div className="lg:col-span-1">
+          <CalendarSyncHealthWidget />
+        </div>
         {/* Recent Calls */}
         <Card className="lg:col-span-2">
           <CardContent className="p-4">

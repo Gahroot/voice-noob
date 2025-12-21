@@ -76,6 +76,13 @@ interface Appointment {
   created_by_agent: string | null;
   contact_name: string | null;
   contact_phone: string | null;
+  // Calendar sync fields
+  external_calendar_id: string | null;
+  external_event_id: string | null;
+  external_event_uid: string | null;
+  sync_status: string;
+  last_synced_at: string | null;
+  sync_error: string | null;
 }
 
 interface Contact {
@@ -280,6 +287,41 @@ export default function AppointmentsPage() {
       no_show: "bg-gray-100 text-gray-800",
     };
     return colors[status] ?? "bg-gray-100 text-gray-800";
+  };
+
+  const getSyncStatusBadge = (syncStatus: string) => {
+    switch (syncStatus) {
+      case "synced":
+        return {
+          icon: "✓",
+          className: "bg-green-100 text-green-700 border-green-200",
+          label: "Synced",
+        };
+      case "pending":
+        return {
+          icon: "○",
+          className: "bg-yellow-100 text-yellow-700 border-yellow-200",
+          label: "Pending",
+        };
+      case "failed":
+        return {
+          icon: "✕",
+          className: "bg-red-100 text-red-700 border-red-200",
+          label: "Failed",
+        };
+      case "conflict":
+        return {
+          icon: "⚠",
+          className: "bg-orange-100 text-orange-700 border-orange-200",
+          label: "Conflict",
+        };
+      default:
+        return {
+          icon: "○",
+          className: "bg-gray-100 text-gray-600 border-gray-200",
+          label: "Unknown",
+        };
+    }
   };
 
   // Get workspace timezone by ID
@@ -516,11 +558,21 @@ export default function AppointmentsPage() {
                       </p>
                     </div>
                   </div>
-                  <span
-                    className={`inline-flex h-5 shrink-0 items-center rounded-full px-1.5 text-[10px] font-medium ${getStatusColor(appointment.status)}`}
-                  >
-                    {appointment.status.replace("_", " ")}
-                  </span>
+                  <div className="flex shrink-0 flex-col items-end gap-1">
+                    <span
+                      className={`inline-flex h-5 items-center rounded-full px-1.5 text-[10px] font-medium ${getStatusColor(appointment.status)}`}
+                    >
+                      {appointment.status.replace("_", " ")}
+                    </span>
+                    {appointment.sync_status && (
+                      <span
+                        className={`inline-flex h-4 items-center gap-0.5 rounded border px-1 text-[9px] font-medium ${getSyncStatusBadge(appointment.sync_status).className}`}
+                        title={`Calendar sync: ${getSyncStatusBadge(appointment.sync_status).label}${appointment.external_calendar_id ? ` (${appointment.external_calendar_id})` : ""}`}
+                      >
+                        <span>{getSyncStatusBadge(appointment.sync_status).icon}</span>
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
@@ -646,6 +698,73 @@ export default function AppointmentsPage() {
                       <SelectItem value="no_show">No Show</SelectItem>
                     </SelectContent>
                   </Select>
+                </div>
+              )}
+
+              {/* Calendar Sync Status */}
+              {modalMode === "view" && selectedAppointment?.sync_status && (
+                <div className="space-y-2">
+                  <Label className="flex items-center gap-1">
+                    Calendar Sync
+                    <InfoTooltip content="Shows whether this appointment has been synced to external calendars like Google Calendar, Cal.com, or Calendly." />
+                  </Label>
+                  <div className="flex items-center justify-between rounded-lg border p-3">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`inline-flex items-center gap-1 rounded border px-2 py-1 text-xs font-medium ${getSyncStatusBadge(selectedAppointment.sync_status).className}`}
+                      >
+                        <span>{getSyncStatusBadge(selectedAppointment.sync_status).icon}</span>
+                        <span>{getSyncStatusBadge(selectedAppointment.sync_status).label}</span>
+                      </span>
+                      {selectedAppointment.external_calendar_id && (
+                        <span className="text-xs text-muted-foreground">
+                          via {selectedAppointment.external_calendar_id}
+                        </span>
+                      )}
+                    </div>
+                    {selectedAppointment.sync_status === "failed" && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          void (async () => {
+                            try {
+                              const response = await fetch(
+                                `/api/v1/crm/appointments/${selectedAppointment.id}/retry-sync`,
+                                {
+                                  method: "POST",
+                                  credentials: "include",
+                                }
+                              );
+                              if (response.ok) {
+                                void queryClient.invalidateQueries({ queryKey: ["appointments"] });
+                                alert("Sync retry queued successfully!");
+                              } else {
+                                alert("Failed to retry sync. Please try again.");
+                              }
+                            } catch (error) {
+                              console.error("Retry sync error:", error);
+                              alert("Failed to retry sync. Please check your connection.");
+                            }
+                          })();
+                        }}
+                      >
+                        Retry Sync
+                      </Button>
+                    )}
+                  </div>
+                  {selectedAppointment.sync_error && (
+                    <div className="rounded-md bg-red-50 p-2 text-xs text-red-800">
+                      <span className="font-medium">Error: </span>
+                      {selectedAppointment.sync_error}
+                    </div>
+                  )}
+                  {selectedAppointment.last_synced_at && (
+                    <p className="text-xs text-muted-foreground">
+                      Last synced: {new Date(selectedAppointment.last_synced_at).toLocaleString()}
+                    </p>
+                  )}
                 </div>
               )}
 

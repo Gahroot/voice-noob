@@ -39,6 +39,14 @@ class Contact(Base, TimestampMixin):
     # Optional company info
     company_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
+    # FollowUpBoss integration
+    fub_person_id: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+        index=True,
+        comment="FollowUpBoss person ID for sync",
+    )
+
     # Lead/contact management
     status: Mapped[str] = mapped_column(
         String(50),

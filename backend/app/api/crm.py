@@ -3,6 +3,7 @@
 import logging
 import re
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, EmailStr, field_validator
@@ -11,7 +12,12 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import undefer
 
-from app.core.auth import CurrentUser
+from app.api.crm_sync_endpoints import (
+    enqueue_calendar_sync_retry,
+    get_calendar_sync_health,
+    get_fub_sync_health,
+)
+from app.core.auth import CurrentUser, user_id_to_uuid
 from app.core.cache import cache_get, cache_invalidate, cache_set
 from app.core.limiter import limiter
 from app.db.session import get_db
@@ -918,6 +924,13 @@ class AppointmentResponse(BaseModel):
     created_by_agent: str | None
     contact_name: str | None = None
     contact_phone: str | None = None
+    # Calendar sync fields
+    external_calendar_id: str | None = None
+    external_event_id: str | None = None
+    external_event_uid: str | None = None
+    sync_status: str = "pending"
+    last_synced_at: str | None = None
+    sync_error: str | None = None
 
 
 class AppointmentCreate(BaseModel):
@@ -1104,6 +1117,78 @@ async def list_appointments(
     return response
 
 
+@router.get("/appointments/sync-health")
+async def get_appointment_sync_health(
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+    workspace_id: str | None = None,
+) -> dict[str, Any]:
+    """Get calendar sync health statistics.
+
+    Returns sync status metrics for appointments:
+    - Total appointments
+    - Synced count and percentage
+    - Pending/failed/conflict counts
+    - Recent sync failures with error messages
+
+    Args:
+        workspace_id: Optional workspace filter
+    """
+    user_id = current_user.id
+
+    health_data = await get_calendar_sync_health(
+        user_id=user_id,
+        workspace_id=workspace_id,
+        db=db,
+    )
+
+    logger.debug(
+        "Calendar sync health check: user_id=%d, workspace_id=%s, sync_rate=%.1f%%",
+        user_id,
+        workspace_id or "all",
+        health_data["sync_rate"],
+    )
+
+    return health_data
+
+
+@router.get("/fub-sync-health")
+async def get_fub_message_sync_health(
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+    workspace_id: str | None = None,
+) -> dict[str, Any]:
+    """Get FollowUpBoss message sync health statistics.
+
+    Returns sync status metrics for FUB messages:
+    - Total messages in sync queue
+    - Completed/pending/failed/processing counts
+    - Sync success rate percentage
+    - Recent sync failures with error messages
+
+    Args:
+        workspace_id: Workspace ID (required for FUB sync)
+    """
+    if not workspace_id:
+        raise HTTPException(
+            status_code=400,
+            detail="workspace_id is required for FUB sync health check",
+        )
+
+    health_data = await get_fub_sync_health(
+        workspace_id=workspace_id,
+        db=db,
+    )
+
+    logger.debug(
+        "FUB sync health check: workspace_id=%s, sync_rate=%.1f%%",
+        workspace_id,
+        health_data["sync_rate"],
+    )
+
+    return health_data
+
+
 @router.get("/appointments/{appointment_id}", response_model=AppointmentResponse)
 @limiter.limit("100/minute")
 async def get_appointment(
@@ -1216,6 +1301,18 @@ async def create_appointment(
 
         logger.info("Created appointment: id=%d, contact_id=%d", appointment.id, contact.id)
 
+        # Enqueue calendar sync
+        try:
+            await enqueue_calendar_sync_retry(
+                appointment=appointment,
+                operation="create",
+                db=db,
+                user_id=user_id_to_uuid(user_id),
+            )
+        except Exception as e:
+            logger.warning("Failed to enqueue calendar sync for new appointment: %s", str(e))
+            # Don't fail appointment creation if sync queueing fails
+
         # Invalidate stats cache
         await cache_invalidate("crm:stats:*")
 
@@ -1302,6 +1399,26 @@ async def update_appointment(
 
         logger.info("Updated appointment: id=%d", appointment.id)
 
+        # Enqueue calendar sync
+        try:
+            # Determine operation based on status change
+            if appointment.status == "cancelled":
+                operation = "cancel"
+            elif appointment.external_event_id:
+                operation = "update"
+            else:
+                operation = "create"
+
+            await enqueue_calendar_sync_retry(
+                appointment=appointment,
+                operation=operation,
+                db=db,
+                user_id=user_id_to_uuid(user_id),
+            )
+        except Exception as e:
+            logger.warning("Failed to enqueue calendar sync for updated appointment: %s", str(e))
+            # Don't fail appointment update if sync queueing fails
+
         # Invalidate stats cache
         await cache_invalidate("crm:stats:*")
 
@@ -1379,3 +1496,66 @@ async def delete_appointment(
             status_code=503,
             detail="Database temporarily unavailable. Please try again later.",
         ) from e
+
+
+@router.post("/appointments/{appointment_id}/retry-sync")
+async def retry_appointment_sync(
+    appointment_id: int,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Retry calendar sync for a failed appointment.
+
+    This endpoint manually triggers a calendar sync retry for an appointment.
+    Useful when:
+    - Initial sync failed due to temporary issues
+    - Calendar credentials were updated
+    - User wants to force re-sync to external calendar
+    """
+    user_id = current_user.id
+
+    try:
+        result = await db.execute(
+            select(Appointment)
+            .join(Contact)
+            .where(Appointment.id == appointment_id, Contact.user_id == user_id),
+        )
+        appointment = result.scalar_one_or_none()
+    except DBAPIError as e:
+        logger.exception("Database error retrieving appointment for retry sync: %d", appointment_id)
+        raise HTTPException(
+            status_code=503,
+            detail="Database temporarily unavailable. Please try again later.",
+        ) from e
+
+    if not appointment:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+
+    # Determine operation based on appointment status
+    if appointment.status == "cancelled":
+        operation = "cancel"
+    elif appointment.external_event_id:
+        operation = "update"
+    else:
+        operation = "create"
+
+    # Enqueue sync retry
+    sync_result = await enqueue_calendar_sync_retry(
+        appointment=appointment,
+        operation=operation,
+        db=db,
+        user_id=user_id_to_uuid(user_id),
+    )
+
+    logger.info(
+        "Manual sync retry triggered: appointment_id=%d, operation=%s, providers=%s",
+        appointment_id,
+        operation,
+        sync_result["queued_providers"],
+    )
+
+    return {
+        "appointment_id": appointment_id,
+        "operation": operation,
+        **sync_result,
+    }

@@ -218,6 +218,13 @@ async def connect_integration(
     user_uuid = user_id_to_uuid(current_user.id)
     workspace_uuid: uuid.UUID | None = None
 
+    # CRITICAL: FollowUpBoss integration requires workspace_id (workspace-only)
+    if request.integration_id == "followupboss" and not request.workspace_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="FollowUpBoss integration requires a workspace_id. It cannot be user-level.",
+        )
+
     # Validate workspace if provided
     if request.workspace_id:
         try:
@@ -272,6 +279,12 @@ async def connect_integration(
     db.add(integration)
     await db.commit()
     await db.refresh(integration)
+
+    # Start FUB sync worker if this is the first FUB integration (conditional worker)
+    if request.integration_id == "followupboss":
+        from app.services.fub_inbox_sync_service import start_fub_inbox_sync_if_needed
+
+        await start_fub_inbox_sync_if_needed(db)
 
     return IntegrationResponse(
         id=str(integration.id),
@@ -492,11 +505,25 @@ async def get_workspace_integrations(
     )
     integrations = result.scalars().all()
 
-    return {
-        integration.integration_id: integration.credentials
-        for integration in integrations
-        if integration.credentials
-    }
+    # Build credentials dict with FUB filtering
+    # FUB is workspace-only: ONLY workspace-specific (no user-level fallback)
+    credentials_dict: dict[str, dict[str, Any]] = {}
+    for integration in integrations:
+        if not integration.credentials:
+            continue
+
+        # For FollowUpBoss: ONLY workspace-level (workspace_id must match)
+        if integration.integration_id == "followupboss":
+            if integration.workspace_id == workspace_id:
+                credentials_dict[integration.integration_id] = integration.credentials
+        # Other integrations: workspace-specific takes precedence over user-level
+        elif (
+            integration.integration_id not in credentials_dict
+            or integration.workspace_id == workspace_id
+        ):
+            credentials_dict[integration.integration_id] = integration.credentials
+
+    return credentials_dict
 
 
 class CalComEventType(BaseModel):

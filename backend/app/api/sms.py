@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -17,6 +17,7 @@ from app.core.limiter import limiter
 from app.core.webhook_security import verify_slicktext_webhook, verify_telnyx_webhook
 from app.db.session import get_db
 from app.models.contact import Contact
+from app.models.fub_sync import FUBMessageSyncQueue
 from app.models.sms import (
     MessageDirection,
     SMSCampaign,
@@ -25,6 +26,7 @@ from app.models.sms import (
     SMSConversation,
     SMSMessage,
 )
+from app.models.user_integration import UserIntegration
 from app.services.sms_service import SMSService
 from app.services.tools.sms_tools import SlickTextSMSTools
 
@@ -245,6 +247,71 @@ async def get_slicktext_service(
         private_key=getattr(user_settings, "slicktext_private_key", None),
         textword_id=getattr(user_settings, "slicktext_textword_id", None),
     )
+
+
+async def _enqueue_fub_sync_if_enabled(
+    db: AsyncSession,
+    message: SMSMessage,
+    workspace_id: uuid.UUID,
+    user_id: uuid.UUID,
+) -> None:
+    """Enqueue outbound message for FUB sync if integration is enabled.
+
+    Args:
+        db: Database session
+        message: SMS message to sync
+        workspace_id: Workspace ID
+        user_id: User ID
+    """
+    try:
+        # Check if workspace has FUB integration enabled
+        result = await db.execute(
+            select(UserIntegration).where(
+                and_(
+                    UserIntegration.user_id == user_id,
+                    or_(
+                        UserIntegration.workspace_id == workspace_id,
+                        UserIntegration.workspace_id.is_(None),
+                    ),
+                    UserIntegration.integration_id == "followupboss",
+                    UserIntegration.is_active.is_(True),
+                )
+            )
+        )
+        fub_integration = result.scalar_one_or_none()
+
+        if not fub_integration:
+            # No FUB integration enabled, skip sync
+            return
+
+        # Create FUB sync queue entry
+        sync_entry = FUBMessageSyncQueue(
+            sms_message_id=message.id,
+            workspace_id=workspace_id,
+            status="pending",
+            payload={
+                "direction": "outbound",
+                "from_number": message.from_number,
+                "to_number": message.to_number,
+                "body": message.body,
+            },
+        )
+        db.add(sync_entry)
+        await db.commit()
+
+        logger.info(
+            "fub_sync_enqueued",
+            message_id=str(message.id),
+            workspace_id=str(workspace_id),
+            sync_id=str(sync_entry.id),
+        )
+
+    except Exception as e:
+        logger.warning(
+            "fub_sync_enqueue_failed",
+            message_id=str(message.id),
+            error=str(e),
+        )
 
 
 # =============================================================================
@@ -997,6 +1064,14 @@ async def send_message(  # noqa: PLR0915
         await db.commit()
         await db.refresh(message)
 
+        # Enqueue for FUB sync if integration is enabled
+        await _enqueue_fub_sync_if_enabled(
+            db=db,
+            message=message,
+            workspace_id=workspace_uuid,
+            user_id=user_uuid,
+        )
+
         return MessageResponse(
             id=str(message.id),
             direction=message.direction,
@@ -1685,6 +1760,42 @@ async def _handle_inbound_message(  # noqa: PLR0912, PLR0915
     conversation.unread_count += 1
 
     await db.commit()
+    await db.refresh(message)
+
+    # Enqueue message for FUB sync if integration is enabled
+    if workspace_id:
+        from app.models.fub_sync import FUBMessageSyncQueue
+        from app.models.user_integration import UserIntegration
+
+        # Check if workspace has FUB integration enabled
+        fub_integration_result = await db.execute(
+            select(UserIntegration).where(
+                UserIntegration.workspace_id == workspace_id,
+                UserIntegration.integration_id == "followupboss",
+            )
+        )
+        fub_integration = fub_integration_result.scalar_one_or_none()
+
+        if fub_integration:
+            # Create FUB sync queue entry
+            sync_entry = FUBMessageSyncQueue(
+                sms_message_id=message.id,
+                workspace_id=workspace_id,
+                status="pending",
+                payload={
+                    "direction": "inbound",
+                    "from_number": message.from_number,
+                    "to_number": message.to_number,
+                    "body": message.body,
+                },
+            )
+            db.add(sync_entry)
+            await db.commit()
+            log.info(
+                "enqueued_inbound_message_for_fub_sync",
+                message_id=str(message.id),
+                sync_queue_id=str(sync_entry.id),
+            )
 
     # Schedule AI response if agent is assigned and workspace exists
     if (
@@ -2047,6 +2158,39 @@ async def _handle_slicktext_inbound_message(  # noqa: PLR0912, PLR0915
     conversation.unread_count += 1
 
     await db.commit()
+    await db.refresh(message)
+
+    # Enqueue message for FUB sync if integration is enabled
+    if workspace_id:
+        # Check if workspace has FUB integration enabled
+        fub_integration_result = await db.execute(
+            select(UserIntegration).where(
+                UserIntegration.workspace_id == workspace_id,
+                UserIntegration.integration_id == "followupboss",
+            )
+        )
+        fub_integration = fub_integration_result.scalar_one_or_none()
+
+        if fub_integration:
+            # Create FUB sync queue entry
+            sync_entry = FUBMessageSyncQueue(
+                sms_message_id=message.id,
+                workspace_id=workspace_id,
+                status="pending",
+                payload={
+                    "direction": "inbound",
+                    "from_number": message.from_number,
+                    "to_number": message.to_number,
+                    "body": message.body,
+                },
+            )
+            db.add(sync_entry)
+            await db.commit()
+            log.info(
+                "enqueued_inbound_message_for_fub_sync_slicktext",
+                message_id=str(message.id),
+                sync_queue_id=str(sync_entry.id),
+            )
 
     # Schedule AI response if agent is assigned and workspace exists
     if (

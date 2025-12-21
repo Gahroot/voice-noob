@@ -20,6 +20,7 @@ export interface Integration {
   isPopular?: boolean;
   isBuiltIn?: boolean; // Voice Noob built-in integration
   badge?: string; // Custom badge text (e.g., "Voice Noob", "Popular")
+  workspaceRequired?: boolean; // Whether this integration requires a workspace (cannot be user-level)
   fields?: IntegrationField[];
   scopes?: string[];
   documentationUrl?: string;
@@ -277,6 +278,72 @@ export const AVAILABLE_INTEGRATIONS: Integration[] = [
       },
     ],
     documentationUrl: "https://www.zoho.com/crm/developer/docs/api/v2/auth-request.html",
+  },
+  {
+    id: "followupboss",
+    name: "FollowUpBoss",
+    slug: "followupboss",
+    description: "Real estate CRM for managing leads, contacts, and follow-ups",
+    category: "crm",
+    authType: "api_key",
+    icon: "https://cdn.simpleicons.org/f",
+    enabled: true,
+    isPopular: true,
+    workspaceRequired: true, // FUB is workspace-only (cannot be user-level)
+    fields: [
+      {
+        name: "api_key",
+        label: "API Key",
+        type: "password",
+        required: true,
+        description: "Find in Admin → API settings in FollowUpBoss",
+      },
+    ],
+    documentationUrl: "https://docs.followupboss.com/reference/getting-started",
+    tools: [
+      {
+        id: "fub_search_person",
+        name: "Search Person",
+        description: "Search for a person by phone, email, or name",
+        riskLevel: "safe",
+        defaultEnabled: true,
+      },
+      {
+        id: "fub_get_person",
+        name: "Get Person",
+        description: "Get full details of a person by their ID",
+        riskLevel: "safe",
+        defaultEnabled: true,
+      },
+      {
+        id: "fub_create_lead",
+        name: "Create Lead",
+        description: "Create a new lead with event tracking (triggers automations)",
+        riskLevel: "moderate",
+        defaultEnabled: true,
+      },
+      {
+        id: "fub_create_person",
+        name: "Create Person",
+        description: "Create a new person without automation triggers",
+        riskLevel: "moderate",
+        defaultEnabled: true,
+      },
+      {
+        id: "fub_update_person",
+        name: "Update Person",
+        description: "Update an existing person's information",
+        riskLevel: "moderate",
+        defaultEnabled: true,
+      },
+      {
+        id: "fub_add_note",
+        name: "Add Note",
+        description: "Add a note to a person",
+        riskLevel: "moderate",
+        defaultEnabled: true,
+      },
+    ],
   },
   {
     id: "gohighlevel",

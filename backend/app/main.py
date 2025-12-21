@@ -52,6 +52,7 @@ from app.middleware.security import SecurityHeadersMiddleware
 from app.models.user import User
 from app.services.calendar_sync_service import start_calendar_sync, stop_calendar_sync
 from app.services.campaign_worker import start_campaign_worker, stop_campaign_worker
+from app.services.fub_inbox_sync_service import start_fub_inbox_sync, stop_fub_inbox_sync
 from app.services.slicktext_polling_service import (
     start_slicktext_polling,
     stop_slicktext_polling,
@@ -167,10 +168,30 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:  # noqa: PLR0912
                 "Failed to start calendar sync - appointments will not sync to external calendars"
             )
 
+    # Start FUB inbox sync service (non-fatal)
+    if settings.FUB_INBOX_SYNC_ENABLED:
+        try:
+            await start_fub_inbox_sync(poll_interval=settings.FUB_INBOX_SYNC_POLL_INTERVAL)
+            logger.info(
+                "FUB inbox sync service started",
+                poll_interval=settings.FUB_INBOX_SYNC_POLL_INTERVAL,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to start FUB inbox sync - FollowUpBoss inbox messages will not sync"
+            )
+
     yield
 
     # Shutdown
     logger.info("Shutting down application")
+
+    # Stop FUB inbox sync service
+    try:
+        await stop_fub_inbox_sync()
+        logger.info("FUB inbox sync service stopped")
+    except Exception:
+        logger.exception("Error stopping FUB inbox sync service")
 
     # Stop calendar sync service
     try:

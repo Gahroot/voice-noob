@@ -8,6 +8,7 @@ from app.services.tools.calcom_tools import CalComTools
 from app.services.tools.calendly_tools import CalendlyTools
 from app.services.tools.call_control_tools import CallControlTools
 from app.services.tools.crm_tools import CRMTools
+from app.services.tools.followupboss_tools import FollowUpBossTools
 from app.services.tools.gohighlevel_tools import GoHighLevelTools
 from app.services.tools.shopify_tools import ShopifyTools
 from app.services.tools.sms_tools import SlickTextSMSTools, TelnyxSMSTools, TwilioSMSTools
@@ -43,6 +44,7 @@ class ToolRegistry:
         self.integrations = integrations or {}
         self.workspace_id = workspace_id
         self.crm_tools = CRMTools(db, user_id, workspace_id=workspace_id)
+        self._followupboss_tools: FollowUpBossTools | None = None
         self._ghl_tools: GoHighLevelTools | None = None
         self._calendly_tools: CalendlyTools | None = None
         self._calcom_tools: CalComTools | None = None
@@ -50,6 +52,34 @@ class ToolRegistry:
         self._twilio_sms_tools: TwilioSMSTools | None = None
         self._telnyx_sms_tools: TelnyxSMSTools | None = None
         self._slicktext_sms_tools: SlickTextSMSTools | None = None
+
+    def _get_followupboss_tools(self) -> FollowUpBossTools | None:
+        """Get FollowUpBoss tools if credentials are available.
+
+        CRITICAL: FollowUpBoss is workspace-only and requires workspace_id.
+        """
+        if self._followupboss_tools:
+            return self._followupboss_tools
+
+        # VALIDATION: Require workspace_id for FUB (workspace-only integration)
+        if not self.workspace_id:
+            import structlog
+
+            logger = structlog.get_logger()
+            logger.warning(
+                "followupboss_requires_workspace",
+                message="FollowUpBoss integration requires workspace_id",
+            )
+            return None
+
+        creds = self.integrations.get("followupboss")
+        if creds and creds.get("api_key"):
+            self._followupboss_tools = FollowUpBossTools(
+                api_key=creds["api_key"],
+            )
+            return self._followupboss_tools
+
+        return None
 
     def _get_ghl_tools(self) -> GoHighLevelTools | None:
         """Get GoHighLevel tools if credentials are available."""
@@ -233,6 +263,11 @@ class ToolRegistry:
             booking_tools = CRMTools.get_tool_definitions()
             tools.extend(filter_tools("bookings", booking_tools))
 
+        # FollowUpBoss tools - available if "followupboss" is enabled and credentials exist
+        if "followupboss" in enabled_tools and self._get_followupboss_tools():
+            fub_tools = FollowUpBossTools.get_tool_definitions()
+            tools.extend(filter_tools("followupboss", fub_tools))
+
         # GoHighLevel tools - available if "gohighlevel" is enabled and credentials exist
         if "gohighlevel" in enabled_tools and self._get_ghl_tools():
             ghl_tools = GoHighLevelTools.get_tool_definitions()
@@ -307,6 +342,25 @@ class ToolRegistry:
 
         if tool_name in crm_tool_names:
             return await self.crm_tools.execute_tool(tool_name, arguments, agent_id=agent_id)
+
+        # FollowUpBoss tools
+        fub_tool_names = {
+            "fub_search_person",
+            "fub_get_person",
+            "fub_create_lead",
+            "fub_create_person",
+            "fub_update_person",
+            "fub_add_note",
+        }
+
+        if tool_name in fub_tool_names:
+            fub_tools = self._get_followupboss_tools()
+            if not fub_tools:
+                return {
+                    "success": False,
+                    "error": "FollowUpBoss integration not configured. Please add your API key.",
+                }
+            return await fub_tools.execute_tool(tool_name, arguments)
 
         # GoHighLevel tools
         ghl_tool_names = {
@@ -442,6 +496,8 @@ class ToolRegistry:
 
     async def close(self) -> None:
         """Clean up resources."""
+        if self._followupboss_tools:
+            await self._followupboss_tools.close()
         if self._ghl_tools:
             await self._ghl_tools.close()
         if self._calendly_tools:

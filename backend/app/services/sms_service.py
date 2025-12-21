@@ -5,10 +5,11 @@ from datetime import UTC, datetime
 
 import httpx
 import structlog
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.contact import Contact
+from app.models.fub_sync import FUBMessageSyncQueue
 from app.models.sms import (
     MessageDirection,
     MessageStatus,
@@ -18,6 +19,7 @@ from app.models.sms import (
     SMSConversation,
     SMSMessage,
 )
+from app.models.user_integration import UserIntegration
 
 logger = structlog.get_logger()
 
@@ -203,6 +205,14 @@ class SMSService:
 
         await db.commit()
         await db.refresh(message)
+
+        # Enqueue for FUB sync if integration is enabled
+        await self._enqueue_fub_sync_if_enabled(
+            db=db,
+            message=message,
+            workspace_id=workspace_id,
+            user_id=user_id,
+        )
 
         return message
 
@@ -553,3 +563,68 @@ class SMSService:
         except Exception as e:
             self.logger.exception("get_message_status_error", error=str(e))
             return {"status": "error", "errors": str(e)}
+
+    async def _enqueue_fub_sync_if_enabled(
+        self,
+        db: AsyncSession,
+        message: SMSMessage,
+        workspace_id: uuid.UUID,
+        user_id: uuid.UUID,
+    ) -> None:
+        """Enqueue outbound message for FUB sync if integration is enabled.
+
+        Args:
+            db: Database session
+            message: SMS message to sync
+            workspace_id: Workspace ID
+            user_id: User ID
+        """
+        try:
+            # Check if workspace has FUB integration enabled
+            result = await db.execute(
+                select(UserIntegration).where(
+                    and_(
+                        UserIntegration.user_id == user_id,
+                        or_(
+                            UserIntegration.workspace_id == workspace_id,
+                            UserIntegration.workspace_id.is_(None),
+                        ),
+                        UserIntegration.integration_id == "followupboss",
+                        UserIntegration.is_active.is_(True),
+                    )
+                )
+            )
+            fub_integration = result.scalar_one_or_none()
+
+            if not fub_integration:
+                # No FUB integration enabled, skip sync
+                return
+
+            # Create FUB sync queue entry
+            sync_entry = FUBMessageSyncQueue(
+                sms_message_id=message.id,
+                workspace_id=workspace_id,
+                status="pending",
+                payload={
+                    "direction": "outbound",
+                    "from_number": message.from_number,
+                    "to_number": message.to_number,
+                    "body": message.body,
+                },
+            )
+            db.add(sync_entry)
+            await db.commit()
+
+            self.logger.info(
+                "fub_sync_enqueued",
+                message_id=str(message.id),
+                workspace_id=str(workspace_id),
+                sync_id=str(sync_entry.id),
+            )
+
+        except Exception as e:
+            self.logger.warning(
+                "fub_sync_enqueue_failed",
+                message_id=str(message.id),
+                error=str(e),
+            )

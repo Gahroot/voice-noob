@@ -155,6 +155,11 @@ class Settings(BaseSettings):
     CALENDAR_SYNC_POLL_INTERVAL: int = 30  # Seconds between sync queue polls
     CALENDAR_SYNC_MAX_RETRIES: int = 3  # Max retry attempts for failed syncs
 
+    # FollowUpBoss Inbox Sync
+    FUB_INBOX_SYNC_ENABLED: bool = True  # Enable background FUB inbox sync
+    FUB_INBOX_SYNC_POLL_INTERVAL: int = 30  # Seconds between sync queue polls
+    FUB_INBOX_SYNC_MAX_RETRIES: int = 3  # Max retry attempts for failed syncs
+
     # Circuit Breaker Configuration (for calendar sync and external APIs)
     CIRCUIT_BREAKER_FAILURE_THRESHOLD: int = 5  # Failures before opening circuit
     CIRCUIT_BREAKER_TIMEOUT: float = 120.0  # Seconds before attempting recovery

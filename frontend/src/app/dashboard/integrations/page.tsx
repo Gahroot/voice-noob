@@ -76,6 +76,8 @@ const getIntegrationIcon = (integrationId: string) => {
     hubspot: Users,
     pipedrive: Users,
     "zoho-crm": Users,
+    followupboss: Users,
+    gohighlevel: Users,
     "google-calendar": Calendar,
     "microsoft-calendar": Calendar,
     "cal-com": Clock,
